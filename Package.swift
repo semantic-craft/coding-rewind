@@ -20,6 +20,10 @@ let package = Package(
         .executable(
             name: "rewind-mcp",
             targets: ["RewindMCP"]
+        ),
+        .executable(
+            name: "CodingRewindApp",
+            targets: ["CodingRewindApp"]
         )
     ],
     targets: [
@@ -35,6 +39,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "RewindMCP",
+            dependencies: ["CodingRewindCore"]
+        ),
+        .executableTarget(
+            name: "CodingRewindApp",
             dependencies: ["CodingRewindCore"]
         ),
         .testTarget(
