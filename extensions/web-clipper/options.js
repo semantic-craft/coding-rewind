@@ -12,7 +12,7 @@ export async function testMemosConnection({ baseUrl, token, fetchImpl = globalTh
     headers.Authorization = `Bearer ${token.trim()}`;
   }
   try {
-    const resp = await fetchImpl(`${normalized}/api/v1/memos?pageSize=1`, {
+    const resp = await fetchImpl(`${normalized}/api/memos?pageSize=1`, {
       method: "GET",
       headers
     });

@@ -43,7 +43,7 @@ public struct MemosClient: Sendable {
 
         let createURL = try endpointURL(
             baseURL: baseURL,
-            path: "/api/v1/memos",
+            path: "/api/memos",
             queryItems: [URLQueryItem(name: "memoId", value: clientClipId)]
         )
         let jsonEncoder = JSONEncoder()
@@ -72,7 +72,7 @@ public struct MemosClient: Sendable {
             let commentId = "\(clientClipId)-ctx"
             let commentURL = try endpointURL(
                 baseURL: baseURL,
-                path: "/api/v1/memos/\(serverId)/comments",
+                path: "/api/memos/\(serverId)/comments",
                 queryItems: [URLQueryItem(name: "commentId", value: commentId)]
             )
             let commentBody = try jsonEncoder.encode(CreateMemoRequestDTO(content: comment, visibility: "PRIVATE"))
@@ -108,7 +108,7 @@ public struct MemosClient: Sendable {
     ) async throws -> [RewindCard] {
         let listURL = try endpointURL(
             baseURL: baseURL,
-            path: "/api/v1/memos",
+            path: "/api/memos",
             queryItems: [URLQueryItem(name: "pageSize", value: "100")]
         )
         let (data, status) = try await performRequest(url: listURL, method: "GET", token: token, body: nil)
@@ -137,7 +137,7 @@ public struct MemosClient: Sendable {
     ) async throws {
         let patchURL = try endpointURL(
             baseURL: baseURL,
-            path: "/api/v1/memos/\(card.id)",
+            path: "/api/memos/\(card.id)",
             queryItems: [URLQueryItem(name: "updateMask", value: "content")]
         )
         let updated = MemosWireFormat.replacingWithSynthesizedTag(card.rawContent)
@@ -150,8 +150,40 @@ public struct MemosClient: Sendable {
         }
     }
 
+    public static func normalizeBaseURLString(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              let host = components.host, !host.isEmpty else {
+            var fallback = trimmed
+            while fallback.count > 1 && fallback.hasSuffix("/") {
+                fallback.removeLast()
+            }
+            return fallback
+        }
+        var cleanPath = components.path
+        while cleanPath.count > 1 && cleanPath.hasSuffix("/") {
+            cleanPath.removeLast()
+        }
+        if let range = cleanPath.range(
+            of: #"/api(?:/v1)?(?:/memos)?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            cleanPath.removeSubrange(range)
+        }
+        while cleanPath.hasSuffix("/") {
+            cleanPath.removeLast()
+        }
+        components.path = cleanPath
+        components.query = nil
+        components.fragment = nil
+        return components.string ?? trimmed
+    }
+
     private func endpointURL(baseURL: URL, path: String, queryItems: [URLQueryItem]) throws -> URL {
-        let baseStr = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let baseStr = Self.normalizeBaseURLString(baseURL.absoluteString)
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
         guard var components = URLComponents(string: baseStr + normalizedPath) else {
             throw RewindError.invalidMemosURL(baseURL.absoluteString)

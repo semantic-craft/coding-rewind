@@ -9,7 +9,7 @@
 
 - 标签：#浏览器扩展 #协议边界 #焦点管理
 - 起因与后果：v0.1 提交 `194cdc0` 预设 `coding-rewind://stash` 协议接收口并在 `Info.plist` 注册 `CFBundleURLTypes`，浏览器触发自定义协议会弹出系统打开确认框并抢夺前台窗口焦点，违背零打断顺手暂存的核心目标。
-- 修复与证据：v0.2 删除 `StashURLCommand.swift` 及 `Info.plist` 中的自定义协议声明，新增 [extensions/web-clipper](extensions/web-clipper) 由 Manifest V3 后台直连 `usememos/memos` 的 `/api/v1/memos` 接口，页面内仅渲染 2.2 秒 Shadow DOM 轻提示且完全不切走输入焦点。
+- 修复与证据：v0.2 删除 `StashURLCommand.swift` 及 `Info.plist` 中的自定义协议声明，新增 [extensions/web-clipper](extensions/web-clipper) 由 Manifest V3 后台直连 `usememos/memos` 的 `/api/memos` 接口，页面内仅渲染 2.2 秒 Shadow DOM 轻提示且完全不切走输入焦点。
 - 正确做法 `Done right`：网页端采集统一通过扩展后台 `fetch` 直连 `Memos` 实例并维护 `chrome.storage.local` 离线重放队列，桌面端不注册输入型 URL Scheme。
 - 验证点：检查 `Sources/` 与 [build-app-bundle.sh](scripts/build-app-bundle.sh) 不存在 `coding-rewind://` 或 `CFBundleURLSchemes`，运行 `./scripts/check` 通过浏览器扩展测试。
 - 复发记录：`Seen 1x (2026-11-11)`，v0.1 提交 `194cdc0` 架构走查检出。
@@ -57,6 +57,17 @@
 - 正确做法 `Done right`：客户端只保留轻量选区捕获、72 小时毛玻璃速览浮窗与 `agentapi new-conversation` 拉起动作，持久化与 MCP 工具统一复用 `usememos/memos`；开发与验收开启 `CODING_REWIND_QA=1` 隔离至 `com.codingrewind.memos.qa`，禁止在任何 JSON 配置文件写入明文令牌。
 - 验证点：运行 `./scripts/check` 确认无本地业务 SQLite 目标与明文凭据残留，且后端、前端与扩展三端契约测试全部通过。
 - 复发记录：`Seen 1x (2026-11-11)`，v0.1 提交 `194cdc0` 架构收敛评审检出。
+
+### Memos 26.10+ 移除 `/api/v1` 前缀导致模拟测试未覆盖真实版本路由变更
+
+**对接固定版本的外部开源后端时，必须以目标真实容器实例核对 HTTP 路由契约，不能仅凭自建模拟桩认定接口路径有效。**
+
+- 标签：#验收 #契约
+- 起因与后果：选用原生内置 `/mcp` 的 `neosmemo/memos:26.11.0` 时，`Memos` 自 `26.10+` 起已移除 REST 路由中的 `/v1` 前缀，请求 `/api/v1/memos` 直接返回 `HTTP 410 Gone`；由于桌面端、网页扩展与增强器的单元测试均针对手写模拟桩断言 `/api/v1/memos`，单测全绿却掩盖了真实容器路由变更。
+- 修复与证据：上线前针对真实 `neosmemo/memos:26.11.0` 容器联调检出 `410 Gone`，同步将 [MemosClient.swift](Sources/CodingRewindCore/MemosClient.swift)、[enricher.py](deploy/vps/enricher/enricher.py)、[memos_payload.mjs](extensions/web-clipper/memos_payload.mjs) 与 [options.js](extensions/web-clipper/options.js) 三端请求路径统一切换至 `/api/memos`，兼容剥离用户误贴的 `/api/memos` 或 `/api/v1/memos` 地址后缀，并在 [scripts/check](scripts/check) 增加静态门禁阻断 `/api/v1/memos` 回归。
+- 正确做法 `Done right`：升级或锁定外部后端镜像标签时先对真实容器跑通端到端契约探测，再将已移除的旧路由写入 [scripts/check](scripts/check) 静态门禁防止回退。
+- 验证点：运行 `./scripts/check` 确认静态路由门禁与三端单元测试全部通过，且在 `Sources/`、`deploy/` 与 `extensions/` 非地址清洗行写入 `/api/v1/memos` 会被立即阻断。
+- 复发记录：`Seen 1x (2026-11-11)`，上线前针对真实 `neosmemo/memos:26.11.0` 实例联调检出。
 
 ## 记录模板
 

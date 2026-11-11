@@ -23,12 +23,12 @@
                   │                                                  │
                   └────────────────────────┬─────────────────────────┘
                                            ▼
-                    POST /api/v1/memos?memoId=<clientClipId>
-                    POST /api/v1/memos/<serverId>/comments
+                    POST /api/memos?memoId=<clientClipId>
+                    POST /api/memos/<serverId>/comments
                                            │
                                            ▼
-             [单一事实源后端  deploy/vps  阿里云轻量容器栈]
-              • neosmemo/memos:stable 原版存储 + 原生 Streamable HTTP /mcp
+             [单一事实源后端  deploy/vps  阿里云容器栈]
+              • neosmemo/memos:26.11.0 原版存储 + 原生 Streamable HTTP /mcp
               • rewind-enricher 验签 Webhook + 5 秒容器内网自愈轮询
               • 等待上下文评论到达后调用兼容接口生成 Title / Session / Context
               • 保留 100% 选中原文并将标签翻转为 #rewind/ready
@@ -47,10 +47,10 @@
 
 位于 `deploy/vps/`，由 `docker-compose.yml` 编排两个轻量容器：
 
-- **原版 `neosmemo/memos:stable`**，零源码修改提供 `/api/v1/memos` REST 接口、评论挂载以及进程内原生 `/mcp` 服务，暴露 `MemoService_ListMemos`、`MemoService_GetMemo`、`MemoService_CreateMemo`、`MemoService_UpdateMemo` 等标准工具。
-- **幂等增强器 `deploy/vps/enricher/enricher.py`**，使用 `python:3.12-alpine` 纯标准库实现，零第三方 pip 依赖。由于 `Memos` 内置 Webhook 客户端对私网地址启用 SSRF 拦截，增强器同时提供两条触发通道：
-  1. `POST /webhook` 接口按 Standard Webhooks 规范校验 `webhook-id`、`webhook-timestamp` 与 `webhook-signature` 的 HMAC-SHA256 签名，适用于经 Caddy 公网反代接入实时通知。
-  2. 默认每 5 秒经容器内网查询 `http://memos:5230/api/v1/memos?pageSize=50`，自动发现带有 `#rewind/pending` 的记录并幂等完成增强，确保开箱即用且任何漏包或重启都能自愈。
+- **原版 `neosmemo/memos:26.11.0`**，零源码修改提供 `/api/memos` REST 接口、评论挂载以及进程内原生 `/mcp` 服务，暴露 `MemoService_ListMemos`、`MemoService_GetMemo`、`MemoService_CreateMemo`、`MemoService_UpdateMemo` 等标准工具。
+- **幂等增强器 `deploy/vps/enricher/enricher.py`**，使用 `python:3.12-slim` 纯标准库实现并固定非特权用户运行，零第三方 pip 依赖。由于 `Memos` 内置 Webhook 客户端对私网地址启用 SSRF 拦截，增强器同时提供两条触发通道：
+  1. `POST /webhook` 接口按 Standard Webhooks 规范校验 `webhook-id`、`webhook-timestamp` 与 `webhook-signature` 的 HMAC-SHA256 签名，适用于经反代接入实时通知。
+  2. 默认每 5 秒经容器内网查询 `http://memos:5230/api/memos?pageSize=50`，自动发现带有 `#rewind/pending` 的记录并幂等完成增强，确保开箱即用且任何漏包或重启都能自愈。
 
 ### 2. macOS 原生菜单栏与毛玻璃浮窗
 
@@ -66,7 +66,7 @@
 位于 `extensions/web-clipper/`，零外部 npm 依赖，首批适配 `https://chatgpt.com/*`、`https://claude.ai/*` 与 `https://gemini.google.com/*`：
 
 - **纯函数提取层 `extractors.mjs`**，参照 MIT 项目 `revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、行内代码、列表与链接的 Markdown，同时提取清洗后的会话标题、紧邻前序用户提问以及截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
-- **后台直连投递 `background.js` 与 `memos_payload.mjs`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`，支持右键菜单与 `Alt+Shift+S` 快捷键触发，由后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` v1 接口；断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试，页面右上角以 Shadow DOM 展示 2.2 秒轻提示。
+- **后台直连投递 `background.js` 与 `memos_payload.mjs`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`，支持右键菜单与 `Alt+Shift+S` 快捷键触发，由后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` REST 接口；断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试，页面右上角以 Shadow DOM 展示 2.2 秒轻提示。
 
 ### 4. Antigravity 2.x 官方插件、钩子与钥匙串桥接
 
@@ -76,13 +76,13 @@
 - **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `MemoService_*` 工具的 `skills/rewind/SKILL.md`。
 - **零明文令牌 MCP 桥接**，`scripts/memos-mcp-bridge.sh` 运行时从环境变量或 macOS Keychain 读取令牌，执行 `npx -y mcp-remote "${MEMOS_URL%/}/mcp"`，兼容 `~/.config/agent-mcp/servers.json` 与 `mcp-sync`，避免任何 JSON 配置文件落盘明文凭据。
 
-## Memos v1 共享线级契约
+## Memos REST 共享线级契约
 
 桌面端、浏览器扩展与云端增强器严格共用同一套 REST 契约：
 
 ### 1. 创建初始片段
 
-客户端生成满足 `^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$` 的幂等标识 `clientClipId`，调用 `POST /api/v1/memos?memoId=<clientClipId>`，请求体 `visibility` 固定为 `PRIVATE`。附带对话上下文时的初始 `content` 模板如下：
+客户端生成满足 `^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$` 的幂等标识 `clientClipId`，调用 `POST /api/memos?memoId=<clientClipId>`，请求体 `visibility` 固定为 `PRIVATE`。附带对话上下文时的初始 `content` 模板如下：
 
 ```markdown
 #rewind/pending #rewind/has-ctx #source/<antigravity|chatgpt|claude|gemini|macos|web>
@@ -96,7 +96,7 @@
 
 ### 2. 挂载会话上下文评论
 
-若存在会话标题、前序提问或近期轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/v1/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入私密评论：
+若存在会话标题、前序提问或近期轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入私密评论：
 
 ```markdown
 <!-- rewind-context-v1 -->
@@ -112,9 +112,9 @@ Prompt: <prompt>
 `rewind-enricher` 扫描到含 `#rewind/pending` 的记录后按以下状态机流转：
 
 1. 若记录已含 `#rewind/ready` 或 `#rewind/synthesized`，直接跳过，保证重复投递零额外模型调用。
-2. 若记录含 `#rewind/has-ctx`，拉取 `/api/v1/memos/<serverId>/comments` 查找含 `<!-- rewind-context-v1 -->` 的评论；若尚未到达且距创建时间不足 15 秒则暂缓等待下一轮，满 15 秒后以现有信息继续处理。
+2. 若记录含 `#rewind/has-ctx`，拉取 `/api/memos/<serverId>/comments` 查找含 `<!-- rewind-context-v1 -->` 的评论；若尚未到达且距创建时间不足 15 秒则暂缓等待下一轮，满 15 秒后以现有信息继续处理。
 3. 调用环境变量配置的 OpenAI 兼容 `chat/completions` 接口请求严格 JSON 结构 `title`、`session_topic`、`context_summary` 与 `keywords`。
-4. 通过 `PATCH /api/v1/memos/<serverId>?updateMask=content` 原子替换顶部标签与引用头，100% 保持 `<verbatim_selected_markdown>` 原封不动：
+4. 通过 `PATCH /api/memos/<serverId>?updateMask=content` 原子替换顶部标签与引用头，100% 保持 `<verbatim_selected_markdown>` 原封不动：
 
 ```markdown
 #rewind/ready #source/<platform>
@@ -130,7 +130,7 @@ Prompt: <prompt>
 
 ### 4. 热流读取与成文归档
 
-客户端请求 `GET /api/v1/memos?pageSize=100`，筛选含 `#rewind/`、不含 `#rewind/synthesized` 且 `createTime` 位于最近 72 小时内的条目按时间倒序渲染；当片段已送入 Antigravity 完成成文消费后，可通过 `PATCH /api/v1/memos/<serverId>?updateMask=content` 将状态标签翻转为 `#rewind/synthesized` 退出热流池。
+客户端请求 `GET /api/memos?pageSize=100`，筛选含 `#rewind/`、不含 `#rewind/synthesized` 且 `createTime` 位于最近 72 小时内的条目按时间倒序渲染；当片段已送入 Antigravity 完成成文消费后，可通过 `PATCH /api/memos/<serverId>?updateMask=content` 将状态标签翻转为 `#rewind/synthesized` 退出热流池。
 
 ## 凭据解析与环境隔离优先级
 

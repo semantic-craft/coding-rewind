@@ -5,7 +5,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 from urllib.parse import quote
-import base64, hashlib, hmac, json, os, sys, threading, time, urllib.request
+import base64, hashlib, hmac, json, os, re, sys, threading, time, urllib.request
 
 CONTEXT_MARKER = "<!-- rewind-context-v1 -->"
 SYSTEM_PROMPT = (
@@ -101,13 +101,16 @@ class EnricherService:
     _wake: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
 
+    def _base_url(self) -> str:
+        return re.sub(r"/api(?:/v1)?(?:/memos)?$", "", self.memos_url.strip().rstrip("/"), flags=re.IGNORECASE).rstrip("/")
+
     def process_memo(self, memo: dict) -> str:
         parsed, name = parse_raw_memo(memo.get("content", "")), memo.get("name", "")
         if parsed is None or "/" not in name:
             return "skipped"
-        base, memo_id, ctx_text = self.memos_url.rstrip("/"), quote(name.split("/", 1)[1], safe=""), ""
+        base, memo_id, ctx_text = self._base_url(), quote(name.split("/", 1)[1], safe=""), ""
         if parsed["has_ctx"]:
-            found = extract_context_comment(_json_req("GET", f"{base}/api/v1/memos/{memo_id}/comments", self.memos_token))
+            found = extract_context_comment(_json_req("GET", f"{base}/api/memos/{memo_id}/comments", self.memos_token))
             if found is None:
                 created_at = parse_iso_utc(memo.get("createTime"))
                 if created_at is not None and (self.clock() - created_at) < self.ctx_wait_seconds:
@@ -122,12 +125,12 @@ class EnricherService:
         raw_json = ai_resp["choices"][0]["message"]["content"].strip()
         if raw_json.startswith("```"):
             raw_json = raw_json.strip("`").removeprefix("json").strip()
-        _json_req("PATCH", f"{base}/api/v1/memos/{memo_id}?updateMask=content", self.memos_token, {"content": build_enriched_content(parsed, json.loads(raw_json))})
+        _json_req("PATCH", f"{base}/api/memos/{memo_id}?updateMask=content", self.memos_token, {"content": build_enriched_content(parsed, json.loads(raw_json))})
         return "enriched"
 
     def reconcile_once(self) -> int:
         enriched = 0
-        for memo in _json_req("GET", f"{self.memos_url.rstrip('/')}/api/v1/memos?pageSize=50", self.memos_token).get("memos", []):
+        for memo in _json_req("GET", f"{self._base_url()}/api/memos?pageSize=50", self.memos_token).get("memos", []):
             try:
                 enriched += int(self.process_memo(memo) == "enriched")
             except Exception as exc:

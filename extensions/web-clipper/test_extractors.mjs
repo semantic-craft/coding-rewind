@@ -216,7 +216,7 @@ test("Gemini DOM extraction parses custom elements and cleans Google Gemini boil
         <user-query><div class="user-query-text">How do we make MV3 retries idempotent against Memos?</div></user-query>
         <model-response>
           <message-content id="gemini-pick">
-            <p>Pass a deterministic <code>memoId</code> query parameter to <code>POST /api/v1/memos</code>.</p>
+            <p>Pass a deterministic <code>memoId</code> query parameter to <code>POST /api/memos</code>.</p>
           </message-content>
         </model-response>
       </body>
@@ -233,7 +233,7 @@ test("Gemini DOM extraction parses custom elements and cleans Google Gemini boil
   assert.equal(ctx.prompt, "How do we make MV3 retries idempotent against Memos?");
   assert.equal(
     ctx.selectedMarkdown,
-    "Pass a deterministic `memoId` query parameter to `POST /api/v1/memos`."
+    "Pass a deterministic `memoId` query parameter to `POST /api/memos`."
   );
   assert.match(ctx.recentTurns, /^User: How do we make MV3 retries idempotent against Memos\?\n\nAssistant: Pass a deterministic `memoId`/);
 });
@@ -256,7 +256,7 @@ test("buildMemosWirePayloads matches exact canonical wire contract with and with
   );
 
   assert.equal(withCtx.hasContext, true);
-  assert.equal(withCtx.memoPath, `/api/v1/memos?memoId=${clipId}`);
+  assert.equal(withCtx.memoPath, `/api/memos?memoId=${clipId}`);
   assert.deepEqual(withCtx.memoBody, {
     content:
       "#rewind/pending #rewind/has-ctx #source/chatgpt\n\n" +
@@ -264,7 +264,7 @@ test("buildMemosWirePayloads matches exact canonical wire contract with and with
       "```swift\nlet ok = true\n```",
     visibility: "PRIVATE"
   });
-  assert.equal(withCtx.commentPathForServerId("9876"), `/api/v1/memos/9876/comments?commentId=${clipId}-ctx`);
+  assert.equal(withCtx.commentPathForServerId("9876"), `/api/memos/9876/comments?commentId=${clipId}-ctx`);
   assert.deepEqual(withCtx.commentBody, {
     content:
       "<!-- rewind-context-v1 -->\n" +
@@ -360,13 +360,13 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
   assert.equal(storage.peek().length, 0);
 
   const retriedFirstMemoCall = calls.filter(
-    (c) => c.url === `https://memos.internal.test/api/v1/memos?memoId=${encodeURIComponent(firstClipId)}`
+    (c) => c.url === `https://memos.internal.test/api/memos?memoId=${encodeURIComponent(firstClipId)}`
   );
   assert.equal(retriedFirstMemoCall.length, 2);
   assert.equal(retriedFirstMemoCall[1].headers.Authorization, "Bearer test-token");
 
   const retriedFirstCommentCall = calls.find(
-    (c) => c.url === `https://memos.internal.test/api/v1/memos/srv-${firstClipId}/comments?commentId=${encodeURIComponent(`${firstClipId}-ctx`)}`
+    (c) => c.url === `https://memos.internal.test/api/memos/srv-${firstClipId}/comments?commentId=${encodeURIComponent(`${firstClipId}-ctx`)}`
   );
   assert.ok(retriedFirstCommentCall, "Expected comment POST with serverId parsed from resp.name");
 
@@ -422,7 +422,7 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
   assert.equal(partialFlush.remaining, 0);
 });
 
-test("options testMemosConnection calls GET /api/v1/memos?pageSize=1 and manifest.json is valid MV3", async () => {
+test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.json is valid MV3", async () => {
   let seenUrl = "";
   let seenAuth = "";
   const conn = await testMemosConnection({
@@ -435,10 +435,12 @@ test("options testMemosConnection calls GET /api/v1/memos?pageSize=1 and manifes
     }
   });
   assert.equal(conn.ok, true);
-  assert.equal(seenUrl, "https://memos.internal.test/api/v1/memos?pageSize=1");
+  assert.equal(seenUrl, "https://memos.internal.test/api/memos?pageSize=1");
   assert.equal(seenAuth, "Bearer tok-abc");
 
+  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/memos/"), "https://memos.internal.test");
   assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/v1/memos/"), "https://memos.internal.test");
+  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/"), "https://memos.internal.test");
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"));

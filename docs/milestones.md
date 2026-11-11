@@ -23,7 +23,7 @@
 **可执行验收**
 
 1. 清理冗余本地业务 SQLite、自建富文本写作舱、自定义 URL Scheme 与手写 MCP 可执行目标，全仓不存在已废弃模块残留。
-2. 根目录具备 [AGENTS.md](../AGENTS.md) 与记录 5 项真实历史缺陷的 [lessons.md](../lessons.md)。
+2. 根目录具备 [AGENTS.md](../AGENTS.md) 与记录 6 项真实历史缺陷的 [lessons.md](../lessons.md)。
 3. 在仓库任意目录运行 `./scripts/check` 可自动拦截硬编码 `.build/CodingRewind.app` 配置路径、`/tmp` 构建或验收路径、明文令牌前缀及私人 IP 地址。
 
 ## M2　双端零打扰选段暂存与离线缓冲
@@ -36,7 +36,7 @@
 
 1. 桌面端按下 `⌃⌥S` 时优先经 `kAXSelectedTextAttribute` 读取选区，回退模拟 `⌘C` 时校验 `changeCount` 递增并在 `defer` 完整恢复全部 `NSPasteboardItem`，无选区时不误存旧剪贴板。
 2. `coding-rewind-hook` 在 `PostInvocation` 与 `Stop` 事件中从标准输入提取 `lastUserInput`、`conversationId` 与 `transcript.jsonl` 最近 4 轮问答，原子更新 `active_turn.json` 且退出码为 0。
-3. 浏览器扩展 `extensions/web-clipper` 从 ChatGPT、Claude、Gemini 页面提取选区 Markdown、清洗后的会话标题、前序提问与最近 4 轮对话，由后台直连 `POST /api/v1/memos?memoId=<clientClipId>` 与评论接口，右上角显示 2.2 秒轻提示且不抢焦点、不弹协议确认框。
+3. 浏览器扩展 `extensions/web-clipper` 从 ChatGPT、Claude、Gemini 页面提取选区 Markdown、清洗后的会话标题、前序提问与最近 4 轮对话，由后台直连 `POST /api/memos?memoId=<clientClipId>` 与评论接口，右上角显示 2.2 秒轻提示且不抢焦点、不弹协议确认框。
 4. 目标不可达时，桌面端写入 `outbox.jsonl`、网页端写入 `chrome.storage.local` 离线队列，恢复连接后通过相同 `memoId` 幂等冲刷且不产生重复记录。
 
 ## M3　云端 AI 脉络定锚、72 小时浮窗回顾与数据可控

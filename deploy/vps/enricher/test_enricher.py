@@ -66,11 +66,11 @@ def _start_mock_upstream(state: MockBackendState, expected_memos_token: str = "m
             if self.headers.get("Authorization") != f"Bearer {expected_memos_token}":
                 return self._send(401, {"error": "bad memos token"})
             with state.lock:
-                if parsed.path == "/api/v1/memos":
+                if parsed.path == "/api/memos":
                     return self._send(200, {"memos": list(state.memos.values())})
                 parts = parsed.path.strip("/").split("/")
-                if len(parts) == 5 and parts[:3] == ["api", "v1", "memos"] and parts[4] == "comments":
-                    memo_id = parts[3]
+                if len(parts) == 4 and parts[:2] == ["api", "memos"] and parts[3] == "comments":
+                    memo_id = parts[2]
                     return self._send(200, {"memos": list(state.comments.get(memo_id, []))})
             self._send(404, {"error": "not found"})
 
@@ -92,8 +92,8 @@ def _start_mock_upstream(state: MockBackendState, expected_memos_token: str = "m
                 return self._send(401, {"error": "bad memos token"})
             qs = parse_qs(parsed.query)
             parts = parsed.path.strip("/").split("/")
-            if len(parts) == 4 and parts[:3] == ["api", "v1", "memos"] and qs.get("updateMask") == ["content"]:
-                memo_id = parts[3]
+            if len(parts) == 3 and parts[:2] == ["api", "memos"] and qs.get("updateMask") == ["content"]:
+                memo_id = parts[2]
                 body = self._read_json()
                 with state.lock:
                     if memo_id not in state.memos:
@@ -287,6 +287,8 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertEqual(svc.reconcile_once(), 0)
             self.assertEqual(len(state.ai_calls), 1)
             self.assertEqual(state.memos["rw-idem"]["content"], first_ready)
+            self.assertEqual(enricher.EnricherService(f"{base_url}/api/memos/", "t", "u", "k", "m")._base_url(), base_url)
+            self.assertEqual(enricher.EnricherService(f"{base_url}/api/v1/memos/", "t", "u", "k", "m")._base_url(), base_url)
         finally:
             srv.shutdown()
             srv.server_close()

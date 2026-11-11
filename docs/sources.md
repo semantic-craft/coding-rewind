@@ -10,7 +10,7 @@
 
 | 项目 | 仓库与许可证据 | 在本项目中的具体复用与适配 |
 | --- | --- | --- |
-| `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 零修改直接采用官方 `neosmemo/memos:stable` 容器作为唯一后端事实源，使用其 `/api/v1/memos`、评论接口、`internal/webhook/webhook.go` 的 Standard Webhooks HMAC-SHA256 签名约定以及进程内原生 `/mcp` Streamable HTTP 服务 |
+| `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 零修改直接采用官方固定版本 `neosmemo/memos:26.11.0` 容器作为唯一后端事实源，使用其 `/api/memos`、评论接口、`internal/webhook/webhook.go` 的 Standard Webhooks HMAC-SHA256 签名约定以及进程内原生 `/mcp` Streamable HTTP 服务 |
 | `p0deje/Maccy` | [p0deje/Maccy](https://github.com/p0deje/Maccy)，`MIT License`，Copyright Alex Rodionov | 在 `CodingRewindApp` 适配其 `FloatingPanel` 的 `.nonactivatingPanel` 非激活浮窗标志位、`.hudWindow` 毛玻璃视觉材质、键盘多选列表手感与剪贴板快照保护思路 |
 | `tisfeng/SelectedTextKit` | [tisfeng/SelectedTextKit](https://github.com/tisfeng/SelectedTextKit)，`MIT License`，Copyright Tao Shi | 在 `MacOSSelectionAndHotkeys.swift` 采用其选区获取双阶段策略，先读焦点元素 `kAXSelectedTextAttribute`，为空时完整备份 `NSPasteboardItem` 全部类型数据与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 校验计数递增后在 `defer` 无条件还原剪贴板 |
 | `wxtsky/CodeIsland` | [wxtsky/CodeIsland](https://github.com/wxtsky/CodeIsland)，`MIT License`，Copyright wxtsky | 在 `AntigravityIntegration.swift` 与 `AntigravityHookRunner.swift` 借鉴其针对独立版 Google Antigravity App 2.x 的非阻塞 `PostInvocation` 与 `Stop` 钩子接线方式，以及将辅助二进制固定拷入 `~/Library/Application Support/CodingRewind/bin/` 避免 `.build/` 断链的安装模式 |

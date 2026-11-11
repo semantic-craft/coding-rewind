@@ -147,7 +147,7 @@ public struct StoragePaths: Equatable, Sendable {
     ) -> String? {
         if let envURL = environment[Self.memosURLEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !envURL.isEmpty {
-            return Self.trimTrailingSlash(envURL)
+            return MemosClient.normalizeBaseURLString(envURL)
         }
         guard let data = try? Data(contentsOf: configFileURL),
               let decoded = try? JSONDecoder().decode(DiskConfig.self, from: data),
@@ -155,7 +155,7 @@ public struct StoragePaths: Equatable, Sendable {
               !raw.isEmpty else {
             return nil
         }
-        return Self.trimTrailingSlash(raw)
+        return MemosClient.normalizeBaseURLString(raw)
     }
 
     public func resolveMemosBaseURL(
@@ -172,28 +172,24 @@ public struct StoragePaths: Equatable, Sendable {
     }
 
     public func saveMemosURLString(_ rawURL: String) throws {
-        let trimmed = Self.trimTrailingSlash(rawURL.trimmingCharacters(in: .whitespacesAndNewlines))
-        if !trimmed.isEmpty {
-            guard let url = URL(string: trimmed),
+        let trimmedInput = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized: String
+        if trimmedInput.isEmpty {
+            normalized = ""
+        } else {
+            guard let url = URL(string: trimmedInput),
                   let scheme = url.scheme?.lowercased(),
                   (scheme == "https" || scheme == "http"),
                   url.host?.isEmpty == false else {
                 throw RewindError.invalidMemosURL(rawURL)
             }
+            normalized = MemosClient.normalizeBaseURLString(trimmedInput)
         }
-        let payload = DiskConfig(memos_url: trimmed.isEmpty ? nil : trimmed)
+        let payload = DiskConfig(memos_url: normalized.isEmpty ? nil : normalized)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(payload)
         try AtomicFile.writeData(data, to: configFileURL, permissions: 0o600)
-    }
-
-    private static func trimTrailingSlash(_ value: String) -> String {
-        var result = value
-        while result.count > 1 && result.hasSuffix("/") {
-            result.removeLast()
-        }
-        return result
     }
 }
 

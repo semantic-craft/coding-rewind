@@ -133,7 +133,7 @@ struct CodingRewindCoreTests {
 
         MockMemosURLProtocol.register(suiteID: suiteID) { req, bodyData in
             let path = req.url?.path ?? ""
-            if req.httpMethod == "POST" && path == "/api/v1/memos" {
+            if req.httpMethod == "POST" && path == "/api/memos" {
                 let obj = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
                 let content = obj["content"] as? String ?? ""
                 let resp: [String: Any] = [
@@ -145,11 +145,11 @@ struct CodingRewindCoreTests {
                 let data = (try? JSONSerialization.data(withJSONObject: resp)) ?? Data()
                 return (200, data)
             }
-            if req.httpMethod == "POST" && path == "/api/v1/memos/srv-101/comments" {
+            if req.httpMethod == "POST" && path == "/api/memos/srv-101/comments" {
                 let resp: [String: Any] = ["name": "memos/srv-101-ctx", "content": "ok"]
                 return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
             }
-            if req.httpMethod == "GET" && path == "/api/v1/memos" {
+            if req.httpMethod == "GET" && path == "/api/memos" {
                 let readyMarkdown = """
                 #rewind/ready #source/antigravity
 
@@ -194,7 +194,7 @@ struct CodingRewindCoreTests {
                 ]
                 return (200, (try? JSONSerialization.data(withJSONObject: listResp)) ?? Data())
             }
-            if req.httpMethod == "PATCH" && path == "/api/v1/memos/m-ready" {
+            if req.httpMethod == "PATCH" && path == "/api/memos/m-ready" {
                 let resp: [String: Any] = ["name": "memos/m-ready", "content": "patched"]
                 return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
             }
@@ -258,21 +258,27 @@ struct CodingRewindCoreTests {
         #expect(hotCards[1].status == .pending)
         #expect(hotCards[1].reopenURL == nil)
 
-        try await client.markSynthesized(card: hotCards[0], baseURL: baseURL, token: "tok-secret-test")
+        let pastedEndpointBaseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local/api/memos/"))
+        try await client.markSynthesized(card: hotCards[0], baseURL: pastedEndpointBaseURL, token: "tok-secret-test")
 
         let recorded = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
         #expect(recorded.count == 4)
         #expect(recorded[0].authHeader == "Bearer tok-secret-test")
+        #expect(recorded[0].url.path == "/api/memos")
         #expect(recorded[0].url.query?.contains("memoId=\(clipID)") == true)
         #expect(recorded[0].body.contains("\"visibility\":\"PRIVATE\""))
         #expect(recorded[0].body.contains("#rewind/pending #rewind/has-ctx #source/antigravity"))
-        #expect(recorded[1].url.path == "/api/v1/memos/srv-101/comments")
+        #expect(recorded[1].url.path == "/api/memos/srv-101/comments")
         #expect(recorded[1].url.query?.contains("commentId=\(clipID)-ctx") == true)
         #expect(recorded[1].body.contains("<!-- rewind-context-v1 -->"))
+        #expect(recorded[2].url.path == "/api/memos")
         #expect(recorded[3].method == "PATCH")
+        #expect(recorded[3].url.path == "/api/memos/m-ready")
         #expect(recorded[3].url.query == "updateMask=content")
         #expect(recorded[3].body.contains("#rewind\\/synthesized") || recorded[3].body.contains("#rewind/synthesized"))
         #expect(!recorded[3].body.contains("#rewind/ready"))
+        #expect(MemosClient.normalizeBaseURLString("https://memos.example.com/api/memos/") == "https://memos.example.com")
+        #expect(MemosClient.normalizeBaseURLString("https://memos.example.com/api/v1/memos/") == "https://memos.example.com")
     }
 
     @Test("OfflineOutbox + HotCache survive network failure and flush idempotently on 409 retry")
@@ -323,10 +329,10 @@ struct CodingRewindCoreTests {
         #expect(coldStartCoord.cards[0].verbatimText == "Offline resilient highlight $E = mc^2$")
 
         MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
-            if req.httpMethod == "POST" && req.url?.path == "/api/v1/memos" {
+            if req.httpMethod == "POST" && req.url?.path == "/api/memos" {
                 return (409, Data("{\"message\":\"already exists\"}".utf8))
             }
-            if req.httpMethod == "GET" && req.url?.path == "/api/v1/memos" {
+            if req.httpMethod == "GET" && req.url?.path == "/api/memos" {
                 let content = """
                 #rewind/ready #source/claude
 
@@ -372,7 +378,9 @@ struct CodingRewindCoreTests {
         ])
         #expect(paths.dataDirectoryURL == dataDir.standardizedFileURL)
 
-        try paths.saveMemosURLString("https://memos.example.com/")
+        try paths.saveMemosURLString("https://memos.example.com/api/memos/")
+        #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
+        try paths.saveMemosURLString("https://memos.example.com/api/v1/memos")
         #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
 
         let rawConfigText = try String(contentsOf: paths.configFileURL, encoding: .utf8)

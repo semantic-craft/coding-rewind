@@ -5,9 +5,9 @@ services:
     ports:
       - "${MEMOS_BIND_ADDR:-127.0.0.1}:${MEMOS_PORT:-5230}:5230"
     volumes:
-      - memos-data:/var/opt/memos
+      - ${MEMOS_DATA_DIR:-./memos-data}:/var/opt/memos
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5230/"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5230/healthz"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -19,6 +19,8 @@ services:
     depends_on:
       memos:
         condition: service_healthy
+    ports:
+      - "${ENRICHER_BIND_ADDR:-127.0.0.1}:${ENRICHER_PORT:-8090}:8090"
     environment:
       MEMOS_BASE_URL: ${MEMOS_INTERNAL_URL:-http://memos:5230}
       MEMOS_ACCESS_TOKEN: ${MEMOS_ACCESS_TOKEN:?MEMOS_ACCESS_TOKEN is required}
@@ -34,12 +36,9 @@ services:
           "CMD",
           "python3",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz', timeout=3)",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=3)",
         ]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 5s
-
-volumes:
-  memos-data:

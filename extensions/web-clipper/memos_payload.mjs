@@ -36,7 +36,7 @@ export function normalizeMemosBaseUrl(rawUrl) {
     }
     const cleanPath = parsed.pathname
       .replace(/\/+$/, "")
-      .replace(/\/api\/v1(?:\/memos)?$/i, "");
+      .replace(/\/api(?:\/v1)?(?:\/memos)?$/i, "");
     return `${parsed.origin}${cleanPath}`;
   } catch {
     return "";
@@ -134,12 +134,12 @@ export function buildMemosWirePayloads(clip, options = {}) {
     commentId,
     hasContext,
     createdAt: createdAtIso,
-    memoPath: `/api/v1/memos?memoId=${encodeURIComponent(clipId)}`,
+    memoPath: `/api/memos?memoId=${encodeURIComponent(clipId)}`,
     memoBody,
     commentBody,
     commentPathForServerId(serverId) {
       if (!serverId) throw new Error("serverId is required for comment path");
-      return `/api/v1/memos/${encodeURIComponent(serverId)}/comments?commentId=${encodeURIComponent(commentId)}`;
+      return `/api/memos/${encodeURIComponent(serverId)}/comments?commentId=${encodeURIComponent(commentId)}`;
     }
   };
 }
@@ -213,7 +213,7 @@ export async function deliverEnvelopeToMemos({
     let memoResp;
     try {
       memoResp = await fetchImpl(
-        `${normalizedUrl}/api/v1/memos?memoId=${encodeURIComponent(envelope.clipId)}`,
+        `${normalizedUrl}/api/memos?memoId=${encodeURIComponent(envelope.clipId)}`,
         {
           method: "POST",
           headers,
@@ -227,7 +227,7 @@ export async function deliverEnvelopeToMemos({
     if (memoResp.status === 409) {
       try {
         const getResp = await fetchImpl(
-          `${normalizedUrl}/api/v1/memos/${encodeURIComponent(envelope.clipId)}`,
+          `${normalizedUrl}/api/memos/${encodeURIComponent(envelope.clipId)}`,
           { method: "GET", headers }
         );
         if (getResp.ok) {
@@ -256,7 +256,7 @@ export async function deliverEnvelopeToMemos({
     let commentResp;
     try {
       commentResp = await fetchImpl(
-        `${normalizedUrl}/api/v1/memos/${encodeURIComponent(serverId)}/comments?commentId=${encodeURIComponent(envelope.commentId)}`,
+        `${normalizedUrl}/api/memos/${encodeURIComponent(serverId)}/comments?commentId=${encodeURIComponent(envelope.commentId)}`,
         {
           method: "POST",
           headers,
