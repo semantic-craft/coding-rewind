@@ -1,0 +1,22 @@
+# 本机与编辑器杂文件，避免日后误把环境或草稿提交进去。
+# 当前项目尚未初始化 git；本文件只是预先备好。
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+*~
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+.env
+.env.*
+!.env.example
+
+# Swift / macOS 构建产物
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserdata/
+dist/
