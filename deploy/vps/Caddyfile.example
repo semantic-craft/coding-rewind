@@ -1,0 +1,21 @@
+rewind.example.com {
+	encode zstd gzip
+
+	# Optional public Standard Webhooks route from Memos -> rewind-enricher
+	handle /hooks/rewind* {
+		rewrite * /webhook
+		reverse_proxy rewind-enricher:8090
+	}
+
+	# Streamable HTTP MCP endpoint (/mcp) requires unbuffered streaming
+	handle /mcp* {
+		reverse_proxy memos:5230 {
+			flush_interval -1
+		}
+	}
+
+	# Memos Web UI and v1 REST API (/api/v1/*)
+	handle {
+		reverse_proxy memos:5230
+	}
+}

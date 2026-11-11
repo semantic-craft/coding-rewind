@@ -1,0 +1,45 @@
+services:
+  memos:
+    image: neosmemo/memos:stable
+    restart: unless-stopped
+    ports:
+      - "${MEMOS_PORT:-5230}:5230"
+    volumes:
+      - memos-data:/var/opt/memos
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5230/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  rewind-enricher:
+    build: ./enricher
+    restart: unless-stopped
+    depends_on:
+      memos:
+        condition: service_healthy
+    environment:
+      MEMOS_BASE_URL: ${MEMOS_INTERNAL_URL:-http://memos:5230}
+      MEMOS_ACCESS_TOKEN: ${MEMOS_ACCESS_TOKEN:?MEMOS_ACCESS_TOKEN is required}
+      AI_BASE_URL: ${AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      AI_API_KEY: ${AI_API_KEY:?AI_API_KEY is required}
+      AI_MODEL: ${AI_MODEL:-qwen-plus}
+      REWIND_WEBHOOK_SECRET: ${REWIND_WEBHOOK_SECRET:-}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}
+      PORT: "8090"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8090/healthz', timeout=3)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  memos-data:
