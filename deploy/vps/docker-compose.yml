@@ -1,9 +1,9 @@
 services:
   memos:
-    image: neosmemo/memos:stable
+    image: ${MEMOS_IMAGE:-neosmemo/memos:26.11.0}
     restart: unless-stopped
     ports:
-      - "${MEMOS_PORT:-5230}:5230"
+      - "${MEMOS_BIND_ADDR:-127.0.0.1}:${MEMOS_PORT:-5230}:5230"
     volumes:
       - memos-data:/var/opt/memos
     healthcheck:
