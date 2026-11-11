@@ -1,472 +1,316 @@
 // SPDX-License-Identifier: MIT
 
+import Darwin
 import Foundation
+import Security
+
+public enum RewindError: Error, LocalizedError, Equatable, Sendable {
+    case emptySelection
+    case accessibilityPermissionDenied
+    case noFrontmostApplication
+    case invalidClipID(String)
+    case invalidMemosURL(String)
+    case missingCredentials
+    case httpError(statusCode: Int, body: String)
+    case ioError(String)
+    case keychainError(OSStatus)
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptySelection:
+            return "未选中非空文本，请先高亮内容再按快捷键。"
+        case .accessibilityPermissionDenied:
+            return "未获得辅助功能权限，请在系统设置中授权 CodingRewind。"
+        case .noFrontmostApplication:
+            return "未检测到前台应用窗口。"
+        case .invalidClipID(let id):
+            return "无效片段标识: \(id)"
+        case .invalidMemosURL(let raw):
+            return "无效的 Memos 地址: \(raw)"
+        case .missingCredentials:
+            return "尚未配置 Memos 地址或访问令牌，已暂存至本地离线队列。"
+        case .httpError(let code, let body):
+            return "Memos 请求失败 (HTTP \(code)): \(body.prefix(120))"
+        case .ioError(let detail):
+            return "本地读写失败: \(detail)"
+        case .keychainError(let status):
+            return "钥匙串访问失败 (OSStatus \(status))"
+        }
+    }
+}
+
+public enum AtomicFile {
+    public static func writeData(_ data: Data, to destinationURL: URL, permissions: mode_t = 0o600) throws {
+        let parentDir = destinationURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+        let tempURL = parentDir.appendingPathComponent(".\(destinationURL.lastPathComponent).tmp-\(UUID().uuidString)")
+        let fd = open(tempURL.path, O_CREAT | O_EXCL | O_WRONLY, permissions)
+        guard fd >= 0 else {
+            throw RewindError.ioError("open(\(tempURL.lastPathComponent)) errno=\(errno)")
+        }
+        do {
+            try data.withUnsafeBytes { rawBuffer in
+                guard let base = rawBuffer.baseAddress else { return }
+                var remaining = rawBuffer.count
+                var offset = 0
+                while remaining > 0 {
+                    let written = Darwin.write(fd, base.advanced(by: offset), remaining)
+                    if written < 0 {
+                        if errno == EINTR { continue }
+                        throw RewindError.ioError("write errno=\(errno)")
+                    }
+                    remaining -= written
+                    offset += written
+                }
+            }
+            _ = fchmod(fd, permissions)
+            close(fd)
+        } catch {
+            close(fd)
+            unlink(tempURL.path)
+            throw error
+        }
+        if rename(tempURL.path, destinationURL.path) != 0 {
+            let code = errno
+            unlink(tempURL.path)
+            throw RewindError.ioError("rename errno=\(code)")
+        }
+    }
+
+    public static func writeUTF8(_ text: String, to destinationURL: URL, permissions: mode_t = 0o600) throws {
+        try writeData(Data(text.utf8), to: destinationURL, permissions: permissions)
+    }
+}
 
 public struct StoragePaths: Equatable, Sendable {
-    public static let appSupportEnvironmentKey = "CODING_REWIND_APP_SUPPORT"
+    public static let dataDirEnvironmentKey = "CODING_REWIND_DATA_DIR"
+    public static let memosURLEnvironmentKey = "CODING_REWIND_MEMOS_URL"
+    public static let memosTokenEnvironmentKey = "CODING_REWIND_MEMOS_TOKEN"
+    public static let qaEnvironmentKey = "CODING_REWIND_QA"
     public static let antigravityConfigEnvironmentKey = "CODING_REWIND_ANTIGRAVITY_CONFIG"
 
-    public let appSupportDirectoryURL: URL
-    public let stashDatabaseURL: URL
-    public let draftsDirectoryURL: URL
-    public let runtimeDirectoryURL: URL
+    public let dataDirectoryURL: URL
     public let antigravityConfigDirectoryURL: URL
 
-    public init(
-        appSupportDirectoryURL: URL,
-        draftsDirectoryURL: URL? = nil,
-        antigravityConfigDirectoryURL: URL? = nil
-    ) throws {
+    public var configFileURL: URL { dataDirectoryURL.appendingPathComponent("config.json", isDirectory: false) }
+    public var activeTurnFileURL: URL { dataDirectoryURL.appendingPathComponent("active_turn.json", isDirectory: false) }
+    public var outboxFileURL: URL { dataDirectoryURL.appendingPathComponent("outbox.jsonl", isDirectory: false) }
+    public var hotCacheFileURL: URL { dataDirectoryURL.appendingPathComponent("hot_cache.json", isDirectory: false) }
+    public var binDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("bin", isDirectory: true) }
+
+    public init(dataDirectoryURL: URL, antigravityConfigDirectoryURL: URL? = nil) throws {
         let fm = FileManager.default
-        let resolvedAppSupport = appSupportDirectoryURL.standardizedFileURL
-        let resolvedDrafts = (draftsDirectoryURL ?? resolvedAppSupport.appendingPathComponent("Drafts", isDirectory: true)).standardizedFileURL
-        let resolvedRuntime = resolvedAppSupport.appendingPathComponent("Runtime", isDirectory: true).standardizedFileURL
-        let defaultGeminiConfig = fm.homeDirectoryForCurrentUser
+        let resolvedData = dataDirectoryURL.standardizedFileURL
+        let defaultGemini = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".gemini", isDirectory: true)
             .appendingPathComponent("config", isDirectory: true)
-        let resolvedAntigravityConfig = (antigravityConfigDirectoryURL ?? defaultGeminiConfig).standardizedFileURL
-
-        try fm.createDirectory(at: resolvedAppSupport, withIntermediateDirectories: true)
-        try fm.createDirectory(at: resolvedDrafts, withIntermediateDirectories: true)
-        try fm.createDirectory(at: resolvedRuntime, withIntermediateDirectories: true)
-
-        self.appSupportDirectoryURL = resolvedAppSupport
-        self.stashDatabaseURL = resolvedAppSupport.appendingPathComponent("stash.sqlite3", isDirectory: false)
-        self.draftsDirectoryURL = resolvedDrafts
-        self.runtimeDirectoryURL = resolvedRuntime
-        self.antigravityConfigDirectoryURL = resolvedAntigravityConfig
+        let resolvedConfig = (antigravityConfigDirectoryURL ?? defaultGemini).standardizedFileURL
+        try fm.createDirectory(at: resolvedData, withIntermediateDirectories: true)
+        self.dataDirectoryURL = resolvedData
+        self.antigravityConfigDirectoryURL = resolvedConfig
     }
 
-    public static func defaultUserPaths() throws -> StoragePaths {
-        try resolveFromEnvironment(ProcessInfo.processInfo.environment)
-    }
-
-    public static func resolveFromEnvironment(
-        _ environment: [String: String] = ProcessInfo.processInfo.environment
+    public static func resolve(
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) throws -> StoragePaths {
         let fm = FileManager.default
-        let appSupportURL: URL
-        if let overridePath = environment[appSupportEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !overridePath.isEmpty {
-            appSupportURL = URL(fileURLWithPath: overridePath, isDirectory: true)
+        let dataURL: URL
+        if let raw = environment[dataDirEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty {
+            dataURL = URL(fileURLWithPath: (raw as NSString).expandingTildeInPath, isDirectory: true)
         } else {
-            let baseAppSupport = try fm.url(
+            let appSupport = try fm.url(
                 for: .applicationSupportDirectory,
                 in: .userDomainMask,
                 appropriateFor: nil,
                 create: true
             )
-            appSupportURL = baseAppSupport.appendingPathComponent("CodingRewind", isDirectory: true)
+            dataURL = appSupport.appendingPathComponent("CodingRewind", isDirectory: true)
         }
 
-        let antigravityURL: URL?
-        if let configOverride = environment[antigravityConfigEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !configOverride.isEmpty {
-            antigravityURL = URL(fileURLWithPath: configOverride, isDirectory: true)
+        let agConfigURL: URL?
+        if let rawConfig = environment[antigravityConfigEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawConfig.isEmpty {
+            agConfigURL = URL(fileURLWithPath: (rawConfig as NSString).expandingTildeInPath, isDirectory: true)
         } else {
-            antigravityURL = nil
+            agConfigURL = nil
         }
-
-        return try StoragePaths(
-            appSupportDirectoryURL: appSupportURL,
-            antigravityConfigDirectoryURL: antigravityURL
-        )
-    }
-}
-
-public struct ClipID: Hashable, Codable, Sendable, CustomStringConvertible {
-    public let rawValue: String
-
-    public init() {
-        self.rawValue = UUID().uuidString.lowercased()
+        return try StoragePaths(dataDirectoryURL: dataURL, antigravityConfigDirectoryURL: agConfigURL)
     }
 
-    public init(parsing rawValue: String) throws {
-        let normalized = rawValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        guard !normalized.isEmpty,
-              normalized.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" }) else {
-            throw StashError.invalidClipID(rawValue)
+    private struct DiskConfig: Codable {
+        var memos_url: String?
+    }
+
+    public func readConfiguredMemosURLString(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        if let envURL = environment[Self.memosURLEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !envURL.isEmpty {
+            return Self.trimTrailingSlash(envURL)
         }
-        self.rawValue = normalized
-    }
-
-    public var shortCode: String {
-        String(rawValue.prefix(8))
-    }
-
-    public var description: String {
-        rawValue
-    }
-}
-
-public struct DraftID: Hashable, Codable, Sendable, CustomStringConvertible {
-    public let stem: String
-
-    public init(parsing rawStem: String) throws {
-        var candidate = rawStem.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if candidate.hasSuffix(".md") {
-            candidate = String(candidate.dropLast(3))
+        guard let data = try? Data(contentsOf: configFileURL),
+              let decoded = try? JSONDecoder().decode(DiskConfig.self, from: data),
+              let raw = decoded.memos_url?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return nil
         }
-        guard !candidate.isEmpty,
-              !candidate.contains(".."),
-              candidate.unicodeScalars.allSatisfy({
-                  ($0 >= "a" && $0 <= "z") || ($0 >= "0" && $0 <= "9") || $0 == "-" || $0 == "_"
-              }) else {
-            throw StashError.invalidDraftID(rawStem)
-        }
-        self.stem = candidate
+        return Self.trimTrailingSlash(raw)
     }
 
-    public static func makeSlug(fromTitle title: String, suffix: String? = nil) -> DraftID {
-        let lowered = title.lowercased()
-        var parts: [String] = []
-        var current = ""
-        for scalar in lowered.unicodeScalars {
-            if (scalar >= "a" && scalar <= "z") || (scalar >= "0" && scalar <= "9") {
-                current.unicodeScalars.append(scalar)
-            } else if !current.isEmpty {
-                parts.append(current)
-                current = ""
+    public func resolveMemosBaseURL(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> URL? {
+        guard let raw = readConfiguredMemosURLString(environment: environment),
+              let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "https" || scheme == "http"),
+              url.host?.isEmpty == false else {
+            return nil
+        }
+        return url
+    }
+
+    public func saveMemosURLString(_ rawURL: String) throws {
+        let trimmed = Self.trimTrailingSlash(rawURL.trimmingCharacters(in: .whitespacesAndNewlines))
+        if !trimmed.isEmpty {
+            guard let url = URL(string: trimmed),
+                  let scheme = url.scheme?.lowercased(),
+                  (scheme == "https" || scheme == "http"),
+                  url.host?.isEmpty == false else {
+                throw RewindError.invalidMemosURL(rawURL)
             }
         }
-        if !current.isEmpty {
-            parts.append(current)
-        }
-        var base = parts.joined(separator: "-")
-        if base.isEmpty {
-            base = "draft"
-        }
-        if base.count > 40 {
-            base = String(base.prefix(40)).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        }
-        let cleanedSuffix = suffix?
-            .lowercased()
-            .unicodeScalars
-            .filter { ($0 >= "a" && $0 <= "z") || ($0 >= "0" && $0 <= "9") }
-            .map(String.init)
-            .joined()
-        let finalStem: String
-        if let cleanedSuffix, !cleanedSuffix.isEmpty {
-            finalStem = "\(base)-\(cleanedSuffix)"
-        } else {
-            finalStem = base
-        }
-        return (try? DraftID(parsing: finalStem)) ?? (try! DraftID(parsing: "draft-note"))
+        let payload = DiskConfig(memos_url: trimmed.isEmpty ? nil : trimmed)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(payload)
+        try AtomicFile.writeData(data, to: configFileURL, permissions: 0o600)
     }
 
-    public var filename: String {
-        "\(stem).md"
-    }
-
-    public var description: String {
-        stem
+    private static func trimTrailingSlash(_ value: String) -> String {
+        var result = value
+        while result.count > 1 && result.hasSuffix("/") {
+            result.removeLast()
+        }
+        return result
     }
 }
 
-public struct VerbatimExcerpt: Hashable, Codable, Sendable, CustomStringConvertible {
+public enum KeychainTokenStore {
+    public static let defaultService = "com.codingrewind.memos"
+    public static let qaService = "com.codingrewind.memos.qa"
+
+    public static func serviceName(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if environment[StoragePaths.qaEnvironmentKey] == "1" {
+            return qaService
+        }
+        if let custom = environment["CODING_REWIND_KEYCHAIN_SERVICE"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !custom.isEmpty {
+            return custom
+        }
+        return defaultService
+    }
+
+    public static func resolveToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String? {
+        if let envToken = environment[StoragePaths.memosTokenEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !envToken.isEmpty {
+            return envToken
+        }
+        let service = serviceName(environment: environment)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !token.isEmpty else {
+            return nil
+        }
+        return token
+    }
+
+    public static func saveToken(
+        _ rawToken: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws {
+        let service = serviceName(environment: environment)
+        let trimmed = rawToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        if trimmed.isEmpty {
+            let status = SecItemDelete(baseQuery as CFDictionary)
+            if status != errSecSuccess && status != errSecItemNotFound {
+                throw RewindError.keychainError(status)
+            }
+            return
+        }
+        let tokenData = Data(trimmed.utf8)
+        let updateStatus = SecItemUpdate(
+            baseQuery as CFDictionary,
+            [kSecValueData as String: tokenData] as CFDictionary
+        )
+        if updateStatus == errSecItemNotFound {
+            var addQuery = baseQuery
+            addQuery[kSecAttrAccount as String] = "memos"
+            addQuery[kSecValueData as String] = tokenData
+            let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+            guard addStatus == errSecSuccess else {
+                throw RewindError.keychainError(addStatus)
+            }
+        } else if updateStatus != errSecSuccess {
+            throw RewindError.keychainError(updateStatus)
+        }
+    }
+
+    public static func deleteToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) throws {
+        try saveToken("", environment: environment)
+    }
+}
+
+public struct ConversationTurn: Codable, Equatable, Hashable, Sendable {
+    public let role: String
     public let text: String
 
-    public init(validating rawText: String) throws {
-        let cleaned = rawText.replacingOccurrences(of: "\0", with: "")
-        guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw StashError.emptyExcerpt
-        }
-        self.text = cleaned
-    }
-
-    public var description: String {
-        text
+    public init(role: String, text: String) {
+        self.role = role.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.text = text.replacingOccurrences(of: "\0", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
-public enum PromptContext: Equatable, Hashable, Codable, Sendable {
-    case captured(String)
-    case missing
+public struct CaptureContext: Codable, Equatable, Hashable, Sendable {
+    public let sessionTitle: String
+    public let prompt: String
+    public let recentTurns: [ConversationTurn]
 
-    public static func from(raw: String?) -> PromptContext {
-        guard let cleaned = raw?
-            .replacingOccurrences(of: "\0", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            !cleaned.isEmpty else {
-            return .missing
-        }
-        return .captured(cleaned)
-    }
-
-    public var capturedText: String? {
-        switch self {
-        case .captured(let text):
-            return text
-        case .missing:
-            return nil
-        }
-    }
-}
-
-public enum WebChatSite: String, CaseIterable, Hashable, Codable, Sendable {
-    case chatgpt
-    case claude
-    case gemini
-    case other
-
-    public var displayName: String {
-        switch self {
-        case .chatgpt:
-            return "ChatGPT Web"
-        case .claude:
-            return "Claude Web"
-        case .gemini:
-            return "Gemini Web"
-        case .other:
-            return "Web Chat"
-        }
-    }
-
-    public static func infer(sourceParam: String?, url: URL?, windowTitle: String?) -> WebChatSite {
-        if let param = sourceParam?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
-           !param.isEmpty {
-            if param.contains("chatgpt") || param.contains("openai") { return .chatgpt }
-            if param.contains("claude") || param.contains("anthropic") { return .claude }
-            if param.contains("gemini") || param.contains("bard") { return .gemini }
-        }
-        if let host = url?.host?.lowercased() {
-            if host.contains("chatgpt.com") || host.contains("openai.com") { return .chatgpt }
-            if host.contains("claude.ai") || host.contains("anthropic.com") { return .claude }
-            if host.contains("gemini.google.com") { return .gemini }
-        }
-        if let title = windowTitle?.lowercased() {
-            if title.contains("chatgpt") { return .chatgpt }
-            if title.contains("claude") { return .claude }
-            if title.contains("gemini") { return .gemini }
-        }
-        return .other
-    }
-}
-
-public enum ClipSource: Equatable, Hashable, Codable, Sendable {
-    case antigravity(conversationId: String?, workspacePath: String?, locator: String?)
-    case web(site: WebChatSite, url: String?, pageTitle: String?)
-    case desktop(bundleIdentifier: String, appName: String, windowTitle: String?)
-
-    public var displayBadge: String {
-        switch self {
-        case .antigravity(_, let workspacePath, _):
-            if let workspacePath, !workspacePath.isEmpty {
-                let folder = URL(fileURLWithPath: workspacePath).lastPathComponent
-                if !folder.isEmpty && folder != "/" {
-                    return "Antigravity · \(folder)"
-                }
-            }
-            return "Antigravity 2.x"
-        case .web(let site, _, _):
-            return site.displayName
-        case .desktop(_, let appName, _):
-            return appName.isEmpty ? "macOS App" : appName
-        }
-    }
-
-    public var reopenURL: URL? {
-        switch self {
-        case .web(_, let urlString, _):
-            guard let urlString, let url = URL(string: urlString),
-                  let scheme = url.scheme?.lowercased(),
-                  scheme == "https" || scheme == "http" else {
-                return nil
-            }
-            return url
-        case .antigravity(let conversationId, let workspacePath, _):
-            if let workspacePath, FileManager.default.fileExists(atPath: workspacePath) {
-                return URL(fileURLWithPath: workspacePath)
-            }
-            if let conversationId, !conversationId.isEmpty {
-                return URL(string: "antigravity://conversation/\(conversationId)")
-            }
-            return nil
-        case .desktop:
-            return nil
-        }
-    }
-}
-
-public enum ClipDisposition: Equatable, Hashable, Codable, Sendable {
-    case active(reheatedAt: Date? = nil)
-    case synthesized(draftID: DraftID?, at: Date)
-    case cooled(at: Date)
-
-    public static var active: ClipDisposition {
-        .active(reheatedAt: nil)
-    }
-}
-
-public enum ClipLifecycle: String, CaseIterable, Hashable, Codable, Sendable {
-    case hot
-    case synthesized
-    case archived
-
-    public var displayName: String {
-        switch self {
-        case .hot:
-            return "近 72h 热窗"
-        case .synthesized:
-            return "已成文"
-        case .archived:
-            return "已冷却"
-        }
-    }
-}
-
-public struct ClipAnnotation: Equatable, Hashable, Codable, Sendable {
-    public var title: String?
-    public var tags: [String]
-    public var userNote: String?
-
-    public init(title: String? = nil, tags: [String] = [], userNote: String? = nil) {
-        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.title = (trimmedTitle?.isEmpty == false) ? trimmedTitle : nil
-        self.tags = tags
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let trimmedNote = userNote?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.userNote = (trimmedNote?.isEmpty == false) ? trimmedNote : nil
+    public init(sessionTitle: String, prompt: String, recentTurns: [ConversationTurn] = []) {
+        self.sessionTitle = sessionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.prompt = prompt.replacingOccurrences(of: "\0", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.recentTurns = Array(recentTurns.filter { !$0.text.isEmpty }.suffix(4))
     }
 
     public var isEmpty: Bool {
-        title == nil && tags.isEmpty && userNote == nil
-    }
-}
-
-public struct Clip: Identifiable, Equatable, Hashable, Codable, Sendable {
-    public static let defaultHotWindow: TimeInterval = 72 * 3600
-
-    public let id: ClipID
-    public let verbatimExcerpt: VerbatimExcerpt
-    public var excerpt: String { verbatimExcerpt.text }
-    public let promptContext: PromptContext
-    public let source: ClipSource
-    public let capturedAt: Date
-    public var disposition: ClipDisposition
-    public var annotation: ClipAnnotation
-
-    public init(
-        id: ClipID = ClipID(),
-        verbatimExcerpt: VerbatimExcerpt,
-        promptContext: PromptContext,
-        source: ClipSource,
-        capturedAt: Date = Date(),
-        disposition: ClipDisposition = .active(reheatedAt: nil),
-        annotation: ClipAnnotation = ClipAnnotation()
-    ) {
-        self.id = id
-        self.verbatimExcerpt = verbatimExcerpt
-        self.promptContext = promptContext
-        self.source = source
-        self.capturedAt = capturedAt
-        self.disposition = disposition
-        self.annotation = annotation
+        sessionTitle.isEmpty && prompt.isEmpty && recentTurns.isEmpty
     }
 
-    public func lifecycle(
-        at referenceDate: Date = Date(),
-        hotWindow: TimeInterval = Clip.defaultHotWindow
-    ) -> ClipLifecycle {
-        switch disposition {
-        case .synthesized:
-            return .synthesized
-        case .cooled:
-            return .archived
-        case .active(let reheatedAt):
-            let anchorDate = reheatedAt ?? capturedAt
-            return referenceDate.timeIntervalSince(anchorDate) <= hotWindow ? .hot : .archived
-        }
-    }
-}
-
-public struct NewClip: Equatable, Sendable {
-    public let verbatimExcerpt: VerbatimExcerpt
-    public var excerpt: String { verbatimExcerpt.text }
-    public let promptContext: PromptContext
-    public let source: ClipSource
-    public let capturedAt: Date
-    public let annotation: ClipAnnotation
-
-    public init(
-        excerpt: String,
-        promptContext: PromptContext,
-        source: ClipSource,
-        capturedAt: Date = Date(),
-        annotation: ClipAnnotation = ClipAnnotation()
-    ) throws {
-        self.verbatimExcerpt = try VerbatimExcerpt(validating: excerpt)
-        self.promptContext = promptContext
-        self.source = source
-        self.capturedAt = capturedAt
-        self.annotation = annotation
-    }
-
-    public static func fromDesktopSelection(
-        _ selection: CapturedSelection,
-        activeAntigravityTurn: ActiveAntigravityTurn?
-    ) throws -> NewClip {
-        if selection.bundleIdentifier == CapturedSelection.antigravityBundleIdentifier {
-            if let turn = activeAntigravityTurn {
-                let locator = "conversation://\(turn.conversationId)"
-                return try NewClip(
-                    excerpt: selection.text,
-                    promptContext: PromptContext.from(raw: turn.userPrompt),
-                    source: .antigravity(
-                        conversationId: turn.conversationId,
-                        workspacePath: turn.workspacePath,
-                        locator: locator
-                    ),
-                    capturedAt: selection.capturedAt
-                )
-            } else {
-                return try NewClip(
-                    excerpt: selection.text,
-                    promptContext: .missing,
-                    source: .antigravity(
-                        conversationId: nil,
-                        workspacePath: nil,
-                        locator: nil
-                    ),
-                    capturedAt: selection.capturedAt
-                )
-            }
-        }
-
-        let browserBundlePrefixes = [
-            "com.apple.Safari",
-            "com.google.Chrome",
-            "company.thebrowser.Browser",
-            "org.mozilla.firefox",
-            "com.brave.Browser",
-            "com.microsoft.edgemac"
-        ]
-        if browserBundlePrefixes.contains(where: { selection.bundleIdentifier.hasPrefix($0) }) {
-            let parsedURL = selection.documentURL.flatMap(URL.init(string:))
-            let site = WebChatSite.infer(sourceParam: nil, url: parsedURL, windowTitle: selection.windowTitle)
-            if site != .other || parsedURL != nil {
-                return try NewClip(
-                    excerpt: selection.text,
-                    promptContext: .missing,
-                    source: .web(site: site, url: selection.documentURL, pageTitle: selection.windowTitle),
-                    capturedAt: selection.capturedAt
-                )
-            }
-        }
-
-        return try NewClip(
-            excerpt: selection.text,
-            promptContext: .missing,
-            source: .desktop(
-                bundleIdentifier: selection.bundleIdentifier,
-                appName: selection.appName,
-                windowTitle: selection.windowTitle
-            ),
-            capturedAt: selection.capturedAt
-        )
+    public func formattedCommentMarkdown() -> String {
+        let turnsBlock = recentTurns
+            .map { "\($0.role): \($0.text)" }
+            .joined(separator: "\n")
+        return "<!-- rewind-context-v1 -->\nSession Title: \(sessionTitle)\nPrompt: \(prompt)\n\n### Recent Turns\n\(turnsBlock)"
     }
 }
 
@@ -497,105 +341,268 @@ public struct CapturedSelection: Equatable, Sendable {
     }
 }
 
-public struct DeletionReceipt: Equatable, Sendable {
-    public let deletedClipCount: Int
-    public let remainingClipCount: Int
-    public let remainingFTSTokenRows: Int
+public enum CardStatus: String, Codable, Equatable, Hashable, Sendable {
+    case pending
+    case ready
 
-    public init(deletedClipCount: Int, remainingClipCount: Int, remainingFTSTokenRows: Int) {
-        self.deletedClipCount = deletedClipCount
-        self.remainingClipCount = remainingClipCount
-        self.remainingFTSTokenRows = remainingFTSTokenRows
-    }
-}
-
-public struct DeleteAllConfirmation: Equatable, Sendable {
-    public static let userConfirmedPurgeAll = DeleteAllConfirmation()
-    private init() {}
-}
-
-public enum ExportFormat: String, CaseIterable, Codable, Sendable {
-    case markdown
-    case json
-}
-
-public enum ClipScope: String, CaseIterable, Equatable, Codable, Sendable {
-    case hot
-    case synthesized
-    case archived
-    case all
-
-    public var displayTitle: String {
+    public var badgeText: String {
         switch self {
-        case .hot:
-            return "近 72h 热窗"
-        case .synthesized:
-            return "已成文"
-        case .archived:
-            return "已冷却"
-        case .all:
-            return "全部"
+        case .pending: return "待分析"
+        case .ready: return "AI 已定锚"
         }
     }
 }
 
-public struct ClipQuery: Equatable, Sendable {
-    public var text: String?
-    public var scope: ClipScope
-    public var limit: Int
-    public var referenceDate: Date
-    public var hotWindow: TimeInterval
+public struct RewindCard: Identifiable, Codable, Equatable, Hashable, Sendable {
+    public static let hotWindowSeconds: TimeInterval = 72 * 3600
+
+    public let id: String
+    public let rawContent: String
+    public let status: CardStatus
+    public let sourcePlatform: String
+    public let title: String?
+    public let sessionTopic: String?
+    public let contextSummary: String?
+    public let keywords: [String]
+    public let sourceTitle: String
+    public let sourceURL: String?
+    public let verbatimText: String
+    public let createdAt: Date
+    public var isOfflinePending: Bool
 
     public init(
-        text: String? = nil,
-        scope: ClipScope = .hot,
-        limit: Int = 50,
-        referenceDate: Date = Date(),
-        hotWindow: TimeInterval = Clip.defaultHotWindow
+        id: String,
+        rawContent: String,
+        status: CardStatus,
+        sourcePlatform: String,
+        title: String? = nil,
+        sessionTopic: String? = nil,
+        contextSummary: String? = nil,
+        keywords: [String] = [],
+        sourceTitle: String,
+        sourceURL: String? = nil,
+        verbatimText: String,
+        createdAt: Date,
+        isOfflinePending: Bool = false
     ) {
-        self.text = text
-        self.scope = scope
-        self.limit = max(1, limit)
-        self.referenceDate = referenceDate
-        self.hotWindow = hotWindow
+        self.id = id
+        self.rawContent = rawContent
+        self.status = status
+        self.sourcePlatform = sourcePlatform
+        self.title = title
+        self.sessionTopic = sessionTopic
+        self.contextSummary = contextSummary
+        self.keywords = keywords
+        self.sourceTitle = sourceTitle
+        self.sourceURL = sourceURL
+        self.verbatimText = verbatimText
+        self.createdAt = createdAt
+        self.isOfflinePending = isOfflinePending
     }
 
-    public static func hot(limit: Int = 50, now: Date = Date()) -> ClipQuery {
-        ClipQuery(text: nil, scope: .hot, limit: limit, referenceDate: now)
+    public var reopenURL: URL? {
+        guard let sourceURL, let url = URL(string: sourceURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" || scheme == "conversation" else {
+            return nil
+        }
+        return url
     }
 }
 
-public enum StashError: Error, LocalizedError, Equatable, Sendable {
-    case emptyExcerpt
-    case invalidClipID(String)
-    case invalidDraftID(String)
-    case readOnlyStore
-    case clipNotFound(ClipID)
-    case databaseOpenFailed(String)
-    case queryFailed(String)
-    case writeFailed(String)
-    case exportEncodingFailed
+public enum MemosWireFormat {
+    public static func makeClientClipID(now: Date = Date()) -> String {
+        let epoch = max(0, Int(now.timeIntervalSince1970))
+        let suffix = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(8))
+        return "rw-\(epoch)-\(suffix)"
+    }
 
-    public var errorDescription: String? {
-        switch self {
-        case .emptyExcerpt:
-            return "无法保存空白片段，请先选中非空文字。"
-        case .invalidClipID(let raw):
-            return "无效的片段标识: \(raw)"
-        case .invalidDraftID(let raw):
-            return "无效的草稿文件名: \(raw)"
-        case .readOnlyStore:
-            return "当前存储处于只读模式，无法写入或删除片段。"
-        case .clipNotFound(let id):
-            return "找不到片段: \(id.rawValue)"
-        case .databaseOpenFailed(let detail):
-            return "无法打开本地归档数据库: \(detail)"
-        case .queryFailed(let detail):
-            return "本地检索失败: \(detail)"
-        case .writeFailed(let detail):
-            return "本地归档写入失败: \(detail)"
-        case .exportEncodingFailed:
-            return "导出数据编码失败。"
+    public static func isValidMemoID(_ id: String) -> Bool {
+        let bytes = Array(id.utf8)
+        guard !bytes.isEmpty && bytes.count <= 36 else { return false }
+        let isAlphaNum: (UInt8) -> Bool = { b in
+            (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x5A) || (b >= 0x61 && b <= 0x7A)
         }
+        guard isAlphaNum(bytes[0]), isAlphaNum(bytes[bytes.count - 1]) else { return false }
+        return bytes.allSatisfy { isAlphaNum($0) || $0 == 0x2D }
+    }
+
+    public static func inferWebPlatform(urlString: String?, title: String?) -> String {
+        let host = urlString.flatMap(URL.init(string:))?.host?.lowercased() ?? ""
+        let loweredTitle = title?.lowercased() ?? ""
+        if host.contains("chatgpt.com") || host.contains("openai.com") || loweredTitle.contains("chatgpt") {
+            return "chatgpt"
+        }
+        if host.contains("claude.ai") || loweredTitle.contains("claude") {
+            return "claude"
+        }
+        if host.contains("gemini.google.com") || loweredTitle.contains("gemini") {
+            return "gemini"
+        }
+        return "macos"
+    }
+
+    public static func formatISO8601UTC(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
+
+    public static func parseISO8601(_ raw: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: raw) {
+            return date
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: raw)
+    }
+
+    public static func formatRawMemoContent(
+        verbatimText: String,
+        sourcePlatform: String,
+        sourceTitle: String,
+        sourceURL: String?,
+        capturedAt: Date,
+        hasContext: Bool
+    ) throws -> String {
+        let cleanedBody = verbatimText.replacingOccurrences(of: "\0", with: "")
+        guard !cleanedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw RewindError.emptySelection
+        }
+        let safePlatform = sourcePlatform.isEmpty ? "macos" : sourcePlatform
+        let tags = hasContext
+            ? "#rewind/pending #rewind/has-ctx #source/\(safePlatform)"
+            : "#rewind/pending #source/\(safePlatform)"
+        let safeTitle = (sourceTitle.isEmpty ? safePlatform : sourceTitle)
+            .replacingOccurrences(of: "[", with: "(")
+            .replacingOccurrences(of: "]", with: ")")
+            .replacingOccurrences(of: "\n", with: " ")
+        let targetLink = (sourceURL?.isEmpty == false) ? (sourceURL ?? "") : "macos://\(safePlatform)"
+        let iso = formatISO8601UTC(capturedAt)
+        return "\(tags)\n\n> **Source:** [\(safeTitle)](\(targetLink)) · \(iso)\n\n\(cleanedBody)"
+    }
+
+    public static func replacingWithSynthesizedTag(_ rawContent: String) -> String {
+        rawContent
+            .replacingOccurrences(of: "#rewind/ready", with: "#rewind/synthesized")
+            .replacingOccurrences(of: "#rewind/pending", with: "#rewind/synthesized")
+            .replacingOccurrences(of: " #rewind/has-ctx", with: "")
+            .replacingOccurrences(of: "#rewind/has-ctx ", with: "")
+    }
+
+    public static func parseMemo(
+        id: String,
+        rawContent: String,
+        createdAt: Date,
+        now: Date = Date(),
+        hotWindow: TimeInterval = RewindCard.hotWindowSeconds,
+        isOfflinePending: Bool = false
+    ) -> RewindCard? {
+        guard rawContent.contains("#rewind/"),
+              !rawContent.contains("#rewind/synthesized"),
+              createdAt >= now.addingTimeInterval(-hotWindow) else {
+            return nil
+        }
+
+        let status: CardStatus = rawContent.contains("#rewind/ready") ? .ready : .pending
+        let lines = rawContent.components(separatedBy: "\n")
+        var idx = 0
+        var sourcePlatform = "macos"
+
+        while idx < lines.count && lines[idx].trimmingCharacters(in: .whitespaces).isEmpty {
+            idx += 1
+        }
+        if idx < lines.count && lines[idx].contains("#rewind/") {
+            for token in lines[idx].split(separator: " ") where token.hasPrefix("#source/") {
+                sourcePlatform = String(token.dropFirst("#source/".count))
+            }
+            idx += 1
+        }
+        while idx < lines.count && lines[idx].trimmingCharacters(in: .whitespaces).isEmpty {
+            idx += 1
+        }
+
+        var title: String?
+        var sessionTopic: String?
+        var contextSummary: String?
+        var keywords: [String] = []
+        var sourceTitle = sourcePlatform
+        var sourceURL: String?
+
+        let metadataPrefixes = [
+            "> **Title:**",
+            "> **Session:**",
+            "> **Context:**",
+            "> **Keywords:**",
+            "> **Source:**"
+        ]
+
+        while idx < lines.count {
+            let line = lines[idx]
+            guard let matched = metadataPrefixes.first(where: { line.hasPrefix($0) }) else {
+                break
+            }
+            let value = String(line.dropFirst(matched.count)).trimmingCharacters(in: .whitespaces)
+            switch matched {
+            case "> **Title:**":
+                title = value.isEmpty ? nil : value
+            case "> **Session:**":
+                sessionTopic = value.isEmpty ? nil : value
+            case "> **Context:**":
+                contextSummary = value.isEmpty ? nil : value
+            case "> **Keywords:**":
+                keywords = value
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+            case "> **Source:**":
+                let parsed = parseSourceLine(value)
+                if !parsed.title.isEmpty { sourceTitle = parsed.title }
+                sourceURL = parsed.url
+            default:
+                break
+            }
+            idx += 1
+        }
+
+        if idx < lines.count && lines[idx].trimmingCharacters(in: .whitespaces).isEmpty {
+            idx += 1
+        }
+        let verbatim = idx < lines.count ? lines[idx...].joined(separator: "\n") : ""
+
+        let normalizedID = id.hasPrefix("memos/") ? String(id.dropFirst("memos/".count)) : id
+        return RewindCard(
+            id: normalizedID,
+            rawContent: rawContent,
+            status: status,
+            sourcePlatform: sourcePlatform,
+            title: title,
+            sessionTopic: sessionTopic,
+            contextSummary: contextSummary,
+            keywords: keywords,
+            sourceTitle: sourceTitle,
+            sourceURL: sourceURL,
+            verbatimText: verbatim,
+            createdAt: createdAt,
+            isOfflinePending: isOfflinePending
+        )
+    }
+
+    private static func parseSourceLine(_ raw: String) -> (title: String, url: String?) {
+        let mainPart = raw.components(separatedBy: " · ").first ?? raw
+        if mainPart.hasPrefix("["),
+           let midRange = mainPart.range(of: "]("),
+           mainPart.hasSuffix(")") {
+            let label = String(mainPart[mainPart.index(after: mainPart.startIndex)..<midRange.lowerBound])
+            let linkStart = midRange.upperBound
+            let linkEnd = mainPart.index(before: mainPart.endIndex)
+            let link = String(mainPart[linkStart..<linkEnd])
+            let exposedURL = link.hasPrefix("macos://") ? nil : link
+            return (label, exposedURL)
+        }
+        return (mainPart.trimmingCharacters(in: .whitespaces), nil)
     }
 }

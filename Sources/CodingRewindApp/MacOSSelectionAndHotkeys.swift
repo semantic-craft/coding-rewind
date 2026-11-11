@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MIT
+// Selection capture via Accessibility + pasteboard-preserving Cmd+C adapted from tisfeng/SelectedTextKit (MIT) and p0deje/Maccy (MIT).
 
 import AppKit
 import ApplicationServices
@@ -10,216 +11,131 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
     public init() {}
 
     public func captureFrontmostSelection() async throws -> CapturedSelection {
-        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
-            throw CaptureError.noFrontmostApplication
-        }
-
-        let bundleID = frontmostApp.bundleIdentifier ?? "unknown.bundle"
-        let appName = frontmostApp.localizedName ?? "macOS Application"
-        let pid = frontmostApp.processIdentifier
-
-        let appElement = AXUIElementCreateApplication(pid)
+        guard let frontmost = NSWorkspace.shared.frontmostApplication else { throw RewindError.noFrontmostApplication }
+        let bundleID = frontmost.bundleIdentifier ?? "unknown.bundle"
+        let appName = frontmost.localizedName ?? "macOS"
+        let appElement = AXUIElementCreateApplication(frontmost.processIdentifier)
         if bundleID == CapturedSelection.antigravityBundleIdentifier {
-            _ = AXUIElementSetAttributeValue(
-                appElement,
-                "AXManualAccessibility" as CFString,
-                kCFBooleanTrue
-            )
+            _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         }
 
-        var windowTitle: String?
-        var documentURL: String?
-        var windowRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
-           let windowElement = windowRef {
-            let axWindow = windowElement as! AXUIElement
-            var titleRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
-               let titleStr = titleRef as? String {
-                windowTitle = titleStr
-            }
-            var docRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axWindow, kAXDocumentAttribute as CFString, &docRef) == .success,
-               let docStr = docRef as? String {
-                documentURL = docStr
-            }
-        }
-
+        var windowTitle = Self.copyAXWindowString(appElement: appElement, attribute: kAXTitleAttribute as CFString)
+        var documentURL = Self.copyAXWindowString(appElement: appElement, attribute: kAXDocumentAttribute as CFString)
         var selectedText: String?
         var focusedRef: CFTypeRef?
         let focusStatus = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef)
-        if focusStatus == .apiDisabled {
-            throw CaptureError.accessibilityPermissionDenied
-        }
-        if focusStatus == .success, let focusedElement = focusedRef {
-            let axFocused = focusedElement as! AXUIElement
-            var selectedRef: CFTypeRef?
-            if AXUIElementCopyAttributeValue(axFocused, kAXSelectedTextAttribute as CFString, &selectedRef) == .success,
-               let text = selectedRef as? String,
-               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if focusStatus == .apiDisabled { throw RewindError.accessibilityPermissionDenied }
+        if focusStatus == .success, let focusedObj = focusedRef, CFGetTypeID(focusedObj) == AXUIElementGetTypeID() {
+            var selRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(unsafeDowncast(focusedObj as AnyObject, to: AXUIElement.self), kAXSelectedTextAttribute as CFString, &selRef) == .success,
+               let text = selRef as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 selectedText = text
             }
         }
-
         if selectedText == nil {
-            if let fallbackText = await MainActor.run(body: {
-                Self.readPasteboardWithSnapshotFallback()
-            }), !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                selectedText = fallbackText
-            }
+            selectedText = await MainActor.run { Self.copyViaCommandCPreservingPasteboard() }
         }
-
-        guard let finalSelection = selectedText,
-              !finalSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw CaptureError.emptySelection
+        guard let finalSelection = selectedText, !finalSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw RewindError.emptySelection
         }
+        if Self.isSupportedBrowser(bundleID: bundleID), !(documentURL?.hasPrefix("http") ?? false) {
+            let tab = await MainActor.run { Self.queryBrowserActiveTab(bundleID: bundleID) }
+            if let t = tab.title, !t.isEmpty { windowTitle = t }
+            if let u = tab.url, !u.isEmpty { documentURL = u }
+        }
+        return CapturedSelection(text: finalSelection, bundleIdentifier: bundleID, appName: appName, windowTitle: windowTitle, documentURL: documentURL)
+    }
 
-        return CapturedSelection(
-            text: finalSelection,
-            bundleIdentifier: bundleID,
-            appName: appName,
-            windowTitle: windowTitle,
-            documentURL: documentURL,
-            capturedAt: Date()
-        )
+    private static func copyAXWindowString(appElement: AXUIElement, attribute: CFString) -> String? {
+        var winRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &winRef) == .success,
+              let winObj = winRef, CFGetTypeID(winObj) == AXUIElementGetTypeID() else { return nil }
+        var valRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(unsafeDowncast(winObj as AnyObject, to: AXUIElement.self), attribute, &valRef) == .success else { return nil }
+        return valRef as? String
     }
 
     @MainActor
-    private static func readPasteboardWithSnapshotFallback() -> String? {
+    private static func copyViaCommandCPreservingPasteboard() -> String? {
         let pasteboard = NSPasteboard.general
-        return pasteboard.string(forType: .string)
+        let initialChangeCount = pasteboard.changeCount
+        let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pasteboard.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+        defer {
+            pasteboard.clearContents()
+            let restored: [NSPasteboardItem] = snapshot.compactMap { entries in
+                guard !entries.isEmpty else { return nil }
+                let pbItem = NSPasteboardItem()
+                for (type, data) in entries { pbItem.setData(data, forType: type) }
+                return pbItem
+            }
+            if !restored.isEmpty { pasteboard.writeObjects(restored) }
+        }
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return nil }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        for _ in 0..<12 {
+            usleep(10_000)
+            if pasteboard.changeCount != initialChangeCount { return pasteboard.string(forType: .string) }
+        }
+        return nil
+    }
+
+    private static func isSupportedBrowser(bundleID: String) -> Bool {
+        ["com.apple.Safari", "com.google.Chrome", "company.thebrowser.Browser", "com.brave.Browser"].contains { bundleID.hasPrefix($0) }
+    }
+
+    @MainActor
+    private static func queryBrowserActiveTab(bundleID: String) -> (title: String?, url: String?) {
+        let isSafari = bundleID.hasPrefix("com.apple.Safari")
+        let script = isSafari
+            ? "tell application id \"com.apple.Safari\" to if (count of windows) > 0 then return (name of current tab of front window) & \"\\n\" & (URL of current tab of front window)"
+            : "tell application id \"\(bundleID)\" to if (count of windows) > 0 then return (title of active tab of front window) & \"\\n\" & (URL of active tab of front window)"
+        var err: NSDictionary?
+        guard let out = NSAppleScript(source: script)?.executeAndReturnError(&err).stringValue else { return (nil, nil) }
+        let parts = out.components(separatedBy: "\n")
+        return (parts.first, parts.count > 1 ? parts[1] : nil)
     }
 }
 
 @MainActor
 public final class GlobalShortcutMonitor {
-    public struct KeyCombo: Equatable, Codable, Sendable {
-        public let keyCode: UInt32
-        public let carbonModifiers: UInt32
-
-        public init(keyCode: UInt32, carbonModifiers: UInt32) {
-            self.keyCode = keyCode
-            self.carbonModifiers = carbonModifiers
-        }
-
-        public static let defaultCaptureSelection = KeyCombo(
-            keyCode: UInt32(kVK_ANSI_S),
-            carbonModifiers: UInt32(controlKey | optionKey)
-        )
-
-        public static let defaultToggleHUD = KeyCombo(
-            keyCode: UInt32(kVK_Space),
-            carbonModifiers: UInt32(controlKey | optionKey)
-        )
+    private final class DispatchBox {
+        let handler: @MainActor @Sendable (UInt32) -> Void
+        init(handler: @escaping @MainActor @Sendable (UInt32) -> Void) { self.handler = handler }
     }
-
-    private final class HotKeyDispatchBox {
-        let dispatch: @MainActor @Sendable (UInt32) -> Void
-
-        init(dispatch: @escaping @MainActor @Sendable (UInt32) -> Void) {
-            self.dispatch = dispatch
-        }
-    }
-
-    private let onCaptureSelection: @MainActor () -> Void
+    private let onCapture: @MainActor () -> Void
     private let onToggleHUD: @MainActor () -> Void
-    private var captureHotKeyRef: EventHotKeyRef?
-    private var toggleHotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
-    private var dispatchBox: HotKeyDispatchBox?
+    private var captureRef: EventHotKeyRef?
+    private var toggleRef: EventHotKeyRef?
+    private var handlerRef: EventHandlerRef?
+    private var box: DispatchBox?
 
-    public init(
-        onCaptureSelection: @escaping @MainActor () -> Void,
-        onToggleHUD: @escaping @MainActor () -> Void
-    ) {
-        self.onCaptureSelection = onCaptureSelection
+    public init(onCapture: @escaping @MainActor () -> Void, onToggleHUD: @escaping @MainActor () -> Void) {
+        self.onCapture = onCapture
         self.onToggleHUD = onToggleHUD
     }
 
-    public func register(
-        captureCombo: KeyCombo = .defaultCaptureSelection,
-        toggleHUDCombo: KeyCombo = .defaultToggleHUD
-    ) {
-        unregisterAll()
-        let box = HotKeyDispatchBox { [weak self] idValue in
-            guard let self else { return }
-            if idValue == 1 {
-                self.onCaptureSelection()
-            } else if idValue == 2 {
-                self.onToggleHUD()
-            }
-        }
-        self.dispatchBox = box
-
-        var eventSpec = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, event, userData -> OSStatus in
-                guard let event, let userData else { return noErr }
-                var hotKeyID = EventHotKeyID()
-                let status = GetEventParameter(
-                    event,
-                    EventParamName(kEventParamDirectObject),
-                    EventParamType(typeEventHotKeyID),
-                    nil,
-                    MemoryLayout<EventHotKeyID>.size,
-                    nil,
-                    &hotKeyID
-                )
-                guard status == noErr else { return noErr }
-                let idValue = hotKeyID.id
-                let retainedBox = Unmanaged<HotKeyDispatchBox>.fromOpaque(userData).takeUnretainedValue()
-                let handler = retainedBox.dispatch
-                Task { @MainActor in
-                    handler(idValue)
-                }
-                return noErr
-            },
-            1,
-            &eventSpec,
-            Unmanaged.passUnretained(box).toOpaque(),
-            &eventHandlerRef
-        )
-
-        let signature: OSType = 0x4352_5744
-        let captureID = EventHotKeyID(signature: signature, id: 1)
-        RegisterEventHotKey(
-            captureCombo.keyCode,
-            captureCombo.carbonModifiers,
-            captureID,
-            GetApplicationEventTarget(),
-            0,
-            &captureHotKeyRef
-        )
-
-        let toggleID = EventHotKeyID(signature: signature, id: 2)
-        RegisterEventHotKey(
-            toggleHUDCombo.keyCode,
-            toggleHUDCombo.carbonModifiers,
-            toggleID,
-            GetApplicationEventTarget(),
-            0,
-            &toggleHotKeyRef
-        )
-    }
-
-    public func unregisterAll() {
-        if let captureHotKeyRef {
-            UnregisterEventHotKey(captureHotKeyRef)
-            self.captureHotKeyRef = nil
-        }
-        if let toggleHotKeyRef {
-            UnregisterEventHotKey(toggleHotKeyRef)
-            self.toggleHotKeyRef = nil
-        }
-        if let eventHandlerRef {
-            RemoveEventHandler(eventHandlerRef)
-            self.eventHandlerRef = nil
-        }
-        self.dispatchBox = nil
+    public func register() {
+        let box = DispatchBox { [weak self] id in if id == 1 { self?.onCapture() } else if id == 2 { self?.onToggleHUD() } }
+        self.box = box
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData -> OSStatus in
+            guard let event, let userData else { return noErr }
+            var hkID = EventHotKeyID()
+            guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hkID) == noErr else { return noErr }
+            let dispatch = Unmanaged<DispatchBox>.fromOpaque(userData).takeUnretainedValue().handler
+            let pressedID = hkID.id
+            Task { @MainActor in dispatch(pressedID) }
+            return noErr
+        }, 1, &spec, Unmanaged.passUnretained(box).toOpaque(), &handlerRef)
+        let mods = UInt32(controlKey | optionKey)
+        RegisterEventHotKey(UInt32(kVK_ANSI_S), mods, EventHotKeyID(signature: 0x4352_5744, id: 1), GetApplicationEventTarget(), 0, &captureRef)
+        RegisterEventHotKey(UInt32(kVK_ANSI_R), mods, EventHotKeyID(signature: 0x4352_5744, id: 2), GetApplicationEventTarget(), 0, &toggleRef)
     }
 }

@@ -5,135 +5,85 @@ import Foundation
 public struct ActiveAntigravityTurn: Equatable, Codable, Sendable {
     public let conversationId: String
     public let workspacePath: String?
-    public let userPrompt: String
+    public let lastUserInput: String
+    public let hookEventName: String?
+    public let recentTurns: [ConversationTurn]
     public let observedAt: Date
 
     public init(
         conversationId: String,
         workspacePath: String?,
-        userPrompt: String,
+        lastUserInput: String,
+        hookEventName: String? = nil,
+        recentTurns: [ConversationTurn] = [],
         observedAt: Date = Date()
     ) throws {
         let trimmedID = conversationId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedPrompt = userPrompt
+        let trimmedPrompt = lastUserInput
             .replacingOccurrences(of: "\0", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedID.isEmpty, !trimmedPrompt.isEmpty else {
-            throw StashError.writeFailed("ActiveAntigravityTurn requires non-empty conversationId and userPrompt")
+        let cleanedTurns = Array(recentTurns.filter { !$0.text.isEmpty }.suffix(4))
+        guard !trimmedID.isEmpty, (!trimmedPrompt.isEmpty || !cleanedTurns.isEmpty) else {
+            throw RewindError.ioError("ActiveAntigravityTurn requires non-empty conversationId and turn content")
         }
         self.conversationId = trimmedID
-        let trimmedWorkspace = workspacePath?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.workspacePath = (trimmedWorkspace?.isEmpty == false) ? trimmedWorkspace : nil
-        self.userPrompt = trimmedPrompt
+        let trimmedWS = workspacePath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.workspacePath = (trimmedWS?.isEmpty == false) ? trimmedWS : nil
+        self.lastUserInput = trimmedPrompt
+        let trimmedEvent = hookEventName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.hookEventName = (trimmedEvent?.isEmpty == false) ? trimmedEvent : nil
+        self.recentTurns = cleanedTurns
         self.observedAt = observedAt
+    }
+
+    public var sessionTitle: String {
+        if let workspacePath, !workspacePath.isEmpty {
+            let folder = URL(fileURLWithPath: workspacePath).lastPathComponent
+            if !folder.isEmpty && folder != "/" {
+                return folder
+            }
+        }
+        return "Antigravity"
+    }
+
+    public func toCaptureContext() -> CaptureContext {
+        CaptureContext(sessionTitle: sessionTitle, prompt: lastUserInput, recentTurns: recentTurns)
     }
 }
 
 public struct ActiveTurnStore: Sendable {
-    public static let maxRetainedTurnFiles = 4
-
-    public let directoryURL: URL
+    public let fileURL: URL
     public let maxTurnAge: TimeInterval
 
-    public init(directoryURL: URL, maxTurnAge: TimeInterval = 4 * 3600) throws {
-        let resolved = directoryURL.standardizedFileURL
-        try FileManager.default.createDirectory(at: resolved, withIntermediateDirectories: true)
-        self.directoryURL = resolved
+    public init(dataDirectoryURL: URL, maxTurnAge: TimeInterval = 4 * 3600) throws {
+        let resolvedDir = dataDirectoryURL.standardizedFileURL
+        try FileManager.default.createDirectory(at: resolvedDir, withIntermediateDirectories: true)
+        self.fileURL = resolvedDir.appendingPathComponent("active_turn.json", isDirectory: false)
         self.maxTurnAge = maxTurnAge
     }
 
     public func record(_ turn: ActiveAntigravityTurn) throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let data = try encoder.encode(turn)
-
-        let filename = "turn-\(Self.sanitizeFilenameComponent(turn.conversationId)).json"
-        let targetURL = directoryURL.appendingPathComponent(filename, isDirectory: false)
-        try AtomicFileWriter.writeData(data, to: targetURL, permissions: 0o600)
-        try pruneSnapshotsExceedingCap()
+        try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
     }
 
     public func latestTurn(
         forFrontmostBundleID bundleID: String,
-        conversationId: String? = nil,
         now: Date = Date()
-    ) throws -> ActiveAntigravityTurn? {
-        guard bundleID == CapturedSelection.antigravityBundleIdentifier else {
+    ) -> ActiveAntigravityTurn? {
+        guard bundleID == CapturedSelection.antigravityBundleIdentifier,
+              let data = try? Data(contentsOf: fileURL) else {
             return nil
         }
-
-        let snapshots = try readAllSnapshots()
-        let freshSnapshots = snapshots.filter { snapshot in
-            now.timeIntervalSince(snapshot.observedAt) <= maxTurnAge
-        }
-
-        if let conversationId, !conversationId.isEmpty {
-            return freshSnapshots.first { $0.conversationId == conversationId }
-        }
-        return freshSnapshots.first
-    }
-
-    public func clearAll() throws {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: directoryURL.path) else { return }
-        let urls = try fm.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
-        for url in urls where url.lastPathComponent.hasPrefix("turn-") && url.pathExtension == "json" {
-            try? fm.removeItem(at: url)
-        }
-    }
-
-    public func retainedSnapshotFileURLs() throws -> [URL] {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: directoryURL.path) else { return [] }
-        let urls = try fm.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
-        return urls.filter { $0.lastPathComponent.hasPrefix("turn-") && $0.pathExtension == "json" }
-    }
-
-    private func readAllSnapshots() throws -> [ActiveAntigravityTurn] {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        var turns: [ActiveAntigravityTurn] = []
-        for url in try retainedSnapshotFileURLs() {
-            if let data = try? Data(contentsOf: url),
-               let decoded = try? decoder.decode(ActiveAntigravityTurn.self, from: data) {
-                turns.append(decoded)
-            }
+        guard let turn = try? decoder.decode(ActiveAntigravityTurn.self, from: data),
+              now.timeIntervalSince(turn.observedAt) <= maxTurnAge else {
+            return nil
         }
-        turns.sort { $0.observedAt > $1.observedAt }
-        return turns
-    }
-
-    private func pruneSnapshotsExceedingCap() throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        var entries: [(url: URL, observedAt: Date)] = []
-
-        for url in try retainedSnapshotFileURLs() {
-            if let data = try? Data(contentsOf: url),
-               let turn = try? decoder.decode(ActiveAntigravityTurn.self, from: data) {
-                entries.append((url, turn.observedAt))
-            } else {
-                try? FileManager.default.removeItem(at: url)
-            }
-        }
-
-        entries.sort { $0.observedAt > $1.observedAt }
-        if entries.count > Self.maxRetainedTurnFiles {
-            for stale in entries.dropFirst(Self.maxRetainedTurnFiles) {
-                try? FileManager.default.removeItem(at: stale.url)
-            }
-        }
-    }
-
-    private static func sanitizeFilenameComponent(_ raw: String) -> String {
-        var result = ""
-        for scalar in raw.lowercased().unicodeScalars {
-            if (scalar >= "a" && scalar <= "z") || (scalar >= "0" && scalar <= "9") || scalar == "-" || scalar == "_" {
-                result.unicodeScalars.append(scalar)
-            } else {
-                result.append("_")
-            }
-        }
-        return result.isEmpty ? "default" : String(result.prefix(64))
+        return turn
     }
 }

@@ -4,395 +4,569 @@ import CodingRewindCore
 import Foundation
 import Testing
 
-@Suite("CodingRewindCore Behavioral Suite")
+private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
+    struct RecordedRequest: Sendable {
+        let method: String
+        let url: URL
+        let authHeader: String?
+        let body: String
+    }
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var handlers: [String: @Sendable (URLRequest, Data) -> (Int, Data)] = [:]
+    nonisolated(unsafe) private static var requestsBySuite: [String: [RecordedRequest]] = [:]
+
+    static func register(suiteID: String, handler: @escaping @Sendable (URLRequest, Data) -> (Int, Data)) {
+        lock.lock()
+        defer { lock.unlock() }
+        handlers[suiteID] = handler
+        requestsBySuite[suiteID] = []
+    }
+
+    static func unregister(suiteID: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        handlers.removeValue(forKey: suiteID)
+        requestsBySuite.removeValue(forKey: suiteID)
+    }
+
+    static func recordedRequests(suiteID: String) -> [RecordedRequest] {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestsBySuite[suiteID] ?? []
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host?.hasSuffix(".mock.memos.local") == true
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let url = request.url, let host = url.host else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        let suiteID = host.replacingOccurrences(of: ".mock.memos.local", with: "")
+        let bodyData = Self.readBody(from: request)
+
+        Self.lock.lock()
+        let handler = Self.handlers[suiteID]
+        Self.requestsBySuite[suiteID, default: []].append(
+            RecordedRequest(
+                method: request.httpMethod ?? "GET",
+                url: url,
+                authHeader: request.value(forHTTPHeaderField: "Authorization"),
+                body: String(decoding: bodyData, as: UTF8.self)
+            )
+        )
+        Self.lock.unlock()
+
+        guard let handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+            return
+        }
+        let (status, respData) = handler(request, bodyData)
+        if status < 0 {
+            client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
+            return
+        }
+        guard let httpResp = HTTPURLResponse(
+            url: url,
+            statusCode: status,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "application/json"]
+        ) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: httpResp, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: respData)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+
+    private static func readBody(from request: URLRequest) -> Data {
+        if let body = request.httpBody { return body }
+        guard let stream = request.httpBodyStream else { return Data() }
+        stream.open()
+        defer { stream.close() }
+        var out = Data()
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while stream.hasBytesAvailable {
+            let count = stream.read(&buf, maxLength: buf.count)
+            if count <= 0 { break }
+            out.append(buf, count: count)
+        }
+        return out
+    }
+}
+
+private struct StubCapturer: SelectionCapturing {
+    let selection: CapturedSelection
+    func captureFrontmostSelection() async throws -> CapturedSelection { selection }
+}
+
+@Suite("CodingRewindCore Memos Wire, Outbox & Plugin Suite")
 struct CodingRewindCoreTests {
-    private func makeTemporaryDirectory() throws -> URL {
+    private func makeIsolatedDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("coding-rewind-core-tests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("coding-rewind-core-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
 
-    @Test("VerbatimExcerpt strips NUL bytes, preserves formatting, and rejects blank input")
-    func verbatimExcerptValidation() throws {
-        let excerpt = try VerbatimExcerpt(validating: "  line 1\0\n  line 2  ")
-        #expect(excerpt.text == "  line 1\n  line 2  ")
-
-        #expect(throws: StashError.emptyExcerpt) {
-            _ = try VerbatimExcerpt(validating: "   \n\t\0  ")
-        }
+    private func makeMockSession() -> URLSession {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.protocolClasses = [MockMemosURLProtocol.self]
+        return URLSession(configuration: cfg)
     }
 
-    @Test("PromptContext normalizes nil or blank strings to .missing without fabricating text")
-    func promptContextBoundaryNormalization() {
-        #expect(PromptContext.from(raw: nil) == .missing)
-        #expect(PromptContext.from(raw: "  \n\t\0 ") == .missing)
-        #expect(PromptContext.from(raw: "  如何配置 SQLite WAL 模式？ ") == .captured("如何配置 SQLite WAL 模式？"))
-    }
+    @Test("MemosClient wire contract creates pending clip + context comment, lists 72h hot cards, and patches synthesized")
+    func memosClientWireContractEndToEnd() async throws {
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
 
-    @Test("DraftID rejects path traversal and normalizes titles into safe stems")
-    func draftIDRejectsTraversal() throws {
-        let valid = try DraftID(parsing: "Architecture-Notes_01.md")
-        #expect(valid.stem == "architecture-notes_01")
-        #expect(valid.filename == "architecture-notes_01.md")
+        let now = try #require(MemosWireFormat.parseISO8601("2026-11-11T03:00:00Z"))
+        let baseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local"))
 
-        #expect(throws: StashError.self) {
-            _ = try DraftID(parsing: "../secret")
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, bodyData in
+            let path = req.url?.path ?? ""
+            if req.httpMethod == "POST" && path == "/api/v1/memos" {
+                let obj = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+                let content = obj["content"] as? String ?? ""
+                let resp: [String: Any] = [
+                    "name": "memos/srv-101",
+                    "content": content,
+                    "createTime": "2026-11-11T02:55:00Z",
+                    "updateTime": "2026-11-11T02:55:00Z"
+                ]
+                let data = (try? JSONSerialization.data(withJSONObject: resp)) ?? Data()
+                return (200, data)
+            }
+            if req.httpMethod == "POST" && path == "/api/v1/memos/srv-101/comments" {
+                let resp: [String: Any] = ["name": "memos/srv-101-ctx", "content": "ok"]
+                return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+            }
+            if req.httpMethod == "GET" && path == "/api/v1/memos" {
+                let readyMarkdown = """
+                #rewind/ready #source/antigravity
+
+                > **Title:** NSPanel 不抢焦点浮窗
+                > **Session:** coding-rewind · 状态栏重构
+                > **Context:** 讨论 macOS 悬浮面板如何响应点击却不打断当前编辑器输入焦点。
+                > **Keywords:** NSPanel, nonactivatingPanel, AppKit
+                > **Source:** [coding-rewind](conversation://conv-alpha) · 2026-11-11T02:50:00Z
+
+                > Quoted inside verbatim
+                let mask: NSWindow.StyleMask = [.nonactivatingPanel]
+                """
+                let pendingPlain = """
+                #rewind/pending #source/macos
+
+                > **Source:** [Preview](macos://macos) · 2026-11-11T01:00:00Z
+
+                Plain macOS snippet
+                """
+                let synthesizedDone = """
+                #rewind/synthesized #source/claude
+
+                > **Source:** [Thread](https://claude.ai/chat/1) · 2026-11-11T02:59:00Z
+
+                Already synthesized
+                """
+                let expiredOld = """
+                #rewind/ready #source/chatgpt
+
+                > **Source:** [Old](https://chatgpt.com/c/old) · 2026-11-01T00:00:00Z
+
+                Older than 72 hours
+                """
+                let listResp: [String: Any] = [
+                    "memos": [
+                        ["name": "memos/m-old", "content": expiredOld, "createTime": "2026-11-01T00:00:00Z"],
+                        ["name": "memos/m-synth", "content": synthesizedDone, "createTime": "2026-11-11T02:59:00Z"],
+                        ["name": "memos/m-pending", "content": pendingPlain, "createTime": "2026-11-11T01:00:00.123456Z"],
+                        ["name": "memos/m-ready", "content": readyMarkdown, "createTime": "2026-11-11T02:50:00Z"],
+                        ["name": "memos/m-unrelated", "content": "Shopping list without rewind tag", "createTime": "2026-11-11T02:58:00Z"]
+                    ]
+                ]
+                return (200, (try? JSONSerialization.data(withJSONObject: listResp)) ?? Data())
+            }
+            if req.httpMethod == "PATCH" && path == "/api/v1/memos/m-ready" {
+                let resp: [String: Any] = ["name": "memos/m-ready", "content": "patched"]
+                return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+            }
+            return (404, Data("{\"error\":\"unexpected\"}".utf8))
         }
-        #expect(throws: StashError.self) {
-            _ = try DraftID(parsing: "sub/file")
-        }
 
-        let cjkSlug = DraftID.makeSlug(fromTitle: "纯中文标题成文草稿", suffix: "2")
-        #expect(cjkSlug.stem == "draft-2")
-    }
+        let client = MemosClient(session: makeMockSession())
+        let clipID = MemosWireFormat.makeClientClipID(now: now)
+        #expect(MemosWireFormat.isValidMemoID(clipID))
+        #expect(MemosWireFormat.isValidMemoID("\(clipID)-ctx"))
 
-    @Test("Clip lifecycle derives .hot within 72h, .archived past 72h, .synthesized, and supports non-destructive reheating")
-    func clipLifecycleDerivationAndReheating() throws {
-        let baseDate = Date(timeIntervalSince1970: 1_760_000_000)
-        var clip = Clip(
-            verbatimExcerpt: try VerbatimExcerpt(validating: "[SYNTHETIC] Verbatim snippet"),
-            promptContext: .missing,
-            source: .web(site: .claude, url: "https://claude.ai/chat/synthetic", pageTitle: nil),
-            capturedAt: baseDate
+        let ctx = CaptureContext(
+            sessionTitle: "coding-rewind",
+            prompt: "如何设计不抢焦点的 HUD？",
+            recentTurns: [
+                ConversationTurn(role: "User", text: "如何设计不抢焦点的 HUD？"),
+                ConversationTurn(role: "Assistant", text: "使用 NSPanel 与 .nonactivatingPanel。")
+            ]
         )
+        let rawWithCtx = try MemosWireFormat.formatRawMemoContent(
+            verbatimText: "func demo() {\n    print(\"verbatim\")\n}",
+            sourcePlatform: "antigravity",
+            sourceTitle: "coding-rewind",
+            sourceURL: "conversation://conv-alpha",
+            capturedAt: now,
+            hasContext: true
+        )
+        let created = try await client.createClip(
+            clientClipId: clipID,
+            content: rawWithCtx,
+            contextComment: ctx.formattedCommentMarkdown(),
+            baseURL: baseURL,
+            token: "tok-secret-test",
+            fallbackCreatedAt: now
+        )
+        #expect(created.id == "srv-101")
+        #expect(created.verbatimText == "func demo() {\n    print(\"verbatim\")\n}")
 
-        #expect(clip.lifecycle(at: baseDate.addingTimeInterval(3600)) == .hot)
-        #expect(clip.lifecycle(at: baseDate.addingTimeInterval(72 * 3600)) == .hot)
-        #expect(clip.lifecycle(at: baseDate.addingTimeInterval(72 * 3600 + 1)) == .archived)
+        let rawWithoutCtx = try MemosWireFormat.formatRawMemoContent(
+            verbatimText: "No context excerpt",
+            sourcePlatform: "macos",
+            sourceTitle: "Notes",
+            sourceURL: nil,
+            capturedAt: now,
+            hasContext: false
+        )
+        #expect(!rawWithoutCtx.contains("#rewind/has-ctx"))
+        #expect(rawWithoutCtx.hasPrefix("#rewind/pending #source/macos"))
 
-        let reheatDate = baseDate.addingTimeInterval(100 * 3600)
-        clip.disposition = .active(reheatedAt: reheatDate)
-        #expect(clip.capturedAt == baseDate)
-        #expect(clip.lifecycle(at: reheatDate.addingTimeInterval(24 * 3600)) == .hot)
-        #expect(clip.lifecycle(at: reheatDate.addingTimeInterval(73 * 3600)) == .archived)
+        let hotCards = try await client.listHotClips(baseURL: baseURL, token: "tok-secret-test", now: now)
+        #expect(hotCards.count == 2)
+        #expect(hotCards[0].id == "m-ready")
+        #expect(hotCards[0].status == .ready)
+        #expect(hotCards[0].title == "NSPanel 不抢焦点浮窗")
+        #expect(hotCards[0].sessionTopic == "coding-rewind · 状态栏重构")
+        #expect(hotCards[0].contextSummary?.contains("悬浮面板") == true)
+        #expect(hotCards[0].keywords == ["NSPanel", "nonactivatingPanel", "AppKit"])
+        #expect(hotCards[0].sourceURL == "conversation://conv-alpha")
+        #expect(hotCards[0].verbatimText == "> Quoted inside verbatim\nlet mask: NSWindow.StyleMask = [.nonactivatingPanel]")
+        #expect(hotCards[1].id == "m-pending")
+        #expect(hotCards[1].status == .pending)
+        #expect(hotCards[1].reopenURL == nil)
 
-        clip.disposition = .cooled(at: reheatDate)
-        #expect(clip.lifecycle(at: reheatDate) == .archived)
+        try await client.markSynthesized(card: hotCards[0], baseURL: baseURL, token: "tok-secret-test")
 
-        clip.disposition = .synthesized(draftID: try DraftID(parsing: "note-1"), at: reheatDate)
-        #expect(clip.lifecycle(at: reheatDate.addingTimeInterval(200 * 3600)) == .synthesized)
+        let recorded = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(recorded.count == 4)
+        #expect(recorded[0].authHeader == "Bearer tok-secret-test")
+        #expect(recorded[0].url.query?.contains("memoId=\(clipID)") == true)
+        #expect(recorded[0].body.contains("\"visibility\":\"PRIVATE\""))
+        #expect(recorded[0].body.contains("#rewind/pending #rewind/has-ctx #source/antigravity"))
+        #expect(recorded[1].url.path == "/api/v1/memos/srv-101/comments")
+        #expect(recorded[1].url.query?.contains("commentId=\(clipID)-ctx") == true)
+        #expect(recorded[1].body.contains("<!-- rewind-context-v1 -->"))
+        #expect(recorded[3].method == "PATCH")
+        #expect(recorded[3].url.query == "updateMask=content")
+        #expect(recorded[3].body.contains("#rewind\\/synthesized") || recorded[3].body.contains("#rewind/synthesized"))
+        #expect(!recorded[3].body.contains("#rewind/ready"))
     }
 
-    @Test("M2 + M3: StashStore captures without title/tags, separates annotations, exports Markdown/JSON, and synchronously purges FTS5 on delete")
-    func stashStoreCaptureExportAndSynchronousFTSDelete() async throws {
-        let tempDir = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
+    @Test("OfflineOutbox + HotCache survive network failure and flush idempotently on 409 retry")
+    @MainActor
+    func offlineOutboxAndHotCacheIdempotentFlush() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
 
         let paths = try StoragePaths(
-            appSupportDirectoryURL: tempDir.appendingPathComponent("AppSupport"),
-            antigravityConfigDirectoryURL: tempDir.appendingPathComponent("GeminiConfig")
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("GeminiConfig")
         )
-        let store = try StashStore(location: .sqliteFile(paths.stashDatabaseURL), mode: .readWrite)
-        let now = Date(timeIntervalSince1970: 1_762_000_000)
-
-        let clip1 = try await store.capture(
-            NewClip(
-                excerpt: "[SYNTHETIC] NSPanel 配合 nonactivatingPanel 实现不抢焦点的悬浮窗，适合边聊边存。",
-                promptContext: .captured("[SYNTHETIC] macOS 上如何实现不打断当前窗口焦点的速览面板？"),
-                source: .antigravity(
-                    conversationId: "synthetic-conv-alpha",
-                    workspacePath: "/tmp/synthetic-workspace",
-                    locator: "conversation://synthetic-conv-alpha"
-                ),
-                capturedAt: now
-            )
-        )
-        let clip2 = try await store.capture(
-            NewClip(
-                excerpt: "[SYNTHETIC] Antigravity 2.31 的 PostInvocation 钩子若误配成 PreToolUse 或未能输出空 JSON 对象会导致工具调用被拒绝。",
-                promptContext: .missing,
-                source: .web(site: .chatgpt, url: "https://chatgpt.com/c/synthetic-2", pageTitle: "Synthetic Hook Thread"),
-                capturedAt: now.addingTimeInterval(10)
-            )
+        let selection = CapturedSelection(
+            text: "Offline resilient highlight $E = mc^2$",
+            bundleIdentifier: "com.apple.Safari",
+            appName: "Safari",
+            windowTitle: "Claude Architecture Chat - Claude",
+            documentURL: "https://claude.ai/chat/resilient-1"
         )
 
-        #expect(clip1.annotation.isEmpty)
-        #expect(clip2.promptContext == .missing)
-
-        let updatedClip1 = try await store.updateAnnotation(
-            ClipAnnotation(
-                title: "不抢焦点 HUD 设计",
-                tags: ["nspanel", "hud"],
-                userNote: "个人批注：注意与原文严格区分。"
-            ),
-            for: clip1.id
+        let offlineCoord = try AppCoordinator(
+            paths: paths,
+            environment: [:],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: selection)
         )
-        #expect(updatedClip1.excerpt == clip1.excerpt)
-        #expect(updatedClip1.annotation.userNote == "个人批注：注意与原文严格区分。")
+        await offlineCoord.captureSelection()
 
-        let mdExportData = try await store.exportClips(ids: [clip1.id, clip2.id], format: .markdown, now: now)
-        let mdExport = try #require(String(data: mdExportData, encoding: .utf8))
-        #expect(mdExport.contains(clip1.excerpt))
-        #expect(mdExport.contains("个人批注：注意与原文严格区分。"))
-        #expect(mdExport.contains("用户后补注释 (Separated User Annotation)"))
-        #expect(mdExport.contains("原问题缺失"))
+        #expect(offlineCoord.cards.count == 1)
+        #expect(offlineCoord.cards[0].isOfflinePending == true)
+        #expect(offlineCoord.cards[0].sourcePlatform == "claude")
+        #expect(offlineCoord.outbox.loadEntries().count == 1)
 
-        let jsonExportData = try await store.exportClips(ids: nil, format: .json, now: now)
-        let jsonExport = try #require(String(data: jsonExportData, encoding: .utf8))
-        #expect(jsonExport.contains("\"promptStatus\" : \"missing\""))
-        #expect(jsonExport.contains("\"annotationUserNote\" : \"个人批注：注意与原文严格区分。\""))
-
-        let singleDeleteReceipt = try await store.deleteClip(id: clip1.id)
-        #expect(singleDeleteReceipt.deletedClipCount == 1)
-        #expect(singleDeleteReceipt.remainingClipCount == 1)
-
-        let searchDeleted = try await store.clips(
-            matching: ClipQuery(text: "不抢焦点的浮窗", scope: .all, referenceDate: now)
+        let queuedClipID = offlineCoord.outbox.loadEntries()[0].clientClipId
+        let reloadStart = DispatchTime.now().uptimeNanoseconds
+        let coldStartCoord = try AppCoordinator(
+            paths: paths,
+            environment: [:],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: selection)
         )
-        #expect(searchDeleted.isEmpty)
+        let reloadMS = Double(DispatchTime.now().uptimeNanoseconds - reloadStart) / 1_000_000.0
+        #expect(reloadMS < 25.0)
+        #expect(coldStartCoord.cards.count == 1)
+        #expect(coldStartCoord.cards[0].verbatimText == "Offline resilient highlight $E = mc^2$")
 
-        let purgeAllReceipt = try await store.deleteAllClips(confirmation: .userConfirmedPurgeAll)
-        #expect(purgeAllReceipt.deletedClipCount == 1)
-        #expect(purgeAllReceipt.remainingClipCount == 0)
-        #expect(purgeAllReceipt.remainingFTSTokenRows == 0)
-    }
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            if req.httpMethod == "POST" && req.url?.path == "/api/v1/memos" {
+                return (409, Data("{\"message\":\"already exists\"}".utf8))
+            }
+            if req.httpMethod == "GET" && req.url?.path == "/api/v1/memos" {
+                let content = """
+                #rewind/ready #source/claude
 
-    @Test("M4: Natural-language retrieval matches Chinese and English phrases without exact substring and returns [] for unrelated queries")
-    func naturalLanguageRetrievalAndRelevanceFloor() async throws {
-        let store = try StashStore(location: .inMemory, mode: .readWrite)
-        let now = Date(timeIntervalSince1970: 1_762_000_000)
-        let seeds = try SyntheticDemoSeed.makeDemoClips(referenceDate: now)
-        for seed in seeds {
-            _ = try await store.capture(seed)
-        }
+                > **Title:** 离线队列恢复测试
+                > **Source:** [Claude Architecture Chat](https://claude.ai/chat/resilient-1) · \(MemosWireFormat.formatISO8601UTC(Date()))
 
-        let hudHits = try await store.clips(
-            matching: ClipQuery(text: "不抢焦点的浮窗", scope: .hot, referenceDate: now)
-        )
-        #expect(!hudHits.isEmpty)
-        #expect(hudHits.first?.excerpt.contains("nonactivatingPanel") == true)
-
-        let hookHits = try await store.clips(
-            matching: ClipQuery(text: "钩子空输出拒绝调用", scope: .hot, referenceDate: now)
-        )
-        #expect(!hookHits.isEmpty)
-        #expect(hookHits.first?.excerpt.contains("PostInvocation") == true)
-
-        let walHits = try await store.clips(
-            matching: ClipQuery(text: "倒排索引同步清零与并发读取", scope: .hot, referenceDate: now)
-        )
-        #expect(!walHits.isEmpty)
-        #expect(walHits.first?.excerpt.contains("SQLite3") == true)
-
-        let unrelatedChinese = try await store.clips(
-            matching: ClipQuery(text: "如何用烤箱烘培蓝莓芝士蛋糕配方", scope: .all, referenceDate: now)
-        )
-        #expect(unrelatedChinese.isEmpty)
-
-        let unrelatedEnglish = try await store.clips(
-            matching: ClipQuery(text: "sourdough bread starter hydration temperature", scope: .all, referenceDate: now)
-        )
-        #expect(unrelatedEnglish.isEmpty)
-    }
-
-    @Test("DraftStore persists plain UTF-8 .md files on disk with a single leading HTML comment and appends citations")
-    func draftStorePlainMarkdownPersistence() async throws {
-        let tempDir = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let draftStore = try DraftStore(directoryURL: tempDir.appendingPathComponent("Drafts"))
-        let clipID1 = try ClipID(parsing: "11111111-2222-3333-4444-555555555555")
-        let clipID2 = try ClipID(parsing: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-
-        var draft = try await draftStore.createDraft(
-            title: "Antigravity Hooks 设计笔记",
-            pinnedClipIDs: [clipID1, clipID2]
-        )
-        #expect(FileManager.default.fileExists(atPath: draft.fileURL.path))
-
-        let rawOnDisk = try String(contentsOf: draft.fileURL, encoding: .utf8)
-        #expect(rawOnDisk.hasPrefix("<!-- coding-rewind-clips: \(clipID1.rawValue),\(clipID2.rawValue) -->\n# Antigravity Hooks 设计笔记"))
-
-        let clip = Clip(
-            id: clipID1,
-            verbatimExcerpt: try VerbatimExcerpt(validating: "[SYNTHETIC] Hook must output {}"),
-            promptContext: .captured("[SYNTHETIC] Hook contract?"),
-            source: .antigravity(conversationId: "conv-1", workspacePath: nil, locator: "conversation://conv-1")
-        )
-        draft.markdownBody = DraftStore.appendCitedMarkdown(
-            into: draft.markdownBody,
-            insertedMarkdown: "必须保证钩子在 50ms 内返回空对象。",
-            citedClips: [clip]
-        )
-        let saved = try await draftStore.saveDraft(draft)
-        let reloaded = try await draftStore.loadDraft(id: saved.id)
-        #expect(reloaded.pinnedClipIDs == [clipID1, clipID2])
-        #expect(reloaded.markdownBody.contains("[^clip-11111111]"))
-        #expect(reloaded.markdownBody.contains("[^clip-11111111]: 出处: Antigravity 2.x"))
-    }
-
-    @Test("ActiveTurnStore retains at most 4 freshest 0600 per-conversation snapshots and scopes reads to com.google.antigravity")
-    func activeTurnStoreBoundedSnapshotsAndPermissions() throws {
-        let tempDir = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let store = try ActiveTurnStore(directoryURL: tempDir.appendingPathComponent("Runtime"))
-        let baseDate = Date(timeIntervalSince1970: 1_762_000_000)
-
-        for idx in 1...6 {
-            let turn = try ActiveAntigravityTurn(
-                conversationId: "conv-\(idx)",
-                workspacePath: "/tmp/ws-\(idx)",
-                userPrompt: "[SYNTHETIC] User question #\(idx)",
-                observedAt: baseDate.addingTimeInterval(Double(idx * 60))
-            )
-            try store.record(turn)
-        }
-
-        let files = try store.retainedSnapshotFileURLs()
-        #expect(files.count == 4)
-
-        for url in files {
-            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-            let perms = (attrs[.posixPermissions] as? NSNumber)?.uint16Value ?? 0
-            #expect(perms == 0o600)
-        }
-
-        let safariTurn = try store.latestTurn(
-            forFrontmostBundleID: "com.apple.Safari",
-            now: baseDate.addingTimeInterval(500)
-        )
-        #expect(safariTurn == nil)
-
-        let latestAntigravity = try store.latestTurn(
-            forFrontmostBundleID: CapturedSelection.antigravityBundleIdentifier,
-            now: baseDate.addingTimeInterval(500)
-        )
-        #expect(latestAntigravity?.conversationId == "conv-6")
-        #expect(latestAntigravity?.userPrompt == "[SYNTHETIC] User question #6")
-    }
-
-    @Test("StashURLCommand parses coding-rewind://stash with clipboard fallback, missing prompt normalization, and silent flag")
-    func stashURLCommandParsing() throws {
-        let directURL = try #require(URL(
-            string: "coding-rewind://stash?excerpt=%5BSYNTHETIC%5D%20Web%20snippet&source=claude&url=https://claude.ai/chat/123&silent=true"
-        ))
-        let directCmd = try StashURLCommand.parse(directURL, clipboardText: { nil })
-        #expect(directCmd.isSilent == true)
-        #expect(directCmd.newClip.excerpt == "[SYNTHETIC] Web snippet")
-        #expect(directCmd.newClip.promptContext == .missing)
-        #expect(directCmd.newClip.source == .web(site: .claude, url: "https://claude.ai/chat/123", pageTitle: nil))
-
-        let clipboardURL = try #require(URL(
-            string: "coding-rewind://stash?clipboard=1&prompt=%5BSYNTHETIC%5D%20Prompt&source=gemini&silent=0"
-        ))
-        let clipboardCmd = try StashURLCommand.parse(clipboardURL, clipboardText: { "[SYNTHETIC] Large clipboard excerpt" })
-        #expect(clipboardCmd.isSilent == false)
-        #expect(clipboardCmd.newClip.excerpt == "[SYNTHETIC] Large clipboard excerpt")
-        #expect(clipboardCmd.newClip.promptContext == .captured("[SYNTHETIC] Prompt"))
-        #expect(clipboardCmd.newClip.source == .web(site: .gemini, url: nil, pageTitle: nil))
-    }
-
-    @Test("StudioSynthesizer enforces zero outbound traffic by default and validates RemoteEndpointConsent")
-    func studioSynthesizerOutboundFence() async throws {
-        #expect(throws: StudioSynthesisError.self) {
-            _ = try RemoteEndpointConsent(
-                endpointURL: URL(string: "http://example.com/v1/chat/completions")!,
-                modelIdentifier: "gpt-4o",
-                keychainAccount: "acct",
-                acknowledgedHost: "example.com"
-            )
-        }
-        #expect(throws: StudioSynthesisError.self) {
-            _ = try RemoteEndpointConsent(
-                endpointURL: URL(string: "https://api.example.com/v1/chat/completions")!,
-                modelIdentifier: "gpt-4o",
-                keychainAccount: "acct",
-                acknowledgedHost: "other.example.com"
-            )
-        }
-
-        let clip = Clip(
-            id: try ClipID(parsing: "abcdef12-3456-7890-abcd-ef1234567890"),
-            verbatimExcerpt: try VerbatimExcerpt(validating: "[SYNTHETIC] Local synthesis evidence"),
-            promptContext: .captured("[SYNTHETIC] How to structure local synthesis?"),
-            source: .antigravity(conversationId: "c1", workspacePath: "/tmp/demo", locator: "conversation://c1")
-        )
-        let synthesizer = StudioSynthesizer()
-        let localResponse = try await synthesizer.respond(
-            StudioRequest(
-                pinnedClips: [clip],
-                conversation: [ChatTurn(role: .user, text: "整理成两段论据")],
-                draftMarkdown: "# 草稿\n",
-                backend: .localOutline
-            )
-        )
-        #expect(localResponse.outboundHostUsed == nil)
-        #expect(localResponse.citedClipIDs.contains(clip.id))
-        #expect(localResponse.suggestedMarkdown.contains("[^clip-abcdef12]"))
-
-        let handoffResponse = try await synthesizer.respond(
-            StudioRequest(
-                pinnedClips: [clip],
-                conversation: [ChatTurn(role: .user, text: "交给 Antigravity 深入推演")],
-                draftMarkdown: "# 草稿\n",
-                backend: .antigravityHandoff
-            )
-        )
-        #expect(handoffResponse.outboundHostUsed == nil)
-        #expect(handoffResponse.suggestedMarkdown.hasPrefix("/rewind"))
-        #expect(handoffResponse.suggestedMarkdown.contains(RewindMCPToolID.getClip.rawValue))
-    }
-
-    @Test("AntigravityIntegration idempotently installs, verifies, preserves unrelated hooks, and uninstalls in temp directory")
-    func antigravityIntegrationIdempotentInstallAndVerify() throws {
-        let tempDir = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-
-        let configDir = tempDir.appendingPathComponent("gemini-config", isDirectory: true)
-        try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
-
-        let existingHooksURL = configDir.appendingPathComponent("hooks.json")
-        let preExistingHookJSON = """
-        {
-          "existing-user-hook": {
-            "Stop": [
-              {
-                "hooks": [
-                  {
-                    "type": "command",
-                    "command": "/usr/bin/true"
-                  }
+                Offline resilient highlight $E = mc^2$
+                """
+                let payload: [String: Any] = [
+                    "memos": [
+                        [
+                            "name": "memos/\(queuedClipID)",
+                            "content": content,
+                            "createTime": MemosWireFormat.formatISO8601UTC(Date())
+                        ]
+                    ]
                 ]
-              }
-            ]
-          }
+                return (200, (try? JSONSerialization.data(withJSONObject: payload)) ?? Data())
+            }
+            return (500, Data())
         }
-        """
-        try preExistingHookJSON.write(to: existingHooksURL, atomically: true, encoding: .utf8)
 
-        let binaries = AntigravityIntegration.BinaryLocations(
-            antigravityBridgeExecutableURL: tempDir.appendingPathComponent("bin/coding-rewind-hook"),
-            rewindMCPExecutableURL: tempDir.appendingPathComponent("bin/rewind-mcp")
+        coldStartCoord.environment = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "env-token-xyz"
+        ]
+        await coldStartCoord.refresh()
+
+        #expect(coldStartCoord.outbox.loadEntries().isEmpty)
+        #expect(coldStartCoord.cards.count == 1)
+        #expect(coldStartCoord.cards[0].status == .ready)
+        #expect(coldStartCoord.cards[0].isOfflinePending == false)
+    }
+
+    @Test("Credentials & QA isolation never write memos_token to disk and isolate Keychain service under CODING_REWIND_QA=1")
+    func credentialsAndQAIsolation() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let dataDir = dir.appendingPathComponent("IsolatedData")
+        let paths = try StoragePaths.resolve(environment: [
+            StoragePaths.dataDirEnvironmentKey: dataDir.path
+        ])
+        #expect(paths.dataDirectoryURL == dataDir.standardizedFileURL)
+
+        try paths.saveMemosURLString("https://memos.example.com/")
+        #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
+
+        let rawConfigText = try String(contentsOf: paths.configFileURL, encoding: .utf8)
+        let rawConfigJSON = try #require(JSONSerialization.jsonObject(with: Data(rawConfigText.utf8)) as? [String: Any])
+        #expect(Set(rawConfigJSON.keys) == Set(["memos_url"]))
+        #expect(!rawConfigText.contains("token"))
+
+        #expect(KeychainTokenStore.serviceName(environment: [:]) == "com.codingrewind.memos")
+        #expect(KeychainTokenStore.serviceName(environment: ["CODING_REWIND_QA": "1"]) == "com.codingrewind.memos.qa")
+        #expect(
+            KeychainTokenStore.serviceName(environment: [
+                "CODING_REWIND_QA": "1",
+                "CODING_REWIND_KEYCHAIN_SERVICE": "com.codingrewind.memos"
+            ]) == "com.codingrewind.memos.qa"
+        )
+    }
+
+    @Test("AntigravityHookRunner parses camelCase lastUserInput + 4 recent turns from transcript.jsonl into active_turn.json")
+    func hookRunnerExtractsLastUserInputAndFourTurns() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let dataDir = dir.appendingPathComponent("Data")
+        let transcriptURL = dir.appendingPathComponent("transcript.jsonl")
+        let transcriptLines = [
+            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"content\":\"Turn 1 question\"}",
+            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"Turn 1 answer\"}",
+            "{\"type\":\"USER_INPUT\",\"source\":\"SYSTEM\",\"content\":\"<SYSTEM_MESSAGE>ignored system wake</SYSTEM_MESSAGE>\"}",
+            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"content\":\"Turn 2 question\"}",
+            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"\"}",
+            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"Turn 2 answer\"}",
+            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"content\":\"Turn 3 latest question\"}",
+            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"Turn 3 latest answer\"}"
+        ].joined(separator: "\n") + "\n"
+        try transcriptLines.write(to: transcriptURL, atomically: true, encoding: .utf8)
+
+        let store = try ActiveTurnStore(dataDirectoryURL: dataDir)
+        let stdinPayload = try JSONSerialization.data(withJSONObject: [
+            "conversationId": "conv-2x-test",
+            "lastUserInput": "Explicit stdin lastUserInput",
+            "workspacePaths": [dir.appendingPathComponent("coding-rewind").path],
+            "transcriptPath": transcriptURL.path,
+            "hookEventName": "Stop"
+        ])
+
+        var capturedOut = Data()
+        let code = AntigravityHookRunner.run(
+            stdin: stdinPayload,
+            environment: [:],
+            activeTurnStore: store,
+            stdout: { capturedOut.append($0) }
+        )
+        #expect(code == 0)
+        #expect(String(decoding: capturedOut, as: UTF8.self) == "{}\n")
+        #expect(FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("active_turn.json").path))
+
+        let recorded = try #require(store.latestTurn(forFrontmostBundleID: CapturedSelection.antigravityBundleIdentifier))
+        #expect(recorded.conversationId == "conv-2x-test")
+        #expect(recorded.sessionTitle == "coding-rewind")
+        #expect(recorded.lastUserInput == "Explicit stdin lastUserInput")
+        #expect(recorded.hookEventName == "Stop")
+        #expect(recorded.recentTurns == [
+            ConversationTurn(role: "User", text: "Turn 2 question"),
+            ConversationTurn(role: "Assistant", text: "Turn 2 answer"),
+            ConversationTurn(role: "User", text: "Turn 3 latest question"),
+            ConversationTurn(role: "Assistant", text: "Turn 3 latest answer")
+        ])
+    }
+
+    @Test("AntigravityIntegration writes official 2.x plugin.json, flat hooks.json, and copies binaries outside .build")
+    func officialPluginAndHookInstallerSchema() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let fakeBuildDir = dir.appendingPathComponent(".build/debug", isDirectory: true)
+        try FileManager.default.createDirectory(at: fakeBuildDir, withIntermediateDirectories: true)
+        let fakeHookSrc = fakeBuildDir.appendingPathComponent("coding-rewind-hook")
+        let fakeBridgeSrc = dir.appendingPathComponent("memos-mcp-bridge.sh")
+        try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeHookSrc, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: fakeBridgeSrc, permissions: 0o755)
+
+        let dataDir = dir.appendingPathComponent("Application Support/CodingRewind", isDirectory: true)
+        let configDir = dir.appendingPathComponent("gemini-config", isDirectory: true)
+
+        let pluginDir = try AntigravityIntegration.installOrRepair(
+            dataDirectoryURL: dataDir,
+            configDirectoryURL: configDir,
+            sourceHookBinaryURL: fakeHookSrc,
+            sourceMCPBridgeURL: fakeBridgeSrc
         )
 
-        if case .installed = AntigravityIntegration.verify(configDirectoryURL: configDir, binaries: binaries) {
-            Issue.record("Expected needsInstallOrRepair before installation")
+        let status = AntigravityIntegration.verify(dataDirectoryURL: dataDir, configDirectoryURL: configDir)
+        guard case .installed(_, let installedHookURL) = status else {
+            Issue.record("Expected .installed, got \(status)")
+            return
         }
+        #expect(!installedHookURL.path.contains("/.build/"))
+        #expect(FileManager.default.isExecutableFile(atPath: installedHookURL.path))
+        #expect(FileManager.default.isExecutableFile(atPath: AntigravityIntegration.stableMCPBridgeURL(in: dataDir).path))
 
-        try AntigravityIntegration.installOrRepair(configDirectoryURL: configDir, binaries: binaries)
-        try AntigravityIntegration.installOrRepair(configDirectoryURL: configDir, binaries: binaries)
+        let pluginJSON = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: pluginDir.appendingPathComponent("plugin.json"))) as? [String: Any]
+        )
+        #expect(Set(pluginJSON.keys) == Set(["name", "version", "description", "suggestedPrompts"]))
+        #expect(pluginJSON["name"] as? String == "coding-rewind")
+        #expect(pluginJSON["version"] as? String == "0.2.0")
+        let prompts = try #require(pluginJSON["suggestedPrompts"] as? [String])
+        #expect(prompts.count == 3)
 
-        let status = AntigravityIntegration.verify(configDirectoryURL: configDir, binaries: binaries)
-        switch status {
-        case .installed(let pluginDir, let hooksFile):
-            let hooksData = try Data(contentsOf: hooksFile)
-            let hooksObj = try #require(JSONSerialization.jsonObject(with: hooksData) as? [String: Any])
-            #expect(hooksObj["existing-user-hook"] != nil)
-            let ourGroup = try #require(hooksObj["coding-rewind-bridge"] as? [String: Any])
-            #expect(Set(ourGroup.keys) == Set(["PostInvocation", "Stop"]))
-
-            let wrapperURL = pluginDir.appendingPathComponent("bin/rewind-mcp.sh")
-            #expect(FileManager.default.isExecutableFile(atPath: wrapperURL.path))
-        case .needsInstallOrRepair(let reasons):
-            Issue.record("Unexpected repair needed: \(reasons)")
+        let hooksJSON = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: pluginDir.appendingPathComponent("hooks.json"))) as? [String: Any]
+        )
+        let group = try #require(hooksJSON["coding-rewind"] as? [String: Any])
+        for event in ["PostInvocation", "Stop"] {
+            let flatArray = try #require(group[event] as? [[String: Any]])
+            #expect(flatArray.count == 1)
+            #expect(flatArray[0]["hooks"] == nil)
+            #expect(flatArray[0]["matcher"] == nil)
+            #expect(flatArray[0]["type"] as? String == "command")
+            #expect(flatArray[0]["timeout"] as? Int == 5)
+            let cmd = try #require(flatArray[0]["command"] as? String)
+            #expect(!cmd.contains(".build"))
+            #expect(cmd.hasPrefix("'") && cmd.hasSuffix("'"))
         }
+    }
 
-        try AntigravityIntegration.uninstall(configDirectoryURL: configDir)
-        let hooksAfterUninstall = try Data(contentsOf: existingHooksURL)
-        let hooksObjAfter = try #require(JSONSerialization.jsonObject(with: hooksAfterUninstall) as? [String: Any])
-        #expect(hooksObjAfter["existing-user-hook"] != nil)
-        #expect(hooksObjAfter["coding-rewind-bridge"] == nil)
+    @Test("AntigravityLauncher invokes agentapi new-conversation directly without shell interpolation and falls back cleanly")
+    func agentAPILauncherDirectProcessAndFallback() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let argsDumpFile = dir.appendingPathComponent("argv.json")
+        let mockAgentAPI = dir.appendingPathComponent("agentapi")
+        let pythonMock = """
+        #!/usr/bin/env python3
+        import json, os, sys
+        with open(os.environ["MOCK_ARGV_OUT"], "w", encoding="utf-8") as fh:
+            json.dump(sys.argv[1:], fh, ensure_ascii=False)
+        """
+        try AtomicFile.writeUTF8(pythonMock + "\n", to: mockAgentAPI, permissions: 0o755)
+        _ = chmod(mockAgentAPI.path, 0o755)
+
+        let card = RewindCard(
+            id: "card-1",
+            rawContent: "#rewind/ready #source/antigravity",
+            status: .ready,
+            sourcePlatform: "antigravity",
+            title: "零 Shell 注入测试",
+            sessionTopic: "coding-rewind",
+            contextSummary: "确保提示词中的反引号与 $(cmd) 原样作为进程参数传递。",
+            sourceTitle: "coding-rewind",
+            sourceURL: "conversation://conv-safe-99",
+            verbatimText: "Dangerous literal: $(touch should_not_exist) `uname -a`",
+            createdAt: Date()
+        )
+
+        var clipboardCaptured: String?
+        var openedApp = false
+        let outcome = AntigravityLauncher.launchConversation(
+            cards: [card],
+            environment: [
+                AntigravityLauncher.agentAPIEnvironmentKey: mockAgentAPI.path,
+                "MOCK_ARGV_OUT": argsDumpFile.path,
+                "PATH": "/usr/bin:/bin"
+            ],
+            defaultAppBinaryPath: dir.appendingPathComponent("missing-agentapi").path,
+            copyToClipboard: { clipboardCaptured = $0 },
+            openAntigravityApp: { openedApp = true }
+        )
+
+        guard case .launchedViaAgentAPI(let binURL, let prompt) = outcome else {
+            Issue.record("Expected launchedViaAgentAPI, got \(outcome)")
+            return
+        }
+        #expect(binURL == mockAgentAPI.standardizedFileURL)
+        #expect(clipboardCaptured == nil)
+        #expect(openedApp == false)
+
+        let recordedArgv = try JSONDecoder().decode([String].self, from: Data(contentsOf: argsDumpFile))
+        #expect(recordedArgv.count == 2)
+        #expect(recordedArgv[0] == "new-conversation")
+        #expect(recordedArgv[1] == prompt)
+        #expect(prompt.contains("[出处](conversation://conv-safe-99)"))
+        #expect(prompt.contains("$(touch should_not_exist) `uname -a`"))
+
+        let fallbackOutcome = AntigravityLauncher.launchConversation(
+            cards: [card],
+            environment: ["PATH": dir.appendingPathComponent("empty-path").path],
+            defaultAppBinaryPath: dir.appendingPathComponent("nonexistent-agentapi").path,
+            copyToClipboard: { clipboardCaptured = $0 },
+            openAntigravityApp: { openedApp = true }
+        )
+        #expect(fallbackOutcome == .copiedToClipboardFallback(prompt: prompt))
+        #expect(clipboardCaptured == prompt)
+        #expect(openedApp == true)
     }
 }

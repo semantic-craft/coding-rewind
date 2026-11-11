@@ -7,77 +7,17 @@ public protocol SelectionCapturing: Sendable {
     func captureFrontmostSelection() async throws -> CapturedSelection
 }
 
-public enum CaptureError: Error, LocalizedError, Equatable, Sendable {
-    case accessibilityPermissionDenied
-    case noFrontmostApplication
-    case emptySelection
-    case persistenceFailed(String)
+public enum StatusFilter: String, CaseIterable, Equatable, Sendable {
+    case all
+    case ready
+    case pending
 
-    public var errorDescription: String? {
+    public var label: String {
         switch self {
-        case .accessibilityPermissionDenied:
-            return "未获得 macOS 辅助功能 (Accessibility) 权限，无法读取当前窗口选中文本。"
-        case .noFrontmostApplication:
-            return "未检测到当前前台应用窗口。"
-        case .emptySelection:
-            return "当前未选中任何非空文本，请先高亮一段对话再按捕获快捷键。"
-        case .persistenceFailed(let detail):
-            return "保存片段到本地归档失败: \(detail)"
+        case .all: return "全部热卡"
+        case .ready: return "AI 已定锚"
+        case .pending: return "待分析"
         }
-    }
-}
-
-public struct SimulatedSelectionCapturer: SelectionCapturing {
-    public let nextResult: Result<CapturedSelection, CaptureError>
-
-    public init(nextResult: Result<CapturedSelection, CaptureError>) {
-        self.nextResult = nextResult
-    }
-
-    public func captureFrontmostSelection() async throws -> CapturedSelection {
-        try nextResult.get()
-    }
-}
-
-public enum HUDBanner: Equatable, Sendable {
-    case capturedToast(clipID: ClipID, excerptPreview: String, sourceLabel: String)
-    case errorBanner(title: String, detail: String)
-}
-
-public struct StudioWorkspaceState: Equatable, Sendable {
-    public var activeDraft: DraftDocument
-    public var pinnedClips: [Clip]
-    public var expandedClipIDs: Set<ClipID>
-    public var isInlineSynthesisBarPresented: Bool
-    public var inlinePromptText: String
-    public var isChatDrawerPresented: Bool
-    public var chatInputText: String
-    public var chatConversation: [ChatTurn]
-    public var synthesisBackend: SynthesisBackend
-    public var isSynthesizing: Bool
-
-    public init(
-        activeDraft: DraftDocument,
-        pinnedClips: [Clip],
-        expandedClipIDs: Set<ClipID> = [],
-        isInlineSynthesisBarPresented: Bool = true,
-        inlinePromptText: String = "",
-        isChatDrawerPresented: Bool = false,
-        chatInputText: String = "",
-        chatConversation: [ChatTurn] = [],
-        synthesisBackend: SynthesisBackend = .localOutline,
-        isSynthesizing: Bool = false
-    ) {
-        self.activeDraft = activeDraft
-        self.pinnedClips = pinnedClips
-        self.expandedClipIDs = expandedClipIDs
-        self.isInlineSynthesisBarPresented = isInlineSynthesisBarPresented
-        self.inlinePromptText = inlinePromptText
-        self.isChatDrawerPresented = isChatDrawerPresented
-        self.chatInputText = chatInputText
-        self.chatConversation = chatConversation
-        self.synthesisBackend = synthesisBackend
-        self.isSynthesizing = isSynthesizing
     }
 }
 
@@ -85,460 +25,328 @@ public struct StudioWorkspaceState: Equatable, Sendable {
 @Observable
 public final class AppCoordinator {
     public let paths: StoragePaths
-    public let stash: StashStore
-    public let drafts: DraftStore
+    public var environment: [String: String]
+    public let memosClient: MemosClient
+    public let outbox: OfflineOutbox
+    public let hotCache: HotCache
     public let activeTurns: ActiveTurnStore
     public var capturer: any SelectionCapturing
-    public let synthesizer: StudioSynthesizer
 
-    public var hudClips: [Clip] = []
-    public var hudScope: ClipScope = .hot
-    public var hudSearchText: String = ""
-    public var checkedClipIDs: Set<ClipID> = []
-    public var expandedHUDClipIDs: Set<ClipID> = []
-    public var hudBanner: HUDBanner?
-    public var studioState: StudioWorkspaceState?
-    public var availableDrafts: [DraftDocument] = []
-    public var antigravityStatusSummary: String = "未检测"
-    public var onCopyTextToPasteboard: (@MainActor (String) -> Void)?
-    public var onOpenExternalURL: (@MainActor (URL) -> Bool)?
+    public var cards: [RewindCard] = []
+    public var searchText: String = ""
+    public var statusFilter: StatusFilter = .all
+    public var checkedCardIDs: Set<String> = []
+    public var focusedCardID: String?
+    public var bannerMessage: String?
+    public var isErrorBanner: Bool = false
+    public var pluginStatusText: String = ""
+
+    public var onCopyToClipboard: (@MainActor (String) -> Void)?
+    public var onOpenURL: (@MainActor (URL) -> Void)?
+    public var onOpenAntigravityApp: (@MainActor () -> Void)?
 
     public init(
         paths: StoragePaths,
-        stash: StashStore,
-        drafts: DraftStore,
-        activeTurns: ActiveTurnStore,
-        capturer: any SelectionCapturing,
-        synthesizer: StudioSynthesizer = StudioSynthesizer()
-    ) {
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        memosClient: MemosClient = MemosClient(),
+        capturer: any SelectionCapturing
+    ) throws {
         self.paths = paths
-        self.stash = stash
-        self.drafts = drafts
-        self.activeTurns = activeTurns
+        self.environment = environment
+        self.memosClient = memosClient
+        self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
+        self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
+        self.activeTurns = try ActiveTurnStore(dataDirectoryURL: paths.dataDirectoryURL)
         self.capturer = capturer
-        self.synthesizer = synthesizer
+        self.cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
+        self.focusedCardID = self.cards.first?.id
+        refreshPluginStatus()
     }
 
-    public func captureSelectionFromHotkey() async {
+    public var filteredCards: [RewindCard] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return cards.filter { card in
+            switch statusFilter {
+            case .all: break
+            case .ready: if card.status != .ready { return false }
+            case .pending: if card.status != .pending { return false }
+            }
+            guard !query.isEmpty else { return true }
+            let haystack = [
+                card.title ?? "",
+                card.sessionTopic ?? "",
+                card.contextSummary ?? "",
+                card.keywords.joined(separator: " "),
+                card.sourceTitle,
+                card.verbatimText
+            ].joined(separator: "\n").lowercased()
+            return haystack.contains(query)
+        }
+    }
+
+    public func toggleCheck(for cardID: String) {
+        if checkedCardIDs.contains(cardID) {
+            checkedCardIDs.remove(cardID)
+        } else {
+            checkedCardIDs.insert(cardID)
+        }
+    }
+
+    public func toggleFocusedCardCheck() {
+        let targetID = focusedCardID ?? filteredCards.first?.id
+        if let targetID {
+            toggleCheck(for: targetID)
+        }
+    }
+
+    public func captureSelection() async {
         do {
             let selection = try await capturer.captureFrontmostSelection()
-            let activeTurn = try? activeTurns.latestTurn(forFrontmostBundleID: selection.bundleIdentifier)
-            let newClip = try NewClip.fromDesktopSelection(selection, activeAntigravityTurn: activeTurn)
-            let saved = try await stash.capture(newClip)
-            await refreshHUDClips()
-            checkedClipIDs.insert(saved.id)
-            hudBanner = .capturedToast(
-                clipID: saved.id,
-                excerptPreview: Self.previewText(saved.excerpt),
-                sourceLabel: saved.source.displayBadge
+            let (platform, sourceTitle, sourceURL, context) = buildProvenance(from: selection)
+            let hasContext = (context?.isEmpty == false)
+            let clientClipId = MemosWireFormat.makeClientClipID(now: selection.capturedAt)
+            let rawContent = try MemosWireFormat.formatRawMemoContent(
+                verbatimText: selection.text,
+                sourcePlatform: platform,
+                sourceTitle: sourceTitle,
+                sourceURL: sourceURL,
+                capturedAt: selection.capturedAt,
+                hasContext: hasContext
             )
-        } catch let captureErr as CaptureError {
-            hudBanner = .errorBanner(
-                title: "选段暂存未成功",
-                detail: captureErr.errorDescription ?? "捕获失败"
+            let commentContent = hasContext ? context?.formattedCommentMarkdown() : nil
+            let entry = OutboxEntry(
+                clientClipId: clientClipId,
+                memoContent: rawContent,
+                commentContent: commentContent,
+                createdAt: selection.capturedAt
             )
-        } catch {
-            hudBanner = .errorBanner(
-                title: "选段暂存写入失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
 
-    public func simulateFailedCaptureBanner(
-        reason: String = "本地归档数据库当前处于只读保护或未选中任何文本，本次暂存未写入。"
-    ) {
-        hudBanner = .errorBanner(
-            title: "捕获失败可见性验证 (M2.5)",
-            detail: reason
-        )
-    }
-
-    public func dismissBanner() {
-        hudBanner = nil
-    }
-
-    public func handleIncomingURL(_ url: URL, clipboardReader: () -> String? = { nil }) async {
-        do {
-            let command = try StashURLCommand.parse(url, clipboardText: clipboardReader)
-            let saved = try await stash.capture(command.newClip)
-            await refreshHUDClips()
-            checkedClipIDs.insert(saved.id)
-            hudBanner = .capturedToast(
-                clipID: saved.id,
-                excerptPreview: Self.previewText(saved.excerpt),
-                sourceLabel: saved.source.displayBadge
-            )
-        } catch {
-            hudBanner = .errorBanner(
-                title: "URL 暂存请求失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
-
-    public func refreshHUDClips() async {
-        do {
-            let query = ClipQuery(
-                text: hudSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : hudSearchText,
-                scope: hudScope,
-                limit: 100
-            )
-            let results = try await stash.clips(matching: query)
-            hudClips = results
-            availableDrafts = (try? await drafts.listDrafts()) ?? []
-        } catch {
-            hudBanner = .errorBanner(
-                title: "读取归档列表失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
-
-    public func toggleCheckmark(for clipID: ClipID) {
-        if checkedClipIDs.contains(clipID) {
-            checkedClipIDs.remove(clipID)
-        } else {
-            checkedClipIDs.insert(clipID)
-        }
-    }
-
-    public func toggleHUDCardExpansion(for clipID: ClipID) {
-        if expandedHUDClipIDs.contains(clipID) {
-            expandedHUDClipIDs.remove(clipID)
-        } else {
-            expandedHUDClipIDs.insert(clipID)
-        }
-    }
-
-    public func saveAnnotation(
-        for clipID: ClipID,
-        title: String?,
-        tagsText: String,
-        userNote: String?
-    ) async {
-        let tags = tagsText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        let annotation = ClipAnnotation(title: title, tags: tags, userNote: userNote)
-        do {
-            let updated = try await stash.updateAnnotation(annotation, for: clipID)
-            await refreshHUDClips()
-            if var state = studioState,
-               let idx = state.pinnedClips.firstIndex(where: { $0.id == clipID }) {
-                state.pinnedClips[idx] = updated
-                studioState = state
+            if let localCard = MemosWireFormat.parseMemo(
+                id: clientClipId,
+                rawContent: rawContent,
+                createdAt: selection.capturedAt,
+                now: max(Date(), selection.capturedAt),
+                isOfflinePending: true
+            ) {
+                upsertLocalCard(localCard)
+                checkedCardIDs.insert(localCard.id)
+                focusedCardID = localCard.id
             }
-        } catch {
-            hudBanner = .errorBanner(
-                title: "更新用户批注失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
 
-    public func toggleClipCooling(_ clip: Clip) async {
-        do {
-            if clip.lifecycle() == .archived {
-                try await stash.reheat(clipIDs: [clip.id])
-            } else {
-                try await stash.cool(clipIDs: [clip.id])
+            guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
+                  let token = KeychainTokenStore.resolveToken(environment: environment) else {
+                try outbox.enqueue(entry)
+                try? hotCache.saveCards(cards)
+                setBanner("离线已暂存队列 · 配置 Memos 后自动幂等同步", isError: false)
+                return
             }
-            await refreshHUDClips()
-        } catch {
-            hudBanner = .errorBanner(
-                title: "切换片段热窗状态失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
 
-    public func openStudioWithCheckedClips(
-        draftTitle: String? = nil,
-        openChatDrawer: Bool = false
-    ) async {
-        await refreshHUDClips()
-        let allClips = (try? await stash.clips(matching: ClipQuery(text: nil, scope: .all, limit: 200))) ?? hudClips
-        var selectedClips = allClips.filter { checkedClipIDs.contains($0.id) }
-        if selectedClips.isEmpty {
-            selectedClips = Array(hudClips.prefix(2))
-            for clip in selectedClips {
-                checkedClipIDs.insert(clip.id)
-            }
-        }
-
-        let resolvedTitle = draftTitle
-            ?? selectedClips.first?.annotation.title
-            ?? "近期灵感成文草稿"
-
-        do {
-            let existingDrafts = try await drafts.listDrafts()
-            let draft: DraftDocument
-            if let existing = studioState?.activeDraft {
-                var updated = existing
-                updated.pinnedClipIDs = selectedClips.map(\.id)
-                draft = try await drafts.saveDraft(updated)
-            } else if let matching = existingDrafts.first(where: { $0.title == resolvedTitle }) {
-                var updated = matching
-                updated.pinnedClipIDs = selectedClips.map(\.id)
-                draft = try await drafts.saveDraft(updated)
-            } else {
-                draft = try await drafts.createDraft(
-                    title: resolvedTitle,
-                    pinnedClipIDs: selectedClips.map(\.id)
+            do {
+                _ = try? await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
+                let saved = try await memosClient.createClip(
+                    clientClipId: clientClipId,
+                    content: rawContent,
+                    contextComment: commentContent,
+                    baseURL: baseURL,
+                    token: token,
+                    fallbackCreatedAt: selection.capturedAt
                 )
+                cards.removeAll { $0.id == clientClipId || $0.id == saved.id }
+                cards.insert(saved, at: 0)
+                checkedCardIDs.remove(clientClipId)
+                checkedCardIDs.insert(saved.id)
+                focusedCardID = saved.id
+                try? hotCache.saveCards(cards)
+                setBanner("已存入 Rewind 热池 · \(sourceTitle)", isError: false)
+            } catch {
+                try outbox.enqueue(entry)
+                try? hotCache.saveCards(cards)
+                setBanner("网络暂不可达，已安全记入离线队列", isError: false)
             }
-
-            let expandedSet: Set<ClipID> = selectedClips.first.map { [$0.id] } ?? []
-            studioState = StudioWorkspaceState(
-                activeDraft: draft,
-                pinnedClips: selectedClips,
-                expandedClipIDs: expandedSet,
-                isInlineSynthesisBarPresented: true,
-                inlinePromptText: "",
-                isChatDrawerPresented: openChatDrawer,
-                chatInputText: "",
-                chatConversation: studioState?.chatConversation ?? [],
-                synthesisBackend: studioState?.synthesisBackend ?? .localOutline,
-                isSynthesizing: false
-            )
-            availableDrafts = (try? await drafts.listDrafts()) ?? []
         } catch {
-            hudBanner = .errorBanner(
-                title: "打开递进写作舱失败",
-                detail: error.localizedDescription
-            )
+            setBanner(error.localizedDescription, isError: true)
         }
     }
 
-    public func toggleChatDrawer() {
-        guard var state = studioState else { return }
-        state.isChatDrawerPresented.toggle()
-        studioState = state
-    }
-
-    public func setChatDrawerPresented(_ presented: Bool) {
-        guard var state = studioState else { return }
-        state.isChatDrawerPresented = presented
-        studioState = state
-    }
-
-    public func togglePinnedClipExpansion(_ clipID: ClipID) {
-        guard var state = studioState else { return }
-        if state.expandedClipIDs.contains(clipID) {
-            state.expandedClipIDs.remove(clipID)
-        } else {
-            state.expandedClipIDs.insert(clipID)
+    public func refresh() async {
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
+              let token = KeychainTokenStore.resolveToken(environment: environment) else {
+            cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
+            return
         }
-        studioState = state
-    }
-
-    public func submitStudioPrompt(_ prompt: String, insertDirectlyIntoDraft: Bool = false) async {
-        guard var state = studioState else { return }
-        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let effectivePrompt = trimmed.isEmpty ? "围绕已勾选片段梳理成文脉络与核心证据" : trimmed
-
-        let userTurn = ChatTurn(
-            role: .user,
-            text: effectivePrompt,
-            citedClipIDs: state.pinnedClips.map(\.id)
-        )
-        state.chatConversation.append(userTurn)
-        state.isSynthesizing = true
-        studioState = state
-
         do {
-            let response = try await synthesizer.respond(
-                StudioRequest(
-                    pinnedClips: state.pinnedClips,
-                    conversation: state.chatConversation,
-                    draftMarkdown: state.activeDraft.markdownBody,
-                    backend: state.synthesisBackend
-                )
-            )
-            state.chatConversation.append(response.assistantTurn)
-            state.isSynthesizing = false
-            state.inlinePromptText = ""
-            state.chatInputText = ""
-            studioState = state
-
-            if insertDirectlyIntoDraft {
-                await insertIntoDraft(response.suggestedMarkdown, citing: response.citedClipIDs)
+            let flushResult = try await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
+            let remoteCards = try await memosClient.listHotClips(baseURL: baseURL, token: token)
+            cards = Self.mergeCards(cached: remoteCards, pendingOutbox: flushResult.remaining)
+            try? hotCache.saveCards(remoteCards)
+            if focusedCardID == nil {
+                focusedCardID = cards.first?.id
             }
         } catch {
-            state.isSynthesizing = false
-            studioState = state
-            hudBanner = .errorBanner(
-                title: "场景 A 推演失败",
-                detail: error.localizedDescription
-            )
+            cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
+            setBanner("刷新失败，当前展示本地热缓存", isError: true)
         }
-    }
-
-    public func insertIntoDraft(_ markdown: String, citing clipIDs: Set<ClipID>) async {
-        guard var state = studioState else { return }
-        let citedClips = state.pinnedClips.filter { clipIDs.contains($0.id) }
-        state.activeDraft.markdownBody = DraftStore.appendCitedMarkdown(
-            into: state.activeDraft.markdownBody,
-            insertedMarkdown: markdown,
-            citedClips: citedClips
-        )
-        do {
-            let saved = try await drafts.saveDraft(state.activeDraft)
-            state.activeDraft = saved
-            studioState = state
-            if !clipIDs.isEmpty {
-                try await stash.markSynthesized(clipIDs: clipIDs, draftID: saved.id)
-                await refreshHUDClips()
-            }
-        } catch {
-            hudBanner = .errorBanner(
-                title: "保存 Markdown 草稿失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
-
-    public func updateDraftBody(_ newBody: String) {
-        guard var state = studioState else { return }
-        state.activeDraft.markdownBody = newBody
-        studioState = state
-    }
-
-    public func saveActiveDraft() async {
-        guard var state = studioState else { return }
-        do {
-            let saved = try await drafts.saveDraft(state.activeDraft)
-            state.activeDraft = saved
-            studioState = state
-            let cited = Set(state.pinnedClips.map(\.id))
-            if !cited.isEmpty {
-                try await stash.markSynthesized(clipIDs: cited, draftID: saved.id)
-            }
-            await refreshHUDClips()
-        } catch {
-            hudBanner = .errorBanner(
-                title: "保存草稿文件失败",
-                detail: error.localizedDescription
-            )
-        }
-    }
-
-    public func copyAntigravitySlashCommand(for clips: [Clip]? = nil, instruction: String? = nil) -> String {
-        let targetClips: [Clip]
-        if let clips, !clips.isEmpty {
-            targetClips = clips
-        } else if let state = studioState, !state.pinnedClips.isEmpty {
-            targetClips = state.pinnedClips
-        } else {
-            let checked = hudClips.filter { checkedClipIDs.contains($0.id) }
-            targetClips = checked.isEmpty ? Array(hudClips.prefix(2)) : checked
-        }
-        let command = StudioSynthesizer.makeAntigravitySlashCommand(for: targetClips, instruction: instruction)
-        onCopyTextToPasteboard?(command)
-        if let first = targetClips.first {
-            hudBanner = .capturedToast(
-                clipID: first.id,
-                excerptPreview: "已复制 /rewind 指令（含 \(targetClips.count) 条片段 ID）",
-                sourceLabel: "Antigravity MCP"
-            )
-        }
-        return command
     }
 
     @discardableResult
-    public func openSourceOrigin(for clip: Clip) -> Bool {
-        guard let url = clip.source.reopenURL else {
-            hudBanner = .errorBanner(
-                title: "原出处无外部链接",
-                detail: "本地原文仍可完整阅读。"
-            )
-            return false
+    public func launchCheckedInAntigravity(markSynthesized: Bool = false) async -> AntigravityLauncher.LaunchOutcome? {
+        let visible = filteredCards
+        var selected = cards.filter { checkedCardIDs.contains($0.id) }
+        if selected.isEmpty, let first = visible.first {
+            selected = [first]
+            checkedCardIDs.insert(first.id)
         }
-        if let onOpenExternalURL {
-            return onOpenExternalURL(url)
+        guard !selected.isEmpty else {
+            setBanner("请先捕获或勾选至少一条卡片", isError: true)
+            return nil
         }
-        return false
-    }
 
-    public func exportClips(
-        ids: Set<ClipID>?,
-        format: ExportFormat,
-        to destinationURL: URL
-    ) async throws {
-        let data = try await stash.exportClips(ids: ids, format: format)
-        try AtomicFileWriter.writeData(data, to: destinationURL, permissions: 0o644)
-    }
+        let outcome = AntigravityLauncher.launchConversation(
+            cards: selected,
+            environment: environment,
+            copyToClipboard: { [weak self] text in self?.onCopyToClipboard?(text) },
+            openAntigravityApp: { [weak self] in self?.onOpenAntigravityApp?() }
+        )
 
-    public func deleteClip(id: ClipID) async {
-        do {
-            _ = try await stash.deleteClip(id: id)
-            checkedClipIDs.remove(id)
-            expandedHUDClipIDs.remove(id)
-            if var state = studioState {
-                state.pinnedClips.removeAll { $0.id == id }
-                state.expandedClipIDs.remove(id)
-                studioState = state
+        switch outcome {
+        case .launchedViaAgentAPI:
+            setBanner("已在 Antigravity 开启新会话（共 \(selected.count) 张卡片）", isError: false)
+        case .copiedToClipboardFallback:
+            setBanner("未找到 agentapi，已复制提示词到剪贴板并打开 Antigravity", isError: false)
+        }
+
+        if markSynthesized,
+           let baseURL = paths.resolveMemosBaseURL(environment: environment),
+           let token = KeychainTokenStore.resolveToken(environment: environment) {
+            for card in selected where !card.isOfflinePending {
+                try? await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
+                checkedCardIDs.remove(card.id)
             }
-            await refreshHUDClips()
-        } catch {
-            hudBanner = .errorBanner(
-                title: "删除片段失败",
-                detail: error.localizedDescription
-            )
+            await refresh()
         }
+        return outcome
     }
 
-    public func deleteAllClips(confirmation: DeleteAllConfirmation) async {
+    public func markCardSynthesized(_ card: RewindCard) async {
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
+              let token = KeychainTokenStore.resolveToken(environment: environment),
+              !card.isOfflinePending else {
+            setBanner("离线或未配置凭据，无法标记服务端状态", isError: true)
+            return
+        }
         do {
-            _ = try await stash.deleteAllClips(confirmation: confirmation)
-            checkedClipIDs.removeAll()
-            expandedHUDClipIDs.removeAll()
-            if var state = studioState {
-                state.pinnedClips.removeAll()
-                state.expandedClipIDs.removeAll()
-                studioState = state
-            }
-            await refreshHUDClips()
+            try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
+            checkedCardIDs.remove(card.id)
+            cards.removeAll { $0.id == card.id }
+            try? hotCache.saveCards(cards)
         } catch {
-            hudBanner = .errorBanner(
-                title: "清空全部归档失败",
-                detail: error.localizedDescription
-            )
+            setBanner(error.localizedDescription, isError: true)
         }
     }
 
-    public func installOrVerifyAntigravityPlugin(binaries: AntigravityIntegration.BinaryLocations) {
+    public func saveCredentials(memosURL: String, token: String) throws {
+        try paths.saveMemosURLString(memosURL)
+        if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try KeychainTokenStore.saveToken(token, environment: environment)
+        }
+        setBanner("已保存 Memos 连接配置", isError: false)
+    }
+
+    public func installOrRepairPlugin(sourceHookURL: URL?, sourceBridgeURL: URL?) {
         do {
             try AntigravityIntegration.installOrRepair(
+                dataDirectoryURL: paths.dataDirectoryURL,
                 configDirectoryURL: paths.antigravityConfigDirectoryURL,
-                binaries: binaries
+                sourceHookBinaryURL: sourceHookURL,
+                sourceMCPBridgeURL: sourceBridgeURL
             )
-            let status = AntigravityIntegration.verify(
-                configDirectoryURL: paths.antigravityConfigDirectoryURL,
-                binaries: binaries
-            )
-            switch status {
-            case .installed:
-                antigravityStatusSummary = "Antigravity 2.x Hook & MCP 已就绪"
-            case .needsInstallOrRepair(let reasons):
-                antigravityStatusSummary = "需修复: \(reasons.joined(separator: "; "))"
-            }
+            refreshPluginStatus()
+            setBanner(pluginStatusText, isError: false)
         } catch {
-            antigravityStatusSummary = "安装失败: \(error.localizedDescription)"
-            hudBanner = .errorBanner(
-                title: "Antigravity 插件配置失败",
-                detail: error.localizedDescription
-            )
+            pluginStatusText = "安装失败: \(error.localizedDescription)"
+            setBanner(pluginStatusText, isError: true)
         }
     }
 
-    private static func previewText(_ raw: String) -> String {
-        let singleLine = raw.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if singleLine.count > 44 {
-            return String(singleLine.prefix(44)) + "..."
+    public func refreshPluginStatus() {
+        switch AntigravityIntegration.verify(
+            dataDirectoryURL: paths.dataDirectoryURL,
+            configDirectoryURL: paths.antigravityConfigDirectoryURL
+        ) {
+        case .installed:
+            pluginStatusText = "Antigravity 2.x 插件与 Hook 已就绪"
+        case .needsInstallOrRepair(let reasons):
+            pluginStatusText = "待安装或修复（\(reasons.first ?? "未安装")）"
         }
-        return singleLine
+    }
+
+    private func buildProvenance(
+        from selection: CapturedSelection
+    ) -> (platform: String, title: String, url: String?, context: CaptureContext?) {
+        if selection.bundleIdentifier == CapturedSelection.antigravityBundleIdentifier {
+            if let turn = activeTurns.latestTurn(forFrontmostBundleID: selection.bundleIdentifier) {
+                return (
+                    "antigravity",
+                    turn.sessionTitle,
+                    "conversation://\(turn.conversationId)",
+                    turn.toCaptureContext()
+                )
+            }
+            return ("antigravity", selection.windowTitle ?? "Antigravity", nil, nil)
+        }
+        let browserPrefixes = [
+            "com.apple.Safari",
+            "com.google.Chrome",
+            "company.thebrowser.Browser",
+            "com.brave.Browser"
+        ]
+        if browserPrefixes.contains(where: { selection.bundleIdentifier.hasPrefix($0) }) {
+            let platform = MemosWireFormat.inferWebPlatform(urlString: selection.documentURL, title: selection.windowTitle)
+            let cleanTitle = Self.stripBrowserSuffix(selection.windowTitle) ?? selection.appName
+            return (platform, cleanTitle, selection.documentURL, nil)
+        }
+        let title = selection.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ("macos", (title?.isEmpty == false) ? (title ?? selection.appName) : selection.appName, nil, nil)
+    }
+
+    private static func stripBrowserSuffix(_ raw: String?) -> String? {
+        guard var title = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
+            return nil
+        }
+        for suffix in [" - ChatGPT", " - Claude", " - Google Chrome", " - Brave", " — Mozilla Firefox"] {
+            if title.hasSuffix(suffix) {
+                title = String(title.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return title.isEmpty ? nil : title
+    }
+
+    private func upsertLocalCard(_ card: RewindCard) {
+        cards.removeAll { $0.id == card.id }
+        cards.insert(card, at: 0)
+    }
+
+    private static func mergeCards(cached: [RewindCard], pendingOutbox: [OutboxEntry]) -> [RewindCard] {
+        var byID: [String: RewindCard] = [:]
+        for card in cached {
+            byID[card.id] = card
+        }
+        for entry in pendingOutbox where byID[entry.clientClipId] == nil {
+            if let parsed = MemosWireFormat.parseMemo(
+                id: entry.clientClipId,
+                rawContent: entry.memoContent,
+                createdAt: entry.createdAt,
+                now: max(Date(), entry.createdAt),
+                isOfflinePending: true
+            ) {
+                byID[parsed.id] = parsed
+            }
+        }
+        return byID.values.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    private func setBanner(_ message: String, isError: Bool) {
+        bannerMessage = message
+        isErrorBanner = isError
     }
 }

@@ -1,289 +1,322 @@
 // SPDX-License-Identifier: MIT
+// Stable binary staging into Application Support/CodingRewind/bin/ adapted from wxtsky/CodeIsland (MIT).
 
+import Darwin
 import Foundation
 
-public enum RewindMCPToolID: String, CaseIterable, Codable, Sendable {
-    case listHotClips = "rewind_list_hot_clips"
-    case searchClips = "rewind_search_clips"
-    case getClip = "rewind_get_clip"
-
-    public var summaryDescription: String {
-        switch self {
-        case .listHotClips:
-            return "List recently stashed Coding-Rewind clips in the 72-hour hot window."
-        case .searchClips:
-            return "Search saved Coding-Rewind clips offline using Chinese or English natural language."
-        case .getClip:
-            return "Fetch a single Coding-Rewind clip by clip_id including verbatim excerpt, prompt context, source, and user notes."
-        }
-    }
-}
-
-public struct AntigravityIntegration: Sendable {
-    public static let hookGroupKey = "coding-rewind-bridge"
-    public static let pluginDirectoryName = "coding-rewind"
-    public static let pluginSchemaURL = "https://antigravity.google/schemas/v1/plugin.json"
-
-    public struct BinaryLocations: Equatable, Sendable {
-        public let antigravityBridgeExecutableURL: URL
-        public let rewindMCPExecutableURL: URL
-
-        public init(antigravityBridgeExecutableURL: URL, rewindMCPExecutableURL: URL) {
-            self.antigravityBridgeExecutableURL = antigravityBridgeExecutableURL.standardizedFileURL
-            self.rewindMCPExecutableURL = rewindMCPExecutableURL.standardizedFileURL
-        }
-    }
+public enum AntigravityIntegration {
+    public static let pluginName = "coding-rewind"
+    public static let pluginVersion = "0.2.0"
 
     public enum Status: Equatable, Sendable {
-        case installed(pluginDirectoryURL: URL, hooksFileURL: URL)
+        case installed(pluginDirectoryURL: URL, hookBinaryURL: URL)
         case needsInstallOrRepair(reasons: [String])
     }
 
-    public static func verify(configDirectoryURL: URL, binaries: BinaryLocations) -> Status {
-        let resolvedConfig = configDirectoryURL.standardizedFileURL
-        let hooksFileURL = resolvedConfig.appendingPathComponent("hooks.json", isDirectory: false)
-        let pluginDirURL = resolvedConfig
-            .appendingPathComponent("plugins", isDirectory: true)
-            .appendingPathComponent(pluginDirectoryName, isDirectory: true)
-        let pluginJSONURL = pluginDirURL.appendingPathComponent("plugin.json", isDirectory: false)
-        let mcpConfigURL = pluginDirURL.appendingPathComponent("mcp_config.json", isDirectory: false)
-        let wrapperScriptURL = pluginDirURL
+    public static func stableHookBinaryURL(in dataDirectoryURL: URL) -> URL {
+        dataDirectoryURL.standardizedFileURL
             .appendingPathComponent("bin", isDirectory: true)
-            .appendingPathComponent("rewind-mcp.sh", isDirectory: false)
-        let skillMarkdownURL = pluginDirURL
-            .appendingPathComponent("skills", isDirectory: true)
-            .appendingPathComponent("rewind", isDirectory: true)
-            .appendingPathComponent("SKILL.md", isDirectory: false)
-
-        var reasons: [String] = []
-        let expectedHookPath = binaries.antigravityBridgeExecutableURL.path
-        let expectedMCPPath = binaries.rewindMCPExecutableURL.path
-
-        if !expectedHookPath.hasPrefix("/") {
-            reasons.append("Hook binary path must be absolute")
-        }
-
-        if let hooksData = try? Data(contentsOf: hooksFileURL),
-           let root = try? JSONSerialization.jsonObject(with: hooksData) as? [String: Any],
-           let group = root[hookGroupKey] as? [String: Any] {
-            let groupKeys = Set(group.keys)
-            if groupKeys != Set(["PostInvocation", "Stop"]) {
-                reasons.append("hooks.json group must contain only PostInvocation and Stop events")
-            }
-            for event in ["PostInvocation", "Stop"] {
-                if let entries = group[event] as? [[String: Any]],
-                   let hooks = entries.first?["hooks"] as? [[String: Any]],
-                   let cmd = hooks.first?["command"] as? String {
-                    if cmd != expectedHookPath {
-                        reasons.append("hooks.json \(event) command mismatch")
-                    }
-                } else {
-                    reasons.append("hooks.json missing \(event) command definition")
-                }
-            }
-        } else {
-            reasons.append("hooks.json missing \(hookGroupKey) group")
-        }
-
-        if let pluginData = try? Data(contentsOf: pluginJSONURL),
-           let pluginObj = try? JSONSerialization.jsonObject(with: pluginData) as? [String: Any] {
-            if pluginObj["$schema"] as? String != pluginSchemaURL {
-                reasons.append("plugin.json $schema mismatch")
-            }
-            if pluginObj["name"] as? String != pluginDirectoryName {
-                reasons.append("plugin.json name mismatch")
-            }
-        } else {
-            reasons.append("plugin.json missing or unreadable")
-        }
-
-        if let mcpData = try? Data(contentsOf: mcpConfigURL),
-           let mcpObj = try? JSONSerialization.jsonObject(with: mcpData) as? [String: Any],
-           let servers = mcpObj["mcpServers"] as? [String: Any],
-           let server = servers[pluginDirectoryName] as? [String: Any] {
-            if server["command"] as? String != "/bin/sh" {
-                reasons.append("mcp_config.json command must be /bin/sh")
-            }
-            if server["args"] as? [String] != ["${PLUGIN_ROOT}/bin/rewind-mcp.sh"] {
-                reasons.append("mcp_config.json args must be [\"${PLUGIN_ROOT}/bin/rewind-mcp.sh\"]")
-            }
-            if let toolsMap = server["tools"] as? [String: [String: Any]] {
-                for tool in RewindMCPToolID.allCases {
-                    if toolsMap[tool.rawValue]?["eager"] as? Bool != true {
-                        reasons.append("mcp_config.json missing eager:true for \(tool.rawValue)")
-                    }
-                }
-            } else {
-                reasons.append("mcp_config.json missing tools map")
-            }
-        } else {
-            reasons.append("mcp_config.json missing or unreadable")
-        }
-
-        if let scriptContent = try? String(contentsOf: wrapperScriptURL, encoding: .utf8) {
-            if !scriptContent.contains(expectedMCPPath) {
-                reasons.append("bin/rewind-mcp.sh does not reference expected rewind-mcp binary path")
-            }
-            if !FileManager.default.isExecutableFile(atPath: wrapperScriptURL.path) {
-                reasons.append("bin/rewind-mcp.sh is not executable (0755)")
-            }
-        } else {
-            reasons.append("bin/rewind-mcp.sh missing")
-        }
-
-        if let skillContent = try? String(contentsOf: skillMarkdownURL, encoding: .utf8) {
-            if !skillContent.contains("name: rewind") || skillContent.contains("mode:") {
-                reasons.append("skills/rewind/SKILL.md frontmatter invalid")
-            }
-        } else {
-            reasons.append("skills/rewind/SKILL.md missing")
-        }
-
-        if reasons.isEmpty {
-            return .installed(pluginDirectoryURL: pluginDirURL, hooksFileURL: hooksFileURL)
-        }
-        return .needsInstallOrRepair(reasons: reasons)
+            .appendingPathComponent("coding-rewind-hook", isDirectory: false)
     }
 
-    public static func installOrRepair(
-        configDirectoryURL: URL,
-        binaries: BinaryLocations
-    ) throws {
-        let resolvedConfig = configDirectoryURL.standardizedFileURL
-        try FileManager.default.createDirectory(at: resolvedConfig, withIntermediateDirectories: true)
+    public static func stableMCPBridgeURL(in dataDirectoryURL: URL) -> URL {
+        dataDirectoryURL.standardizedFileURL
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
+    }
 
-        let hooksFileURL = resolvedConfig.appendingPathComponent("hooks.json", isDirectory: false)
-        var existingRoot: [String: Any] = [:]
-        if let existingData = try? Data(contentsOf: hooksFileURL),
-           let parsed = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            existingRoot = parsed
+    public static func hookCommandString(for executableURL: URL) -> String {
+        let path = executableURL.standardizedFileURL.path
+        if path.contains(" ") {
+            let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
+            return "'\(escaped)'"
+        }
+        return path
+    }
+
+    @discardableResult
+    public static func installOrRepair(
+        dataDirectoryURL: URL,
+        configDirectoryURL: URL,
+        sourceHookBinaryURL: URL? = nil,
+        sourceMCPBridgeURL: URL? = nil
+    ) throws -> URL {
+        let fm = FileManager.default
+        let resolvedData = dataDirectoryURL.standardizedFileURL
+        let resolvedConfig = configDirectoryURL.standardizedFileURL
+        let binDir = resolvedData.appendingPathComponent("bin", isDirectory: true)
+        try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
+
+        let destHook = stableHookBinaryURL(in: resolvedData)
+        guard !destHook.path.contains("/.build/") else {
+            throw RewindError.ioError("Refusing to install hook inside transient .build/ path")
         }
 
-        let hookEntry: [[String: Any]] = [
-            [
-                "hooks": [
-                    [
-                        "type": "command",
-                        "command": binaries.antigravityBridgeExecutableURL.path
-                    ]
-                ]
-            ]
-        ]
-        existingRoot[hookGroupKey] = [
-            "PostInvocation": hookEntry,
-            "Stop": hookEntry
-        ]
-        let hooksData = try JSONSerialization.data(
-            withJSONObject: existingRoot,
-            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        )
-        try AtomicFileWriter.writeData(hooksData, to: hooksFileURL, permissions: 0o644)
+        if let srcHook = sourceHookBinaryURL?.standardizedFileURL,
+           srcHook != destHook,
+           fm.fileExists(atPath: srcHook.path) {
+            let binData = try Data(contentsOf: srcHook)
+            try AtomicFile.writeData(binData, to: destHook, permissions: 0o755)
+            _ = chmod(destHook.path, 0o755)
+        }
 
-        let pluginDirURL = resolvedConfig
+        if let srcBridge = sourceMCPBridgeURL?.standardizedFileURL,
+           fm.fileExists(atPath: srcBridge.path) {
+            let destBridge = stableMCPBridgeURL(in: resolvedData)
+            if srcBridge != destBridge {
+                let bridgeData = try Data(contentsOf: srcBridge)
+                try AtomicFile.writeData(bridgeData, to: destBridge, permissions: 0o755)
+                _ = chmod(destBridge.path, 0o755)
+            }
+        }
+
+        let pluginDir = resolvedConfig
             .appendingPathComponent("plugins", isDirectory: true)
-            .appendingPathComponent(pluginDirectoryName, isDirectory: true)
-        let binDirURL = pluginDirURL.appendingPathComponent("bin", isDirectory: true)
-        let skillDirURL = pluginDirURL
+            .appendingPathComponent(pluginName, isDirectory: true)
+        let skillDir = pluginDir
             .appendingPathComponent("skills", isDirectory: true)
             .appendingPathComponent("rewind", isDirectory: true)
+        try fm.createDirectory(at: skillDir, withIntermediateDirectories: true)
 
-        try FileManager.default.createDirectory(at: binDirURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: skillDirURL, withIntermediateDirectories: true)
+        for legacyRel in ["mcp_config.json", "bin"] {
+            let legacyURL = pluginDir.appendingPathComponent(legacyRel)
+            if fm.fileExists(atPath: legacyURL.path) {
+                try? fm.removeItem(at: legacyURL)
+            }
+        }
 
         let pluginManifest: [String: Any] = [
-            "$schema": pluginSchemaURL,
-            "name": pluginDirectoryName,
-            "version": "0.1.0",
-            "description": "Coding-Rewind recent hot-window clip stash and writing synthesis bridge for Antigravity App 2.x",
-            "mcpServers": "./mcp_config.json",
-            "skills": "./skills/",
+            "name": pluginName,
+            "version": pluginVersion,
+            "description": "Coding Rewind 72-hour hot-window context stash and Memos bridge for Antigravity 2.x.",
             "suggestedPrompts": [
-                [
-                    "title": "回顾近期灵感片段",
-                    "prompt": "/rewind 列出我最近 72 小时在 Coding-Rewind 暂存的灵感片段，并帮我串联成文。"
-                ]
+                "/rewind 列出我最近 72 小时暂存的灵感卡片并梳理核心脉络",
+                "/rewind 检索我近期定锚的技术讨论片段并附上原对话出处",
+                "/rewind 将我最近暂存的 Rewind 卡片串联成结构化初稿"
             ]
         ]
         let pluginData = try JSONSerialization.data(
             withJSONObject: pluginManifest,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         )
-        try AtomicFileWriter.writeData(
+        try AtomicFile.writeData(
             pluginData,
-            to: pluginDirURL.appendingPathComponent("plugin.json", isDirectory: false),
+            to: pluginDir.appendingPathComponent("plugin.json", isDirectory: false),
             permissions: 0o644
         )
 
-        var toolsDict: [String: [String: Bool]] = [:]
-        for tool in RewindMCPToolID.allCases {
-            toolsDict[tool.rawValue] = ["eager": true]
-        }
-        let mcpConfig: [String: Any] = [
-            "mcpServers": [
-                pluginDirectoryName: [
-                    "command": "/bin/sh",
-                    "args": ["${PLUGIN_ROOT}/bin/rewind-mcp.sh"],
-                    "tools": toolsDict
-                ]
+        let handler: [String: Any] = [
+            "type": "command",
+            "command": hookCommandString(for: destHook),
+            "timeout": 5
+        ]
+        let hooksPayload: [String: Any] = [
+            pluginName: [
+                "PostInvocation": [handler],
+                "Stop": [handler]
             ]
         ]
-        let mcpData = try JSONSerialization.data(
-            withJSONObject: mcpConfig,
+        let hooksData = try JSONSerialization.data(
+            withJSONObject: hooksPayload,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         )
-        try AtomicFileWriter.writeData(
-            mcpData,
-            to: pluginDirURL.appendingPathComponent("mcp_config.json", isDirectory: false),
+        try AtomicFile.writeData(
+            hooksData,
+            to: pluginDir.appendingPathComponent("hooks.json", isDirectory: false),
             permissions: 0o644
         )
-
-        let wrapperScript = """
-        #!/bin/sh
-        exec "\(binaries.rewindMCPExecutableURL.path)" "$@"
-        """
-        let wrapperURL = binDirURL.appendingPathComponent("rewind-mcp.sh", isDirectory: false)
-        try AtomicFileWriter.writeUTF8(wrapperScript + "\n", to: wrapperURL, permissions: 0o755)
-        _ = chmod(wrapperURL.path, 0o755)
 
         let skillMarkdown = """
         ---
         name: rewind
-        description: Retrieve and synthesize recent 72-hour Coding-Rewind clips stashed from Antigravity App 2.x and web chats.
+        description: Query and synthesize recent 72-hour Coding Rewind highlights stored in Memos with full conversation provenance.
         ---
 
-        # Coding-Rewind (/rewind)
+        # Coding Rewind (/rewind)
 
-        Use the `Coding-Rewind` MCP tools to inspect and build upon the user's stashed highlights:
+        Use the configured Memos MCP tools to inspect, synthesize, and update `#rewind/` cards:
 
-        1. Call `rewind_list_hot_clips` to inspect clips captured within the last 72 hours.
-        2. Call `rewind_search_clips` with a natural-language query to locate specific stashed ideas.
-        3. Call `rewind_get_clip` with `clip_id` to read the full verbatim excerpt, original prompt context, provenance, and user notes.
+        1. Call `MemoService_ListMemos` to list recent memos and filter to entries tagged `#rewind/ready` or `#rewind/pending` within the 72-hour hot window (skip `#rewind/synthesized` unless requested).
+        2. Call `MemoService_GetMemo` when inspecting a specific `memos/<id>` card; preserve verbatim body text unmodified and read the `> **Title:**`, `> **Session:**`, `> **Context:**`, and `> **Source:**` blockquote headers.
+        3. Always cite original provenance links (`[出处](conversation://<id>)` or web chat URLs) when referencing or quoting a highlight.
+        4. Use `MemoService_CreateMemo` to store new synthesized notes when requested, or `MemoService_UpdateMemo` (`updateMask: content`) to replace `#rewind/ready` / `#rewind/pending` with `#rewind/synthesized` once cards are incorporated.
         """
-        try AtomicFileWriter.writeUTF8(
+        try AtomicFile.writeUTF8(
             skillMarkdown + "\n",
-            to: skillDirURL.appendingPathComponent("SKILL.md", isDirectory: false),
+            to: skillDir.appendingPathComponent("SKILL.md", isDirectory: false),
             permissions: 0o644
         )
+        return pluginDir
     }
 
-    public static func uninstall(configDirectoryURL: URL) throws {
-        let resolvedConfig = configDirectoryURL.standardizedFileURL
-        let hooksFileURL = resolvedConfig.appendingPathComponent("hooks.json", isDirectory: false)
-        if let existingData = try? Data(contentsOf: hooksFileURL),
-           var parsed = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            parsed.removeValue(forKey: hookGroupKey)
-            let updatedData = try JSONSerialization.data(
-                withJSONObject: parsed,
-                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-            )
-            try AtomicFileWriter.writeData(updatedData, to: hooksFileURL, permissions: 0o644)
+    public static func verify(
+        dataDirectoryURL: URL,
+        configDirectoryURL: URL
+    ) -> Status {
+        let resolvedData = dataDirectoryURL.standardizedFileURL
+        let pluginDir = configDirectoryURL.standardizedFileURL
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent(pluginName, isDirectory: true)
+        let pluginJSONURL = pluginDir.appendingPathComponent("plugin.json", isDirectory: false)
+        let hooksJSONURL = pluginDir.appendingPathComponent("hooks.json", isDirectory: false)
+        let skillURL = pluginDir.appendingPathComponent("skills/rewind/SKILL.md", isDirectory: false)
+        let expectedHookURL = stableHookBinaryURL(in: resolvedData)
+        let expectedCmd = hookCommandString(for: expectedHookURL)
+
+        var reasons: [String] = []
+        let allowedPluginKeys: Set<String> = ["name", "version", "description", "suggestedPrompts"]
+
+        if let pData = try? Data(contentsOf: pluginJSONURL),
+           let pObj = try? JSONSerialization.jsonObject(with: pData) as? [String: Any] {
+            if !Set(pObj.keys).isSubset(of: allowedPluginKeys) {
+                reasons.append("plugin.json contains unsupported fields")
+            }
+            if pObj["name"] as? String != pluginName {
+                reasons.append("plugin.json name mismatch")
+            }
+            if pObj["version"] as? String != pluginVersion {
+                reasons.append("plugin.json version mismatch")
+            }
+            if let prompts = pObj["suggestedPrompts"] as? [String], prompts.count == 3, prompts.allSatisfy({ !$0.isEmpty }) {
+            } else {
+                reasons.append("plugin.json suggestedPrompts must be 3 non-empty strings")
+            }
+        } else {
+            reasons.append("plugin.json missing or invalid")
         }
 
-        let pluginDirURL = resolvedConfig
-            .appendingPathComponent("plugins", isDirectory: true)
-            .appendingPathComponent(pluginDirectoryName, isDirectory: true)
-        if FileManager.default.fileExists(atPath: pluginDirURL.path) {
-            try FileManager.default.removeItem(at: pluginDirURL)
+        if let hData = try? Data(contentsOf: hooksJSONURL),
+           let hRoot = try? JSONSerialization.jsonObject(with: hData) as? [String: Any],
+           let group = hRoot[pluginName] as? [String: Any] {
+            for event in ["PostInvocation", "Stop"] {
+                if let list = group[event] as? [[String: Any]], let first = list.first {
+                    if first["hooks"] != nil || first["matcher"] != nil {
+                        reasons.append("hooks.json \(event) must be a flat handler array")
+                    }
+                    if first["type"] as? String != "command" {
+                        reasons.append("hooks.json \(event) missing type=command")
+                    }
+                    if (first["timeout"] as? Int) != 5 {
+                        reasons.append("hooks.json \(event) timeout must be 5")
+                    }
+                    let cmd = first["command"] as? String ?? ""
+                    if cmd != expectedCmd || cmd.contains("/.build/") {
+                        reasons.append("hooks.json \(event) command mismatch")
+                    }
+                } else {
+                    reasons.append("hooks.json missing \(event)")
+                }
+            }
+        } else {
+            reasons.append("hooks.json missing or invalid")
         }
+
+        if let skillText = try? String(contentsOf: skillURL, encoding: .utf8) {
+            if !skillText.contains("MemoService_ListMemos") || !skillText.contains("conversation://") {
+                reasons.append("SKILL.md missing Memos MCP guidance")
+            }
+        } else {
+            reasons.append("skills/rewind/SKILL.md missing")
+        }
+
+        return reasons.isEmpty
+            ? .installed(pluginDirectoryURL: pluginDir, hookBinaryURL: expectedHookURL)
+            : .needsInstallOrRepair(reasons: reasons)
+    }
+}
+
+public enum AntigravityLauncher {
+    public static let agentAPIEnvironmentKey = "CODING_REWIND_AGENTAPI_BIN"
+    public static let defaultBundledAgentAPIPath = "/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi"
+
+    public enum LaunchOutcome: Equatable, Sendable {
+        case launchedViaAgentAPI(binaryURL: URL, prompt: String)
+        case copiedToClipboardFallback(prompt: String)
+    }
+
+    public static func buildPrompt(for cards: [RewindCard]) -> String {
+        var sections: [String] = [
+            "请围绕以下我在 Coding Rewind 暂存的灵感卡片展开分析与写作推演，保留关键原文论据并在引用处附上出处链接："
+        ]
+        for (index, card) in cards.enumerated() {
+            var lines: [String] = []
+            let heading = card.title ?? card.sourceTitle
+            lines.append("### 卡片 \(index + 1)：\(heading)")
+            if let session = card.sessionTopic, !session.isEmpty {
+                lines.append("- 会话主题：\(session)")
+            }
+            if let ctx = card.contextSummary, !ctx.isEmpty {
+                lines.append("- 上下文脉络：\(ctx)")
+            }
+            if let url = card.sourceURL, !url.isEmpty {
+                lines.append("- 原文出处：[出处](\(url))（\(card.sourceTitle)）")
+            } else {
+                lines.append("- 原文出处：\(card.sourceTitle)")
+            }
+            lines.append("")
+            let quoted = card.verbatimText
+                .components(separatedBy: "\n")
+                .map { "> \($0)" }
+                .joined(separator: "\n")
+            lines.append(quoted)
+            sections.append(lines.joined(separator: "\n"))
+        }
+        return sections.joined(separator: "\n\n")
+    }
+
+    public static func resolveAgentAPIBinary(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaultAppBinaryPath: String = defaultBundledAgentAPIPath
+    ) -> URL? {
+        let fm = FileManager.default
+        if let explicit = environment[agentAPIEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !explicit.isEmpty {
+            let expanded = (explicit as NSString).expandingTildeInPath
+            if fm.isExecutableFile(atPath: expanded) {
+                return URL(fileURLWithPath: expanded).standardizedFileURL
+            }
+        }
+        if let pathVar = environment["PATH"] {
+            for dir in pathVar.split(separator: ":") {
+                let candidate = URL(fileURLWithPath: String(dir), isDirectory: true)
+                    .appendingPathComponent("agentapi", isDirectory: false)
+                if fm.isExecutableFile(atPath: candidate.path) {
+                    return candidate.standardizedFileURL
+                }
+            }
+        }
+        if fm.isExecutableFile(atPath: defaultAppBinaryPath) {
+            return URL(fileURLWithPath: defaultAppBinaryPath).standardizedFileURL
+        }
+        return nil
+    }
+
+    public static func launchConversation(
+        cards: [RewindCard],
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        defaultAppBinaryPath: String = defaultBundledAgentAPIPath,
+        copyToClipboard: (String) -> Void,
+        openAntigravityApp: () -> Void
+    ) -> LaunchOutcome {
+        let prompt = buildPrompt(for: cards)
+        if let binURL = resolveAgentAPIBinary(environment: environment, defaultAppBinaryPath: defaultAppBinaryPath) {
+            let process = Process()
+            process.executableURL = binURL
+            process.arguments = ["new-conversation", prompt]
+            process.environment = environment
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                process.waitUntilExit()
+                if process.terminationStatus == 0 {
+                    return .launchedViaAgentAPI(binaryURL: binURL, prompt: prompt)
+                }
+            } catch {
+            }
+        }
+        copyToClipboard(prompt)
+        openAntigravityApp()
+        return .copiedToClipboardFallback(prompt: prompt)
     }
 }

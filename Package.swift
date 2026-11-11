@@ -18,27 +18,16 @@ let package = Package(
             targets: ["AntigravityBridge"]
         ),
         .executable(
-            name: "rewind-mcp",
-            targets: ["RewindMCP"]
-        ),
-        .executable(
             name: "CodingRewindApp",
             targets: ["CodingRewindApp"]
         )
     ],
     targets: [
         .target(
-            name: "CodingRewindCore",
-            linkerSettings: [
-                .linkedLibrary("sqlite3")
-            ]
+            name: "CodingRewindCore"
         ),
         .executableTarget(
             name: "AntigravityBridge",
-            dependencies: ["CodingRewindCore"]
-        ),
-        .executableTarget(
-            name: "RewindMCP",
             dependencies: ["CodingRewindCore"]
         ),
         .executableTarget(
@@ -53,8 +42,7 @@ let package = Package(
             name: "CodingRewindCLITests",
             dependencies: [
                 "CodingRewindCore",
-                "AntigravityBridge",
-                "RewindMCP"
+                "AntigravityBridge"
             ]
         )
     ]
