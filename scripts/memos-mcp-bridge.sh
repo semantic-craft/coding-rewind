@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: MIT
 set -euo pipefail
 
+export PATH="${PATH:-/usr/bin:/bin}:/opt/homebrew/bin:/usr/local/bin"
+
 DATA_DIR="${CODING_REWIND_DATA_DIR:-$HOME/Library/Application Support/CodingRewind}"
 CONFIG_FILE="$DATA_DIR/config.json"
 
