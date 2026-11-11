@@ -12,6 +12,14 @@ let package = Package(
         .library(
             name: "CodingRewindCore",
             targets: ["CodingRewindCore"]
+        ),
+        .executable(
+            name: "coding-rewind-hook",
+            targets: ["AntigravityBridge"]
+        ),
+        .executable(
+            name: "rewind-mcp",
+            targets: ["RewindMCP"]
         )
     ],
     targets: [
@@ -21,9 +29,25 @@ let package = Package(
                 .linkedLibrary("sqlite3")
             ]
         ),
+        .executableTarget(
+            name: "AntigravityBridge",
+            dependencies: ["CodingRewindCore"]
+        ),
+        .executableTarget(
+            name: "RewindMCP",
+            dependencies: ["CodingRewindCore"]
+        ),
         .testTarget(
             name: "CodingRewindCoreTests",
             dependencies: ["CodingRewindCore"]
+        ),
+        .testTarget(
+            name: "CodingRewindCLITests",
+            dependencies: [
+                "CodingRewindCore",
+                "AntigravityBridge",
+                "RewindMCP"
+            ]
         )
     ]
 )
