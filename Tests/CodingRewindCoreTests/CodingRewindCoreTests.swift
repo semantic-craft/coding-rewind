@@ -577,4 +577,106 @@ struct CodingRewindCoreTests {
         #expect(clipboardCaptured == prompt)
         #expect(openedApp == true)
     }
+
+    @Test("MenuStatusSnapshot models connection host+port, outbox badge, recent card truncation, and focusAndCheckCard")
+    @MainActor
+    func menuStatusSnapshotAndFocusCardBehavior() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let dataDir = dir.appendingPathComponent("Data", isDirectory: true)
+        let configDir = dir.appendingPathComponent("GeminiConfig", isDirectory: true)
+        let paths = try StoragePaths(dataDirectoryURL: dataDir, antigravityConfigDirectoryURL: configDir)
+
+        let selection = CapturedSelection(
+            text: "First   line\n\nSecond\tline with extra spaces that exceeds thirty-six characters easily",
+            bundleIdentifier: "com.apple.Safari",
+            appName: "Safari",
+            windowTitle: "Gemini Thread",
+            documentURL: "https://gemini.google.com/app/123"
+        )
+        let coord = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: selection)
+        )
+
+        let initialSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: false)
+        #expect(initialSnap.connection == .unconfigured)
+        #expect(initialSnap.hotCardCount == 0)
+        #expect(initialSnap.checkedCardCount == 0)
+        #expect(initialSnap.pendingOutboxCount == 0)
+        #expect(initialSnap.isPluginReady == false)
+        #expect(initialSnap.isAccessibilityTrusted == false)
+        #expect(initialSnap.recentCards.isEmpty)
+        #expect(initialSnap.headerTitle == "Coding Rewind · 0 张热卡")
+        #expect(initialSnap.headerSubtitle == "Memos 未配置（离线队列可用） · 插件待安装")
+        #expect(initialSnap.toggleHUDTitle == "打开 Rewind 浮窗")
+        #expect(initialSnap.launchTitle == "在 Antigravity 开聊")
+
+        await coord.captureSelection()
+        let pendingSnap = coord.menuStatusSnapshot(isHUDVisible: true, isAccessibilityTrusted: true)
+        #expect(pendingSnap.hotCardCount == 1)
+        #expect(pendingSnap.checkedCardCount == 1)
+        #expect(pendingSnap.pendingOutboxCount == 1)
+        #expect(pendingSnap.isAccessibilityTrusted == true)
+        #expect(pendingSnap.headerTitle == "Coding Rewind · 1 张热卡（待同步 1）")
+        #expect(pendingSnap.toggleHUDTitle == "收起 Rewind 浮窗")
+        #expect(pendingSnap.launchTitle == "在 Antigravity 开聊（已选 1 张）")
+        #expect(pendingSnap.recentCards.count == 1)
+        #expect(pendingSnap.recentCards[0].sourcePlatform == "gemini")
+        #expect(pendingSnap.recentCards[0].isChecked == true)
+        #expect(pendingSnap.recentCards[0].titlePreview == "First line Second line with extra sp…")
+
+        try paths.saveMemosURLString("https://memos.example.com:443/api/memos/")
+        let defaultPortSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
+        #expect(
+            defaultPortSnap.connection == .connected(
+                hostSummary: "memos.example.com",
+                baseURL: try #require(URL(string: "https://memos.example.com:443"))
+            )
+        )
+
+        try paths.saveMemosURLString("http://localhost:5230")
+        let fakeHook = dir.appendingPathComponent("coding-rewind-hook")
+        try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeHook, permissions: 0o755)
+        coord.installOrRepairPlugin(sourceHookURL: fakeHook, sourceBridgeURL: nil)
+
+        let now = Date()
+        coord.checkedCardIDs.removeAll()
+        coord.cards = (1...6).map { idx in
+            RewindCard(
+                id: "c-\(idx)",
+                rawContent: "#rewind/ready #source/claude",
+                status: .ready,
+                sourcePlatform: "claude",
+                title: idx == 1 ? "  Multi\n  line\tCard One  " : "Card \(idx)",
+                sourceTitle: "Claude",
+                verbatimText: "Body \(idx)",
+                createdAt: now.addingTimeInterval(Double(-idx))
+            )
+        }
+        coord.focusAndCheckCard(id: "nonexistent-id")
+        #expect(coord.checkedCardIDs.isEmpty)
+
+        coord.focusAndCheckCard(id: "c-3")
+        #expect(coord.focusedCardID == "c-3")
+        #expect(coord.checkedCardIDs == Set(["c-3"]))
+
+        let customPortSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
+        #expect(
+            customPortSnap.connection == .connected(
+                hostSummary: "localhost:5230",
+                baseURL: try #require(URL(string: "http://localhost:5230"))
+            )
+        )
+        #expect(customPortSnap.isPluginReady == true)
+        #expect(customPortSnap.headerSubtitle == "Memos 已连接 localhost:5230 · 插件已就绪")
+        #expect(customPortSnap.recentCards.count == 5)
+        #expect(customPortSnap.recentCards[0].titlePreview == "Multi line Card One")
+        #expect(customPortSnap.recentCards[2].id == "c-3")
+        #expect(customPortSnap.recentCards[2].isChecked == true)
+        #expect(customPortSnap.launchTitle == "在 Antigravity 开聊（已选 1 张）")
+    }
 }

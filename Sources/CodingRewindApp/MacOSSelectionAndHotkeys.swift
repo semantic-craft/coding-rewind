@@ -8,13 +8,45 @@ import CodingRewindCore
 import Foundation
 
 public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
-    public init() {}
+    private let fallbackApplicationProvider: (@MainActor @Sendable () -> NSRunningApplication?)?
+
+    public init(fallbackApplicationProvider: (@MainActor @Sendable () -> NSRunningApplication?)? = nil) {
+        self.fallbackApplicationProvider = fallbackApplicationProvider
+    }
+
+    @MainActor
+    public static func isAccessibilityTrusted(prompt: Bool = false) -> Bool {
+        if prompt {
+            let options = ["AXTrustedCheckOptionPrompt" as CFString: true] as CFDictionary
+            return AXIsProcessTrustedWithOptions(options)
+        }
+        return AXIsProcessTrusted()
+    }
 
     public func captureFrontmostSelection() async throws -> CapturedSelection {
-        guard let frontmost = NSWorkspace.shared.frontmostApplication else { throw RewindError.noFrontmostApplication }
-        let bundleID = frontmost.bundleIdentifier ?? "unknown.bundle"
-        let appName = frontmost.localizedName ?? "macOS"
-        let appElement = AXUIElementCreateApplication(frontmost.processIdentifier)
+        let provider = fallbackApplicationProvider
+        let resolvedTarget: (pid: pid_t, bundleID: String, appName: String)? = await MainActor.run {
+            let frontmost = NSWorkspace.shared.frontmostApplication
+            let currentBundleID = Bundle.main.bundleIdentifier
+            let candidate: NSRunningApplication?
+            if let frontmost,
+               frontmost.bundleIdentifier != currentBundleID,
+               frontmost.bundleIdentifier != "dev.codingrewind.app" {
+                candidate = frontmost
+            } else {
+                candidate = provider?()
+            }
+            guard let app = candidate, !app.isTerminated else { return nil }
+            return (
+                pid: app.processIdentifier,
+                bundleID: app.bundleIdentifier ?? "unknown.bundle",
+                appName: app.localizedName ?? "macOS"
+            )
+        }
+        guard let target = resolvedTarget else { throw RewindError.noFrontmostApplication }
+        let bundleID = target.bundleID
+        let appName = target.appName
+        let appElement = AXUIElementCreateApplication(target.pid)
         if bundleID == CapturedSelection.antigravityBundleIdentifier {
             _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         }
@@ -24,7 +56,10 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         var selectedText: String?
         var focusedRef: CFTypeRef?
         let focusStatus = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef)
-        if focusStatus == .apiDisabled { throw RewindError.accessibilityPermissionDenied }
+        if focusStatus == .apiDisabled {
+            await MainActor.run { _ = Self.isAccessibilityTrusted(prompt: true) }
+            throw RewindError.accessibilityPermissionDenied
+        }
         if focusStatus == .success, let focusedObj = focusedRef, CFGetTypeID(focusedObj) == AXUIElementGetTypeID() {
             var selRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(unsafeDowncast(focusedObj as AnyObject, to: AXUIElement.self), kAXSelectedTextAttribute as CFString, &selRef) == .success,
@@ -33,7 +68,8 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
             }
         }
         if selectedText == nil {
-            selectedText = await MainActor.run { Self.copyViaCommandCPreservingPasteboard() }
+            let targetPID = target.pid
+            selectedText = await MainActor.run { Self.copyViaCommandCPreservingPasteboard(targetPID: targetPID) }
         }
         guard let finalSelection = selectedText, !finalSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw RewindError.emptySelection
@@ -56,7 +92,12 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
     }
 
     @MainActor
-    private static func copyViaCommandCPreservingPasteboard() -> String? {
+    private static func copyViaCommandCPreservingPasteboard(targetPID: pid_t) -> String? {
+        if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID,
+           let targetApp = NSRunningApplication(processIdentifier: targetPID) {
+            _ = targetApp.activate()
+            usleep(40_000)
+        }
         let pasteboard = NSPasteboard.general
         let initialChangeCount = pasteboard.changeCount
         let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pasteboard.pasteboardItems ?? []).map { item in

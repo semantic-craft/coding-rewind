@@ -69,6 +69,17 @@
 - 验证点：运行 `./scripts/check` 确认静态路由门禁与三端单元测试全部通过，且在 `Sources/`、`deploy/` 与 `extensions/` 非地址清洗行写入 `/api/v1/memos` 会被立即阻断。
 - 复发记录：`Seen 1x (2026-11-11)`，上线前针对真实 `neosmemo/memos:26.11.0` 实例联调检出。
 
+### `LSUIElement` 菜单栏应用必须响应打开重入并挂载主菜单与规格化图标
+
+**启用 `LSUIElement` 的 macOS 状态栏应用必须在首次启动与 `applicationShouldHandleReopen` 时显式呈递主界面，同时挂载 `NSApp.mainMenu` 与独立 `NSStatusItem` 模板图标。**
+
+- 标签：#macOS原生 #菜单栏 #图标规格 #验收
+- 起因与后果：v0.2 提交 `36cc88b` 在启用 `LSUIElement` 隐藏 Dock 图标的同时，将启动展示限定于 `--show-hud` 参数且未实现 `applicationShouldHandleReopen(_:hasVisibleWindows:)`，导致用户从 Finder 或 Spotlight 打开 `CodingRewind.app` 时窗口数为 `0`；叠加 SwiftUI `MenuBarExtra` 缺少 `NSApp.mainMenu` 导致输入框 `⌘V`/`⌘C` 失效、`Info.plist` 缺失 `CFBundleIconFile` 及默认系统图标在刘海屏右区缺乏辨识度，造成用户点击无响应。
+- 修复与证据：移除 `MenuBarExtra`，在 [CodingRewindAppMain.swift](Sources/CodingRewindApp/CodingRewindAppMain.swift) 与 [AppMenusAndStatusBar.swift](Sources/CodingRewindApp/AppMenusAndStatusBar.swift) 改用纯 AppKit 生命周期、`NSStatusItem` + `NSMenu` 状态菜单与完整四栏 `NSApp.mainMenu`，默认启动与重入均唤出浮窗（仅 `--background` 静默驻留），新增 [QuickPeekHUDViews.swift](Sources/CodingRewindApp/QuickPeekHUDViews.swift) 基于 `auxiliaryTopRightArea` 的刘海安全锚定及独立设置窗口，并通过 [verify-app-icon.swift](scripts/verify-app-icon.swift) 接入 [scripts/check](scripts/check) 校验 `824/1024` 圆角矩形与 `MenuBarIcon` 模板像素边界。
+- 正确做法 `Done right`：`LSUIElement` 应用统一使用 AppKit `NSApplicationDelegate` 管理启动/重入窗口反馈、显式注册编辑与操作主菜单以打通响应链快捷键，并将 `AppIcon.icns`（与系统 `Mail.app` 误差 `<= 1 px`）和 `@1x/@2x` 菜单栏模板校验纳入 `./scripts/check`。
+- 验证点：运行 `./scripts/check` 通过全部 6 项门禁；通过 `open ~/Applications/CodingRewind.app` 实机验证首次启动与关闭浮窗后二次打开均呈递窗口，且 AX 树包含主菜单与 `Coding Rewind` 状态栏项。
+- 复发记录：`Seen 1x (2026-11-11)`，用户实机启动反馈无响应后复现定位。
+
 ## 记录模板
 
 复制下列模板新增条目，已有同类条目则更新原条。未知的提交、原因或验收结果明确写待核实。

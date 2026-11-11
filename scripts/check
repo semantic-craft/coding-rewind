@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-echo "==> [1/5] Static hygiene and boundary guards"
+echo "==> [1/6] Static hygiene and boundary guards"
 if [[ ! -s "${REPO_ROOT}/lessons.md" ]]; then
   echo "FAIL: lessons.md is missing or empty at repository root" >&2
   exit 1
@@ -24,7 +24,7 @@ import sys
 
 root = pathlib.Path.cwd()
 res = subprocess.run(
-    ["git", "ls-files", "--", "Sources", "Tests", "scripts", "deploy", "extensions"],
+    ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "Sources", "Tests", "scripts", "deploy", "extensions"],
     capture_output=True,
     text=True,
     check=True,
@@ -118,31 +118,38 @@ if errors:
 PY
 
 if [[ -f "${REPO_ROOT}/Package.swift" ]]; then
-  echo "==> [2/5] Swift test suite"
+  echo "==> [2/6] Swift test suite"
   swift test
 else
-  echo "==> [2/5] Swift test suite (skipped: no Package.swift)"
+  echo "==> [2/6] Swift test suite (skipped: no Package.swift)"
 fi
 
 if [[ -d "${REPO_ROOT}/deploy/vps/enricher" ]] && compgen -G "${REPO_ROOT}/deploy/vps/enricher/test_*.py" > /dev/null; then
-  echo "==> [3/5] VPS AI Enricher unit tests"
+  echo "==> [3/6] VPS AI Enricher unit tests"
   python3 -m unittest discover -s deploy/vps/enricher -p 'test_*.py'
 else
-  echo "==> [3/5] VPS AI Enricher unit tests (skipped: not present in this checkout)"
+  echo "==> [3/6] VPS AI Enricher unit tests (skipped: not present in this checkout)"
 fi
 
 if [[ -f "${REPO_ROOT}/extensions/web-clipper/test_extractors.mjs" ]]; then
-  echo "==> [4/5] Web Clipper unit tests"
+  echo "==> [4/6] Web Clipper unit tests"
   node --test extensions/web-clipper/test_extractors.mjs
 else
-  echo "==> [4/5] Web Clipper unit tests (skipped: not present in this checkout)"
+  echo "==> [4/6] Web Clipper unit tests (skipped: not present in this checkout)"
 fi
 
-echo "==> [5/5] Shell syntax checks"
+echo "==> [5/6] Shell syntax checks"
 bash -n "${REPO_ROOT}/scripts/check"
 for sh_file in "${REPO_ROOT}"/scripts/*.sh; do
   [[ -e "${sh_file}" ]] || continue
   bash -n "${sh_file}"
 done
+
+echo "==> [6/6] AppIcon & MenuBarIcon geometry verification"
+ICONSET_CHECK_DIR="${REPO_ROOT}/.build/check-AppIcon.iconset"
+rm -rf "${ICONSET_CHECK_DIR}"
+swift "${REPO_ROOT}/scripts/generate-app-icons.swift" "${ICONSET_CHECK_DIR}"
+swift "${REPO_ROOT}/scripts/verify-app-icon.swift" "${ICONSET_CHECK_DIR}" "${REPO_ROOT}/Resources"
+rm -rf "${ICONSET_CHECK_DIR}"
 
 echo "PASS: all verification checks succeeded."

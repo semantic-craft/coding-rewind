@@ -30,9 +30,19 @@ APP_BUNDLE="${RESOLVED_DIST_DIR}/CodingRewind.app"
 CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 HELPERS_DIR="${CONTENTS_DIR}/Helpers"
+RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+ICONSET_DIR="${RESOLVED_DIST_DIR}/AppIcon.iconset"
 
-rm -rf "${APP_BUNDLE}"
-mkdir -p "${MACOS_DIR}" "${HELPERS_DIR}"
+rm -rf "${APP_BUNDLE}" "${ICONSET_DIR}"
+mkdir -p "${MACOS_DIR}" "${HELPERS_DIR}" "${RESOURCES_DIR}"
+
+swift "${REPO_ROOT}/scripts/generate-app-icons.swift" "${ICONSET_DIR}"
+swift "${REPO_ROOT}/scripts/verify-app-icon.swift" "${ICONSET_DIR}" "${REPO_ROOT}/Resources"
+/usr/bin/iconutil -c icns "${ICONSET_DIR}" -o "${RESOURCES_DIR}/AppIcon.icns"
+rm -rf "${ICONSET_DIR}"
+
+install -m 0644 "${REPO_ROOT}/Resources/MenuBarIcon.png" "${RESOURCES_DIR}/MenuBarIcon.png"
+install -m 0644 "${REPO_ROOT}/Resources/MenuBarIcon@2x.png" "${RESOURCES_DIR}/MenuBarIcon@2x.png"
 
 install -m 0755 "${BIN_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp"
 install -m 0755 "${BIN_DIR}/coding-rewind-hook" "${HELPERS_DIR}/coding-rewind-hook"
@@ -50,6 +60,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
     <string>zh-Hans</string>
     <key>CFBundleExecutable</key>
     <string>CodingRewindApp</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>dev.codingrewind.app</string>
     <key>CFBundleInfoDictionaryVersion</key>

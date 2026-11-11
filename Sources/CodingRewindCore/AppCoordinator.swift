@@ -21,6 +21,85 @@ public enum StatusFilter: String, CaseIterable, Equatable, Sendable {
     }
 }
 
+public struct MenuStatusSnapshot: Equatable, Sendable {
+    public enum ConnectionState: Equatable, Sendable {
+        case connected(hostSummary: String, baseURL: URL)
+        case unconfigured
+    }
+
+    public struct RecentCardItem: Equatable, Sendable, Identifiable {
+        public let id: String
+        public let titlePreview: String
+        public let sourcePlatform: String
+        public let isChecked: Bool
+
+        public init(id: String, titlePreview: String, sourcePlatform: String, isChecked: Bool) {
+            self.id = id
+            self.titlePreview = titlePreview
+            self.sourcePlatform = sourcePlatform
+            self.isChecked = isChecked
+        }
+    }
+
+    public let isHUDVisible: Bool
+    public let hotCardCount: Int
+    public let checkedCardCount: Int
+    public let pendingOutboxCount: Int
+    public let connection: ConnectionState
+    public let isPluginReady: Bool
+    public let pluginSummary: String
+    public let isAccessibilityTrusted: Bool
+    public let recentCards: [RecentCardItem]
+
+    public init(
+        isHUDVisible: Bool,
+        hotCardCount: Int,
+        checkedCardCount: Int,
+        pendingOutboxCount: Int,
+        connection: ConnectionState,
+        isPluginReady: Bool,
+        pluginSummary: String,
+        isAccessibilityTrusted: Bool,
+        recentCards: [RecentCardItem]
+    ) {
+        self.isHUDVisible = isHUDVisible
+        self.hotCardCount = hotCardCount
+        self.checkedCardCount = checkedCardCount
+        self.pendingOutboxCount = pendingOutboxCount
+        self.connection = connection
+        self.isPluginReady = isPluginReady
+        self.pluginSummary = pluginSummary
+        self.isAccessibilityTrusted = isAccessibilityTrusted
+        self.recentCards = recentCards
+    }
+
+    public var headerTitle: String {
+        pendingOutboxCount > 0
+            ? "Coding Rewind · \(hotCardCount) 张热卡（待同步 \(pendingOutboxCount)）"
+            : "Coding Rewind · \(hotCardCount) 张热卡"
+    }
+
+    public var headerSubtitle: String {
+        let memosPart: String
+        switch connection {
+        case .connected(let hostSummary, _):
+            memosPart = "Memos 已连接 \(hostSummary)"
+        case .unconfigured:
+            memosPart = "Memos 未配置（离线队列可用）"
+        }
+        let pluginPart = isPluginReady ? "插件已就绪" : "插件待安装"
+        return "\(memosPart) · \(pluginPart)"
+    }
+
+    public var toggleHUDTitle: String {
+        isHUDVisible ? "收起 Rewind 浮窗" : "打开 Rewind 浮窗"
+    }
+
+    public var launchTitle: String {
+        checkedCardCount > 0 ? "在 Antigravity 开聊（已选 \(checkedCardCount) 张）" : "在 Antigravity 开聊"
+    }
+}
+
 @MainActor
 @Observable
 public final class AppCoordinator {
@@ -97,6 +176,90 @@ public final class AppCoordinator {
         if let targetID {
             toggleCheck(for: targetID)
         }
+    }
+
+    public func focusAndCheckCard(id: String) {
+        guard cards.contains(where: { $0.id == id }) else { return }
+        focusedCardID = id
+        checkedCardIDs.insert(id)
+    }
+
+    public func menuStatusSnapshot(isHUDVisible: Bool, isAccessibilityTrusted: Bool) -> MenuStatusSnapshot {
+        let connection: MenuStatusSnapshot.ConnectionState
+        if let baseURL = paths.resolveMemosBaseURL(environment: environment),
+           let host = baseURL.host,
+           !host.isEmpty {
+            let scheme = baseURL.scheme?.lowercased()
+            let defaultPort: Int? = (scheme == "https") ? 443 : (scheme == "http" ? 80 : nil)
+            let hostSummary: String
+            if let port = baseURL.port, port != defaultPort {
+                hostSummary = "\(host):\(port)"
+            } else {
+                hostSummary = host
+            }
+            connection = .connected(hostSummary: hostSummary, baseURL: baseURL)
+        } else {
+            connection = .unconfigured
+        }
+
+        let isPluginReady: Bool
+        let pluginSummary: String
+        switch AntigravityIntegration.verify(
+            dataDirectoryURL: paths.dataDirectoryURL,
+            configDirectoryURL: paths.antigravityConfigDirectoryURL
+        ) {
+        case .installed:
+            isPluginReady = true
+            pluginSummary = "Antigravity 2.x 插件与 Hook 已就绪"
+        case .needsInstallOrRepair(let reasons):
+            isPluginReady = false
+            pluginSummary = "待安装或修复（\(reasons.first ?? "未安装")）"
+        }
+
+        let checkedCount = cards.reduce(into: 0) { count, card in
+            if checkedCardIDs.contains(card.id) {
+                count += 1
+            }
+        }
+        let pendingCount = outbox.loadEntries().count
+        let recent = cards.prefix(5).map { card in
+            MenuStatusSnapshot.RecentCardItem(
+                id: card.id,
+                titlePreview: Self.makeMenuPreviewText(for: card),
+                sourcePlatform: card.sourcePlatform,
+                isChecked: checkedCardIDs.contains(card.id)
+            )
+        }
+
+        return MenuStatusSnapshot(
+            isHUDVisible: isHUDVisible,
+            hotCardCount: cards.count,
+            checkedCardCount: checkedCount,
+            pendingOutboxCount: pendingCount,
+            connection: connection,
+            isPluginReady: isPluginReady,
+            pluginSummary: pluginSummary,
+            isAccessibilityTrusted: isAccessibilityTrusted,
+            recentCards: recent
+        )
+    }
+
+    private static func makeMenuPreviewText(for card: RewindCard, maxCharacters: Int = 36) -> String {
+        let rawSource: String
+        if let title = card.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            rawSource = title
+        } else {
+            rawSource = card.verbatimText
+        }
+        let collapsed = rawSource
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard collapsed.count > maxCharacters else {
+            return collapsed
+        }
+        let prefix = String(collapsed.prefix(maxCharacters)).trimmingCharacters(in: .whitespaces)
+        return "\(prefix)…"
     }
 
     public func captureSelection() async {

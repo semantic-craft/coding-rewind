@@ -18,7 +18,7 @@
 
 - **云端主干 `deploy/vps/`**，运行官方固定版本 `neosmemo/memos:26.11.0` 容器提供 `/api/memos` 与原生 Streamable HTTP `/mcp`，旁挂纯 Python 3 标准库服务 `deploy/vps/enricher/enricher.py`，同时支持 Standard Webhooks `POST /webhook` 验签触发与 5 秒容器内网轮询自愈。
 - **网页端剪藏 `extensions/web-clipper/`**，Manifest V3 薄扩展，适配 ChatGPT、Claude 与 Gemini，提取选中 Markdown、会话标题、紧邻前序提问及最近 4 轮对话，由后台 Service Worker 直连 Memos REST API 并附带 `chrome.storage.local` 离线重放队列。
-- **桌面端浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，约三四百行原生 Swift 菜单栏与非激活毛玻璃浮窗，支持 `⌃⌥S` 捕获选区、`⌃⌥R` 速览近 72 小时热流卡片、`⌘Return` 经 `agentapi new-conversation` 直接在 Google Antigravity App 2.x 开启带脉络的新对话，并通过 `outbox.jsonl` 与 `hot_cache.json` 保障断网可用。
+- **桌面端浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，原生 Swift 6 AppKit 状态栏（`NSStatusItem` + `NSMenu`）、应用主菜单与非激活毛玻璃浮窗，支持 `⌃⌥S` 捕获选区、`⌃⌥R` 速览近 72 小时热流卡片、`⌘Return` 经 `agentapi new-conversation` 直接在 Google Antigravity App 2.x 开启带脉络的新对话，并通过 `outbox.jsonl` 与 `hot_cache.json` 保障断网可用。
 - **宿主桥接 `Sources/AntigravityBridge/` 与 `scripts/memos-mcp-bridge.sh`**，非阻塞钩子 `coding-rewind-hook` 在 `PostInvocation` 与 `Stop` 时提取 `lastUserInput` 与最近 4 轮会话写入 `active_turn.json`；`memos-mcp-bridge.sh` 从钥匙串读取令牌后调用 `mcp-remote` 连接远端 `/mcp`。
 
 ## Memos REST 线级契约不变量
@@ -39,5 +39,5 @@
 
 ## 验证与构建入口
 
-- 全仓统一门禁运行 `./scripts/check`，依次执行静态卫生与边界检查、`swift test`、`deploy/vps/enricher` 单元测试、`extensions/web-clipper` 单元测试与 Shell 语法校验。
-- 原生应用打包运行 `./scripts/build-app-bundle.sh`，在 `.build/CodingRewind.app` 生成启用 `LSUIElement` 的签名校验包。
+- 全仓统一门禁运行 `./scripts/check`，依次执行静态卫生与边界检查、`swift test`、`deploy/vps/enricher` 单元测试、`extensions/web-clipper` 单元测试、Shell 语法校验与应用图标规格校验。
+- 原生应用打包运行 `./scripts/build-app-bundle.sh`，在 `.build/CodingRewind.app` 生成内嵌 `AppIcon.icns`、`MenuBarIcon` 模板图标并启用 `LSUIElement` 的签名校验包。
