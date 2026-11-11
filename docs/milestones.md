@@ -1,73 +1,70 @@
 # 里程碑与可执行验收
 
-本文件只写「做到什么、如何检查」。M0 与 M1 已于 2026-11-11 完成拍板，当前已获授权推进 v0.1 第一刀原生 Swift 实现，并对 M2、M3、M4 的本机核心能力执行实机与自动化测试验收。
+本文件只定义各阶段交付目标与可复查的验收标准。需求依据见 [requirements.md](requirements.md)，架构与线级契约见 [architecture.md](architecture.md)，数据与凭据边界见 [privacy.md](privacy.md)。
 
-范围见 [requirements.md](requirements.md)，候选做法见 [architecture.md](architecture.md)，数据规则见 [privacy.md](privacy.md)。
+## M0　立项规范与来源核查
 
-## M0　本机立项文档（本轮）
+**目标**
 
-**目标：** 在 Helios 的 `~/Projects/Coding-Rewind/` 放好可阅读的立项文档，需求与来源可核对，范围不越权。
+在 `~/Projects/coding-rewind/` 建立结构清晰的立项文档体系，完整保存用户需求原话、核实对照来源与开源协议边界。
 
-**可执行验收：**
+**可执行验收**
 
-1. 本机项目目录 `~/Projects/coding-rewind/` 存在，且创建前没有同名或仅大小写不同的冲突项被覆盖。
-2. 至少包含：`README.md`、`docs/requirements.md`、`docs/sources.md`、`docs/architecture.md`、`docs/privacy.md`、`docs/milestones.md`、`docs/contributing.md`，以及按需添加的 `.gitignore`。
-3. `README.md` 与各文档中的相对内链都能指向真实文件。
-4. 需求正本以用户 2026-11-10 t4624u 原话保存；决定、转述方向、建议、待决在文档中可区分。
-5. `docs/sources.md` 对指定来源和少量对照项目写有可打开的链接、已读内容、读取日期、许可证据或「未知 / 非开源」，且不把商业产品写成开源。
-6. M0 立项当轮未预设许可；2026-11-11 进入 M1 后用户已拍板采用 MIT License（在启动 M2 代码工程时落盘 `LICENSE` 文件）。
-7. 仓库中没有功能实现代码、没有构建产物、没有真实私密聊天，也没有新的 git 仓库或远端推送（若检查时发现 `.git`，应属于事先已存在的情况并单独报告；本轮不得新初始化）。
+1. 仓库包含 `README.md`、`LICENSE`、`docs/requirements.md`、`docs/sources.md`、`docs/architecture.md`、`docs/privacy.md`、`docs/milestones.md` 与 `docs/contributing.md`，所有相对内链均可解析。
+2. 用户 2026-11-10 立项正本与口述补充原样保留，决定、方向、建议与待决层级清晰可辨。
+3. [sources.md](sources.md) 明确区分标准 `MIT` 上游项目、Copyleft 或无许可排除项目以及闭源商业产品。
 
-**本轮完成标准：** 上述检查全部通过。本里程碑通过**不等于**产品已实现。
+## M1　统一架构收敛与治理门禁
 
-## M1　范围拍板与界面原型比选（进行中，2026-11-11）
+**目标**
 
-**目标：** 用户对关键技术路线、许可、分刀顺序给出决定并写回需求文档；通过隔离目录中的抛弃式界面原型完成主界面选型。
+确立单实例原版 `usememos/memos` 后端加轻量边缘端的无胶水架构，落盘仓库级 [AGENTS.md](../AGENTS.md)、[lessons.md](../lessons.md) 与统一验证入口 [scripts/check](../scripts/check)。
 
-**可执行验收：**
+**可执行验收**
 
-1. 已拍板事项（MIT 许可、macOS 原生 SwiftUI 技术底座、Antigravity App 2.x + ChatGPT/Claude/Gemini 首批来源、本机 SwiftData + 本地 `.md` 存储、v0.1 与 v0.2 分刀顺序、自动暂存与相关时提示本版本不做）已在 [requirements.md](requirements.md) 中标为「决定」并附 2026-11-11 日期；仍待确认项（三套界面原型选型、工作台内模型出机边界）如实保留在「待决事项」。
-2. 文档不出现由 agent 擅自填写的假决定。
-3. 三套抛弃式界面原型存放于仓库外的会话隔离目录（不污染本仓库），在选定布局前不在本仓库内编写正式产品源码。
+1. 清理冗余本地业务 SQLite、自建富文本写作舱、自定义 URL Scheme 与手写 MCP 可执行目标，全仓不存在已废弃模块残留。
+2. 根目录具备 [AGENTS.md](../AGENTS.md) 与记录 5 项真实历史缺陷的 [lessons.md](../lessons.md)。
+3. 在仓库任意目录运行 `./scripts/check` 可自动拦截硬编码 `.build/CodingRewind.app` 配置路径、`/tmp` 构建或验收路径、明文令牌前缀及私人 IP 地址。
 
-## M2　选段一键留存（未开始，需单独授权实现）
+## M2　双端零打扰选段暂存与离线缓冲
 
-**目标：** 在已选定的第一种形态和第一种聊天来源上，用户能留下一条片段。
+**目标**
 
-**可执行验收：**
+在桌面端 **Google Antigravity App 2.x** 与网页端 ChatGPT、Claude、Gemini 实现一键无感暂存，完整附带会话上下文并支持断网队列幂等重放。
 
-1. 在真实（或经批准的模拟）聊天界面选中一段文字，执行一次保存操作后，归档中出现该条。
-2. 保存过程不必填写标题或标签；不填也能保存成功。
-3. 打开该条可见：原文与选中文本一致；原问题存在或被明确标为缺失；出处与保存时间存在。
-4. 用虚构或用户明确提供的测试材料验证；验收记录不粘贴真实私密聊天全文。
-5. 故意制造一次失败（例如目标不可写）时，用户能看到失败，而不是看起来成功、实际没存下。
+**可执行验收**
 
-## M3　归档、回顾与导出删除（未开始）
+1. 桌面端按下 `⌃⌥S` 时优先经 `kAXSelectedTextAttribute` 读取选区，回退模拟 `⌘C` 时校验 `changeCount` 递增并在 `defer` 完整恢复全部 `NSPasteboardItem`，无选区时不误存旧剪贴板。
+2. `coding-rewind-hook` 在 `PostInvocation` 与 `Stop` 事件中从标准输入提取 `lastUserInput`、`conversationId` 与 `transcript.jsonl` 最近 4 轮问答，原子更新 `active_turn.json` 且退出码为 0。
+3. 浏览器扩展 `extensions/web-clipper` 从 ChatGPT、Claude、Gemini 页面提取选区 Markdown、清洗后的会话标题、前序提问与最近 4 轮对话，由后台直连 `POST /api/v1/memos?memoId=<clientClipId>` 与评论接口，右上角显示 2.2 秒轻提示且不抢焦点、不弹协议确认框。
+4. 目标不可达时，桌面端写入 `outbox.jsonl`、网页端写入 `chrome.storage.local` 离线队列，恢复连接后通过相同 `memoId` 幂等冲刷且不产生重复记录。
 
-**目标：** 留下的片段可以浏览、再打开，并且用户能拿走或删掉自己的数据。
+## M3　云端 AI 脉络定锚、72 小时浮窗回顾与数据可控
 
-**可执行验收：**
+**目标**
 
-1. 列表中能找到 M2 保存的条目，打开后仍能看到原文、原问题和出处。
-2. 若出处是可打开的链接，且原会话仍在，应能从记录回到原处；若链接不可用，本地原文仍可读。
-3. 能导出至少一条以及全部记录，导出内容可在本工具之外打开，并包含规定字段。
-4. 能删除单条，删除后列表和检索都不再出现该条；能删除全部数据，并确认归档为空。
+在自托管 `usememos/memos` 上自动补齐片段语境抬头并逐字保护原文，在 macOS 毛玻璃浮窗中流畅回顾近 72 小时热流卡片，保障数据可导出与可删除。
 
-## M4　自然语言找回（未开始）
+**可执行验收**
 
-**目标：** 用户用平常的说法找到先前保存的片段，而不是必须想起精确原句或预先打的标签。
+1. `deploy/vps/enricher` 同时通过 Standard Webhooks HMAC-SHA256 验签测试与内网轮询自愈测试，对带 `#rewind/has-ctx` 的新片段在评论未到时等待最多 15 秒，调用兼容模型生成 `Title`、`Session`、`Context`、`Keywords` 引用头并将标签翻转为 `#rewind/ready`。
+2. 对比增强前后的片段正文，包含代码块、数学公式与链接在内的用户选中原文必须 100% 逐字一致，对已是 `#rewind/ready` 的记录重复运行零额外模型调用。
+3. 按下 `⌃⌥R` 唤出启用 `LSUIElement` 与 `.nonactivatingPanel` 的毛玻璃浮窗，正确展示近 72 小时内未标记 `#rewind/synthesized` 的卡片及其状态徽标，离线状态下基于 `hot_cache.json` 瞬时打开。
+4. 用户可通过自托管 `Memos` 网页端或标准 REST 接口导出单条及全部记录，删除记录后刷新浮窗不再残留旧条目。
 
-**可执行验收：**
+## M4　自然语言检索与 Antigravity 互动成文
 
-1. 预先保存若干条主题不同的**虚构**测试条目。
-2. 用一句不包含完整原句的自然表述查询，应能命中对应条目，并打开查看原文。
-3. 查询与一条也不相关的内容时，不应把无关条目说成命中，或应清楚表明没有合适结果。
-4. 若该实现会把原文发送到本机以外，必须先有 M1 中的用户决定，并在界面或文档中说明数据去向；没有该决定则本里程碑只能验收纯本地方案。
+**目标**
 
-## 以后才考虑的候选
+打通从毛玻璃浮窗和原生 `/mcp` 到 **Google Antigravity App 2.x** 的推演追问与对照写稿闭环，全链路凭据经钥匙串隔离保护。
 
-「自动暂存」和「相关时提示」没有里程碑编号，因为它们不是已定功能。若用户日后批准，应新增独立里程碑，写清：默认是否开启、如何关闭、多存了什么数据、如何删除。
+**可执行验收**
 
-## 怎样才算项目「做完了一期」
+1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端通过 `Process` 直接调用 `agentapi new-conversation` 传入含脉络抬头、原文与回链的结构化提示词拉起新对话。
+2. 插件安装器将辅助二进制拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，`hooks.json` 中 `PostInvocation` 与 `Stop` 为扁平处理器数组。
+3. `scripts/memos-mcp-bridge.sh` 在 `CODING_REWIND_QA=1` 下严格隔离至 `com.codingrewind.memos.qa` 钥匙串服务，不落盘明文令牌即可将 `Memos` 原生 `/mcp` 接入 Antigravity 供 `/rewind` 检索与成文引用。
+4. 运行 `./scripts/check` 与 `./scripts/build-app-bundle.sh` 全部退出码为 0。
 
-每一期必须同时满足：该期验收项可实际执行、结果可复查、没有把未定期的功能提前算进完成。不得用「文档写过了」代替 M2 及以后的真实运行证据。
+## 远期候选边界
+
+自动暂存与相关时主动提示不属于已立项里程碑。日后若经用户单独批准，须另设独立里程碑明确开关机制、新增采集范围与清理验证方法。

@@ -1,92 +1,144 @@
-# 纯 Swift 原生单主线架构与待决边界
+# 统一架构与线级数据契约
 
-2026-11-11 用户拍板采用 **macOS 原生 `Swift 6 + SwiftUI / AppKit + SQLite3 WAL/FTS5`**、**MIT License** 以及 **方案 2（非激活 HUD 速览浮窗加递进写作舱，右上角带可选长对话侧栏开关）**，确立了「单一领域模型贯通到底、边缘感官极薄、拒绝跨栈胶水拼接」的架构准绳。
+本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储、Webhook 事件与原生 `/mcp` 服务，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览以及拉起 **Google Antigravity App 2.x** 对话的极薄界面。
 
-需求背景见 [requirements.md](requirements.md)，对照来源见 [sources.md](sources.md)，数据如何进出见 [privacy.md](privacy.md)。
+需求依据见 [requirements.md](requirements.md)，开源底座与许可核查见 [sources.md](sources.md)，凭据与数据保护规则见 [privacy.md](privacy.md)。
 
-## 设计约束（已记录，不是技术选型）
+## 架构设计约束
 
-来自需求正本、2026-11-10 用户一手直述与已记录方向：
+以下约束直接承接用户一手需求与工程边界：
 
-- **对象与时间尺度**：对象是 AI 对话里确定近期（尤其 **未来 1～3 天**）用得上的好段落、提示词或灵感片段，介于系统备忘录与正式 Notes 之间，不是全量聊天备份。
-- **捕获零打断**：在主线任务进行中选中片段即可一键暂存；**不强迫当场新开对话分叉、不在原对话里插入无关保存指令污染上下文、不强迫填写标题或标签**。
-- **目标双场景与宿主边界**：必须同时围绕独立桌面端 **Google Antigravity App 2.x**（`com.google.antigravity`，无 IDE 外壳、**不支持 VS Code `.vsix` 界面插件**，但支持原生 `plugin.json` / `mcp_config.json` / `hooks.json` / `skills/`）与 **网页版 AI 聊天** 设计。
-- **保留语境**：每条记录要能看到原文、原问题（能取则取，缺失如实标明）和出处。
-- **回顾、找回与 A+C 互动成文**：默认突出展示近 2～3 天热窗口片段，支持自然语言找回，并同时支持 **A（勾选暂存片段继续向 AI 追问推演）** 与 **C（对照暂存片段撰写草稿/思考，由 AI 辅助整理）**。
-- **非目标**：不做默认全量采集；「自动暂存」「相关时提示」仍是候选。
+- **定位与时间窗口**，聚焦未来 1 至 3 天内确定要用到的高质量 AI 对话段落、提示词或思路，默认展示近 72 小时未归档热流卡片，不做全量聊天自动备份。
+- **采集零打断**，在当前主线编码或阅读进行中一键暂存选中文本，不弹出协议确认窗，不抢夺原应用输入焦点，不向当前会话插入保存指令，也不强迫填写标题或标签。
+- **双端统一汇聚**，同时覆盖独立桌面应用 `com.google.antigravity` 与浏览器中的 ChatGPT、Claude、Gemini，四处采集进入同一个 `Memos` 实例。
+- **原文锁死与脉络定锚**，用户选中的原文必须逐字完整保留，不得被摘要替代；前序提问与周围对话轮次作为上下文交由后台增强器提炼结构化抬头，AI 补充信息与原文严格分区展示。
+- **回归主力宿主成文**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x 及其 `Knowledge Work` 界面完成，通过 `agentapi new-conversation` 与原生 `/mcp` 贯通，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
 
-## 已拍板的单主线架构（决定，2026-11-11）
-
-为避免把不同技术栈的项目硬绑成胶水代码（例如同时维护 Next.js WebView 与 SwiftUI 两套状态），系统遵循**「唯一核心数据结构 + 单一原生宿主 + 极薄边缘感官」**原则。所有模块只围绕同一张灵感卡片（`Clip`）从暂存态流向成文态：
+## 端到端拓扑
 
 ```text
-[桌面端：Antigravity App 2.x]                    [网页端：ChatGPT / Claude / Gemini]
- 全局热键静默取选区（不抢焦点）                   极薄浏览器扩展（参考 obsidian-clipper）
- + AntigravityBridge 非阻塞 Hook 关联原问题       调用 coding-rewind://stash?...&silent=true
-        │                                                        │
-        └───────────────────────────┬────────────────────────────┘
-                                    ▼
-             [唯一主脊椎：CodingRewindCore (Swift 6, MIT)]
-              • Clip 值类型模型（SQLite3 WAL + FTS5 + NaturalLanguage 单事务落盘）
-              • Draft 成文草稿（直接读写本地普通 .md 文件）
-              • 纯函数按 72 小时窗口派生 hot / synthesized / archived 状态
-                                    │
-        ┌───────────────────────────┴────────────────────────────┐
-        ▼                                                        ▼
-[出口 1：CodingRewindApp（方案 2 双态原生界面）]  [出口 2：rewind-mcp 本地只读 stdio 服务]
- • 一档：QuickPeekHUDPanel（.nonactivatingPanel） 通过 ~/.gemini/config/plugins/coding-rewind/
- • 二档：递进写作舱（顶栏钉选卡片 + 内联 ⌘J 追问  供 Antigravity（含 Knowledge Work 界面）拉取卡片
-   + 普通 .md 草稿区 + 右上角可选长对话侧栏开关）
+[桌面端 Antigravity App 2.x / macOS 应用]          [网页端 ChatGPT / Claude / Gemini]
+  ⌃⌥S 辅助功能取选区或备份剪贴板模拟 ⌘C             Manifest V3 扩展提取选中 Markdown
+  + coding-rewind-hook 记录最新提问与前 4 轮         + 提取会话标题、前序提问与最近 4 轮对话
+                  │                                                  │
+                  └────────────────────────┬─────────────────────────┘
+                                           ▼
+                    POST /api/v1/memos?memoId=<clientClipId>
+                    POST /api/v1/memos/<serverId>/comments
+                                           │
+                                           ▼
+             [单一事实源后端  deploy/vps  阿里云轻量容器栈]
+              • neosmemo/memos:stable 原版存储 + 原生 Streamable HTTP /mcp
+              • rewind-enricher 验签 Webhook + 5 秒容器内网自愈轮询
+              • 等待上下文评论到达后调用兼容接口生成 Title / Session / Context
+              • 保留 100% 选中原文并将标签翻转为 #rewind/ready
+                                           │
+                  ┌────────────────────────┴─────────────────────────┐
+                  ▼                                                  ▼
+[出口 1  CodingRewindApp 毛玻璃速览浮窗]           [出口 2  Antigravity 2.x 原生插件与 /mcp]
+ • ⌃⌥R 非激活 NSPanel 速览 72 小时热流卡片          • memos-mcp-bridge.sh 从钥匙串读取令牌
+ • hot_cache.json 与 outbox.jsonl 保障断网可用     • 经 mcp-remote 对接远端原生 /mcp
+ • 勾选卡片按 ⌘Return 调 agentapi 开新对话          • /rewind 技能在会话与写作界面检索引用
 ```
 
-### 1. 代码分层与高星 MIT 参考映射
+## 四大组成部分职责
 
-整个桌面端收纳在同一个原生 Swift 工程内，各层共享同一个 `Clip` 类型，零跨语言序列化胶水：
+### 1. 云端单一事实源与幂等增强器
 
-- **`Core/`（纯领域模型与存储，不依赖 UI）**
-  - `Clip.swift`：唯一一等公民结构，包含 `excerpt`（选中原文）、`promptContext`（触发该段回答的原问题，取不到时显式标为 `missing`）、`source`（枚举区分 Antigravity 会话与网页 URL）、`capturedAt` 及生命周期状态（`hot` 72 小时热窗、`synthesized` 已引用成文、`archived` 自然冷却）。
-  - `StashStore.swift`：使用系统原生 `SQLite3` 开启 WAL 模式与 `secure_delete = ON`，在同一个 ACID 事务中维护 `clips` 表与 `clips_fts`（FTS5 虚拟表加 `NaturalLanguage` 中英文分词与词形还原）。主程序以 `.readWrite` 打开，`rewind-mcp` 以 `.readOnly` 打开，单条删除与全部清空同步擦除 FTS 索引并返回 `DeletionReceipt`。
-  - `Draft.swift`：场景 C 产出的草稿直接读写用户可读的普通本地 `.md` 文件（参考 `glushchenko/fsnotes` 的本地文件夹透明模式），不锁进私有二进制库。
-- **`Capture/`（两个静默感官入口，本身不存状态）**
-  - **桌面全局热键 + Antigravity 2.x 会话关联（v0.1 第一刀）**：对 `com.google.antigravity` 先激活 Electron 辅助功能属性再读取 `kAXSelectedTextAttribute`（必要时瞬时快照并恢复剪贴板），配合 `.nonactivatingPanel` 显示成功提示或失败横幅，不抢走原窗口焦点。附属可执行 Target `AntigravityBridge`（产物 `coding-rewind-hook`）仅挂载非阻塞 `PostInvocation` 与 `Stop` 事件，过滤子代理环境变量，逆向扫描会话日志尾部提取最新用户提问，通过临时文件加 `rename(2)` 原子更新 `Runtime/` 快照并输出 `"{}\n"` 退出，即使主程序未启动也能在数毫秒内无锁完成。
-  - **网页端协议接收口（v0.1 预留接口，v0.2 接扩展）**：参考 `obsidianmd/obsidian-clipper`（5.5k 星，MIT）的 `obsidian-note-creator.ts`，浏览器薄扩展提取 ChatGPT、Claude、Gemini 的选段与上一轮用户提问后，直接触发 `coding-rewind://stash?...&silent=true`。原生主程序通过 `onOpenURL` 静默入库，省去常驻 HTTP 端口。
-- **`Views/`（Apple HIG 原生界面，具体布局由本轮三套原型拍板）**
-  - 吸收 `Maccy` 的 `FloatingPanel`（支持 macOS `GlassEffectView` 与 `VisualEffectView` 毛玻璃材质、多选列表）以及 `johnbean393/Sidekick` 的本地材料注入对话模式，把 `codexu/note-gen`「先无负担记录、后勾选成文」的两阶段体验做成纯正苹果原生手感。
-- **`Extensions/RewindMCP/`（反哺 Antigravity `Knowledge Work`，v0.1 第一刀）**
-  - 同工程编译出的极薄本地 `stdio` MCP 可执行文件，直接只读访问同一个 `StashStore`，让用户在 Antigravity App 写作或推演时通过 `/rewind` 拉取近两三天攒下的片段。
+位于 `deploy/vps/`，由 `docker-compose.yml` 编排两个轻量容器：
 
-## 一条记录至少应能表达什么
+- **原版 `neosmemo/memos:stable`**，零源码修改提供 `/api/v1/memos` REST 接口、评论挂载以及进程内原生 `/mcp` 服务，暴露 `MemoService_ListMemos`、`MemoService_GetMemo`、`MemoService_CreateMemo`、`MemoService_UpdateMemo` 等标准工具。
+- **幂等增强器 `deploy/vps/enricher/enricher.py`**，使用 `python:3.12-alpine` 纯标准库实现，零第三方 pip 依赖。由于 `Memos` 内置 Webhook 客户端对私网地址启用 SSRF 拦截，增强器同时提供两条触发通道：
+  1. `POST /webhook` 接口按 Standard Webhooks 规范校验 `webhook-id`、`webhook-timestamp` 与 `webhook-signature` 的 HMAC-SHA256 签名，适用于经 Caddy 公网反代接入实时通知。
+  2. 默认每 5 秒经容器内网查询 `http://memos:5230/api/v1/memos?pageSize=50`，自动发现带有 `#rewind/pending` 的记录并幂等完成增强，确保开箱即用且任何漏包或重启都能自愈。
 
-这是概念字段，不是数据库模式，也不是 API。实现时可以改名或拆分，但不能丢掉这些含义。
+### 2. macOS 原生菜单栏与毛玻璃浮窗
 
-| 含义 | 说明 |
-| --- | --- |
-| 原文 | 用户选中并保存的那段文字，必须是原文，不能只存摘要。 |
-| 原问题 | 引出该段回答或思路的用户问题 / 提示词。若当时无法取得，应留下「缺失」而不是补写一个假问题。 |
-| 出处 | 来源产品、会话标识或可打开的链接，以及其他足以回到现场的信息。链接失效时，仍应能阅读已保存的原文。 |
-| 保存时间 | 何时留下这条记录。 |
-| 可选补充 | 标题、标签、用户笔记都可以有，但都不是保存的前提。 |
-| 用户注释与原文的界限 | 对照 Superpower 功能页的提醒：注释是用户自己的话，不能和原文混成一段无法分辨的文字。 |
+位于 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`，客户端与核心逻辑控制在约三四百行精炼 Swift 6 代码内：
 
-不在 MVP 里预设：完整会话副本、自动分类、评分、云端账号、多设备同步。
+- **零污染选区捕获 `MacOSSelectionAndHotkeys.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，按下全局热键 `⌃⌥S` 时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 120 毫秒上限内轮询 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时自动合并 `active_turn.json` 上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
+- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，按下 `⌃⌥R` 瞬时呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待分析` 与 `AI 已定锚` 状态徽标。
+- **一键拉起宿主对话**，选中一张或多张卡片按下 `⌘Return`，组装包含 AI 脉络抬头、原始选段及 `conversation://` 或网页回链的结构化 Markdown 提示词，直接以 `Process` 参数列表调用 `agentapi new-conversation` 开启新对话，不经 Shell 拼接；若本机未检出 `agentapi` 可执行文件，则将提示词写入剪贴板并通过 `NSWorkspace` 唤起 Antigravity。
+- **本地离线韧性**，未配置地址或网络异常时，采集请求追加写入 `<dataDir>/outbox.jsonl` 并镜像更新 `<dataDir>/hot_cache.json`，保证离线采集零丢失且浮窗在 5 毫秒内瞬时打开，网络恢复后凭 `?memoId=<clientClipId>` 幂等冲刷队列。
 
-## 五条主路径
+### 3. 浏览器 Manifest V3 薄剪藏扩展
 
-1. **零打扰暂存（收集）**：在 Antigravity App 2.x 或网页聊天中选中好段落 → 一键暂存（热键或页面轻量按钮） → 写入原文、原问题（自动关联或如实标缺失）、出处（App 会话/项目或网页 URL）和时间。全程不打断当前对话、不强迫开新会话、不弹必填标题或标签。
-2. **近期热流回放（回顾）**：默认按「近 2～3 天」热窗口展开最近攒下的灵感卡片，打开或扫读即可同时看到原文、原问题与出处；链接或会话仍可用时支持跳回现场，失效时本地原文依然完整可读。
-3. **自然语言找回**：当攒下的片段变多或超出最近几天时，用户可用平常的说法检索并找回相关卡片（具体检索技术路径待决，出机边界遵守 [privacy.md](privacy.md)）。
-4. **片段互动推演（场景 A）**：勾选一或多张暂存卡片组成上下文，围绕它们继续追问、串联碰撞（在本机工作台中直接对话，或通过本地 MCP 拉入 Antigravity App 会话中展开）。
-5. **对照草稿成文（场景 C）**：一边对照选中的暂存卡片与互动结论，一边在右侧草稿栏或 Antigravity `Knowledge Work` 文档中撰写思考与文章，由 AI 辅助整理定稿。
+位于 `extensions/web-clipper/`，零外部 npm 依赖，首批适配 `https://chatgpt.com/*`、`https://claude.ai/*` 与 `https://gemini.google.com/*`：
 
-## 建议采用、但尚未决定的原则
+- **纯函数提取层 `extractors.mjs`**，参照 MIT 项目 `revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、行内代码、列表与链接的 Markdown，同时提取清洗后的会话标题、紧邻前序用户提问以及截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
+- **后台直连投递 `background.js` 与 `memos_payload.mjs`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`，支持右键菜单与 `Alt+Shift+S` 快捷键触发，由后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` v1 接口；断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试，页面右上角以 Shadow DOM 展示 2.2 秒轻提示。
 
-- 默认本机存放，不把云同步或注册账号作为保存的前提。这与 `rewind-for-x`、`threadmark`、`kept`、`ContextVault` 的公开做法一致，也符合本阶段隐私红线。
-- 默认只保存用户主动选中的片段及其必要问题语境，不在后台全量复制整段会话。`hooks.json` 若用于辅助关联 Antigravity 会话出处，也只为补齐用户所选片段的上下文服务，而非静默归档全部聊天。
-- 保存失败时应明确提示用户（如轻提示音或状态栏反馈），而不是静默丢弃。
-- 出处链接或 `conversationId` 是辅助定位，不是唯一载体：原会话被删或 URL 失效后，本地原文仍在。
+### 4. Antigravity 2.x 官方插件、钩子与钥匙串桥接
 
-## 已编码锁定的边界与后续可选扩展
+位于 `Sources/AntigravityBridge/`、`Sources/CodingRewindCore/AntigravityIntegration.swift` 与 `scripts/memos-mcp-bridge.sh`：
 
-1. **方案 2 双态原生界面已定稿**：一档为 `QuickPeekHUDPanel` 非激活速览浮窗，二档为 `WritingStudioWindow` 递进写作舱（含顶部可展开钉选卡片条、内联 `⌘J` 推演浮条、本地普通 `.md` 编辑区，以及右上角可选的 `ScenarioAChatDrawerView` 对话侧栏开关）。
-2. **默认零外发隐私栅栏**：检索固定在进程内通过 `SQLite3` FTS5 与 `NaturalLanguage` 离线完成；场景 A 默认提供本地结构化提纲与 `/rewind` Antigravity MCP 交接指令，仅当用户显式构造带域名确认的 `RemoteEndpointConsent` 时才允许访问指定远端接口。
-3. **v0.2 待接入项**：基于 `obsidian-clipper` 思路裁剪的浏览器薄扩展（对接 v0.1 已实现的 `coding-rewind://stash?...&silent=true` 接收器）。
+- **非阻塞会话钩子 `coding-rewind-hook`**，挂载 `PostInvocation` 与 `Stop` 事件，解析官方 `lastUserInput`、`conversationId`、`workspacePaths` 与 `transcriptPath`，从 `transcript.jsonl` 提取最近 4 轮 `USER_INPUT` 与 `PLANNER_RESPONSE` 正文后原子写入 `<dataDir>/active_turn.json` 并立即以退出码 0 返回。
+- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `MemoService_*` 工具的 `skills/rewind/SKILL.md`。
+- **零明文令牌 MCP 桥接**，`scripts/memos-mcp-bridge.sh` 运行时从环境变量或 macOS Keychain 读取令牌，执行 `npx -y mcp-remote "${MEMOS_URL%/}/mcp"`，兼容 `~/.config/agent-mcp/servers.json` 与 `mcp-sync`，避免任何 JSON 配置文件落盘明文凭据。
+
+## Memos v1 共享线级契约
+
+桌面端、浏览器扩展与云端增强器严格共用同一套 REST 契约：
+
+### 1. 创建初始片段
+
+客户端生成满足 `^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$` 的幂等标识 `clientClipId`，调用 `POST /api/v1/memos?memoId=<clientClipId>`，请求体 `visibility` 固定为 `PRIVATE`。附带对话上下文时的初始 `content` 模板如下：
+
+```markdown
+#rewind/pending #rewind/has-ctx #source/<antigravity|chatgpt|claude|gemini|macos|web>
+
+> **Source:** [<title_or_app>](<url_or_conversation_deeplink>) · <ISO8601_UTC>
+
+<verbatim_selected_markdown>
+```
+
+当桌面普通应用划选等场景不含会话上下文时，省略 `#rewind/has-ctx` 标签，仅保留 `#rewind/pending` 与 `#source/macos`。
+
+### 2. 挂载会话上下文评论
+
+若存在会话标题、前序提问或近期轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/v1/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入私密评论：
+
+```markdown
+<!-- rewind-context-v1 -->
+Session Title: <sessionTitle>
+Prompt: <prompt>
+
+### Recent Turns
+<up to 4 preceding User/Assistant turns>
+```
+
+### 3. 幂等增强与原文保真回写
+
+`rewind-enricher` 扫描到含 `#rewind/pending` 的记录后按以下状态机流转：
+
+1. 若记录已含 `#rewind/ready` 或 `#rewind/synthesized`，直接跳过，保证重复投递零额外模型调用。
+2. 若记录含 `#rewind/has-ctx`，拉取 `/api/v1/memos/<serverId>/comments` 查找含 `<!-- rewind-context-v1 -->` 的评论；若尚未到达且距创建时间不足 15 秒则暂缓等待下一轮，满 15 秒后以现有信息继续处理。
+3. 调用环境变量配置的 OpenAI 兼容 `chat/completions` 接口请求严格 JSON 结构 `title`、`session_topic`、`context_summary` 与 `keywords`。
+4. 通过 `PATCH /api/v1/memos/<serverId>?updateMask=content` 原子替换顶部标签与引用头，100% 保持 `<verbatim_selected_markdown>` 原封不动：
+
+```markdown
+#rewind/ready #source/<platform>
+
+> **Title:** <title>
+> **Session:** <session_topic>
+> **Context:** <context_summary>
+> **Keywords:** <kw1>, <kw2>, <kw3>
+> **Source:** [<title_or_app>](<url_or_conversation_deeplink>) · <ISO8601_UTC>
+
+<verbatim_selected_markdown>
+```
+
+### 4. 热流读取与成文归档
+
+客户端请求 `GET /api/v1/memos?pageSize=100`，筛选含 `#rewind/`、不含 `#rewind/synthesized` 且 `createTime` 位于最近 72 小时内的条目按时间倒序渲染；当片段已送入 Antigravity 完成成文消费后，可通过 `PATCH /api/v1/memos/<serverId>?updateMask=content` 将状态标签翻转为 `#rewind/synthesized` 退出热流池。
+
+## 凭据解析与环境隔离优先级
+
+所有运行时配置均遵循环境变量高于本地配置、拒绝硬编码与拒绝暗中回退的原则：
+
+| 配置项 | 解析顺序 | 安全边界 |
+| --- | --- | --- |
+| 数据目录 | `CODING_REWIND_DATA_DIR` > `~/Library/Application Support/CodingRewind` | 禁止指向 `/tmp` 或 `/private/tmp` |
+| Memos 地址 | `CODING_REWIND_MEMOS_URL` > `<dataDir>/config.json` 中 `memos_url` | `config.json` 严禁包含任何令牌字段 |
+| Memos 令牌 | `CODING_REWIND_MEMOS_TOKEN` > macOS Keychain `com.codingrewind.memos` | `CODING_REWIND_QA=1` 时强制切换至 `com.codingrewind.memos.qa`，缺失即报错，绝不回退个人钥匙串 |
+| 宿主 CLI | `CODING_REWIND_AGENTAPI_BIN` > `PATH` > `/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi` | 直接经 `Process` 参数数组调用，禁止拼接 Shell 字符串 |

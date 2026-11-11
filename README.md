@@ -1,56 +1,62 @@
 # Coding-Rewind
 
-本仓库是 **Coding-Rewind** 的立项规范与 v0.1 纯 Swift 原生 macOS 工程实现，采用 [MIT License](LICENSE)。
+本仓库是 **Coding-Rewind** 的产品规范与统一全栈实现，采用 [MIT License](LICENSE)。
 
 ## 这是什么
 
-在使用桌面端 Coding Agent（主力为独立桌面应用 **Google Antigravity App 2.x**）或网页版 AI 聊天时，经常会撞见一些「接下来两三天马上要用、带来灵感」的对话段落：当下正忙于当前主线，**不想立刻开新对话分叉**，存进正式 Notes 太重，贴进系统备忘录又丢失语境且无法继续互动。
+在使用独立桌面端 **Google Antigravity App 2.x** 或网页版 ChatGPT、Claude、Gemini 聊天时，经常会撞见接下来两三天马上要用、带来灵感的对话段落。当下正在推进主线任务，不想立刻切走新开对话分叉，存进重型笔记库太重，贴进系统备忘录又会丢掉提问语境且难以继续追问成文。
 
-**Coding-Rewind** 要做的是一个介于系统备忘录与正式笔记库之间的**近期灵感暂存、回放与互动成文工具**：跨 **Antigravity App 2.x 与网页版聊天**顺手暂存好段落，在近两三天的热窗口里便捷回顾，并在写东西、深入思考时围绕这些片段继续对话推演或对照成文。
+**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看，勾选卡片即可一键拉起 Antigravity 新对话继续推演或对照写稿。
 
-立项需求正本（用户 t4624u，2026-11-10）：
+立项需求正本来自用户 t4624u 于 2026-11-10 的记录：
 
 > 待开发工具构想：针对与 AI 聊天过程中好用的高质量对话片段、提示词或思路，开发一个支持收集、归档与便捷回顾的功能/工具，把好用的片段系统存起来复用。
 
-一手场景补充（用户直述，2026-11-10，完整原话见 [docs/requirements.md](docs/requirements.md)）：
+用户于 2026-11-10 在本仓库会话中的一手口述补充如下，完整原话见 [docs/requirements.md](docs/requirements.md)：
 
 > 主要就是很多东西我觉得对我来讲，比如这个东西非常好，接下来马上就要用了，但是我又不想马上开个新对话，差不多是这么一个东西。比如说它有些段落 然后某些段落呢，我觉得挺好的，接下来想用但一直又不知道放哪，但我很确定要用，所以我就是想要存起来，就是这么一个东西。
 
-项目名先用 **Coding-Rewind**。用户已表示可以接受备选名称，但在另作决定前以此名为准。
+## 架构概览与组件构成
 
-## 当前状态与构建方式
+项目拒绝双数据库双向同步与半原生半网页胶水层，围绕阿里云轻量应用服务器上的单实例原版 `usememos/memos` 构建极薄边缘端：
 
-- 当前处于 v0.1 第一刀实现与验收阶段（覆盖 M1 拍板及 M2 至 M4 本机核心验收闭环）。
-- 公开仓库与本机工作目录：`https://github.com/semantic-craft/coding-rewind`（本机工作路径 `~/Projects/coding-rewind/`）。
-- 软件许可：[MIT License](LICENSE)（2026-11-11 用户拍板落盘）。
-- 技术底座与界面骨架（2026-11-11 决定）：零第三方依赖的 **Swift 6 原生工程（`SwiftUI + AppKit + SQLite3 WAL/FTS5 + NaturalLanguage`）**，采用**方案 2（非激活 HUD 速览浮窗加递进写作舱，右上角附可选长对话侧栏开关）**，包含 `CodingRewindCore`、`CodingRewindApp`、`coding-rewind-hook`（`AntigravityBridge`）与 `rewind-mcp`（`RewindMCP`）四个 Target。
-- 构建与测试命令：运行 `swift test` 执行离线行为测试与子进程集成测试，运行 `bash scripts/build-app-bundle.sh` 生成 `.build/CodingRewind.app`。
+- **单一事实源后端 `deploy/vps/`**，直接运行官方 `neosmemo/memos:stable` 容器承接 REST 存储与原生 Streamable HTTP `/mcp` 服务，旁挂约百行纯 Python 3 标准库编写的幂等语境增强器 `rewind-enricher`，结合前文 4 轮对话生成标题、会话主题、脉络摘要与关键词引用头，100% 保留用户选中原文不改动。
+- **macOS 原生毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、SwiftUI 与 AppKit 实现约三百五十行轻量菜单栏面板，吸收 MIT 项目 `p0deje/Maccy`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，支持 `⌃⌥S` 零抢焦点捕获、`⌃⌥R` 唤出 72 小时热流浮窗、离线队列幂等重放，以及 `⌘Return` 通过 `agentapi new-conversation` 把勾选卡片送入 Antigravity 开聊。
+- **Antigravity 2.x 官方插件与钩子 `Sources/AntigravityBridge/` 与 `scripts/memos-mcp-bridge.sh`**，非阻塞 `PostInvocation` 与 `Stop` 钩子记录最新提问及最近 4 轮对话上下文，钥匙串桥接脚本在不落盘明文令牌的前提下将原生 `/mcp` 暴露给 Antigravity 的 `/rewind` 技能与 `Knowledge Work` 写作界面。
+- **网页端薄剪藏扩展 `extensions/web-clipper/`**，Manifest V3 无依赖扩展，吸收 MIT 项目 `mem0ai/mem0-chrome-extension`、`revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter` 经验，在 ChatGPT、Claude 与 Gemini 页面提取选区 Markdown 与前序 4 轮对话后后台直连 Memos API，右上角展示 2.2 秒轻提示，不弹自定义协议确认框也不抢焦点。
 
-## 文档怎么读
+## 快速验证与构建
 
-入口就是这份 README。更长的说明按主题分开放在 `docs/`，避免把所有内容塞进一个文件。这种拆分参考了 [GitHub Docs：About READMEs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes)（README 说明项目是什么、为何有用、如何开始；较长文档另置），以及 [Diátaxis](https://www.diataxis.fr/start-here/)（把「说明 / 参考 / 如何做」分开，不在同一页里混写）。
+在仓库任意目录运行统一门禁脚本执行静态边界检查、Swift 测试、VPS 增强器测试、网页扩展测试与脚本语法检查：
+
+```bash
+./scripts/check
+```
+
+构建并签名校验原生菜单栏应用包 `.build/CodingRewind.app`：
+
+```bash
+./scripts/build-app-bundle.sh
+```
+
+工程约束与排障记录见根目录 [AGENTS.md](AGENTS.md) 与 [lessons.md](lessons.md)。
+
+## 文档导航
 
 | 文档 | 内容 |
 | --- | --- |
-| [docs/requirements.md](docs/requirements.md) | 需求正本、已定方向、MVP、非目标；区分决定 / 建议 / 待决 |
-| [docs/sources.md](docs/sources.md) | 指定来源与少量相关项目、许可与可复用边界、立项规范 |
-| [docs/architecture.md](docs/architecture.md) | 纯 Swift 原生单主线架构、数据契约与仍待决边界 |
-| [docs/privacy.md](docs/privacy.md) | 数据生命周期，以及导出、删除原则 |
-| [docs/milestones.md](docs/milestones.md) | 分期目标与可执行验收 |
-| [docs/contributing.md](docs/contributing.md) | 人与 agent 的协作规则 |
+| [AGENTS.md](AGENTS.md) | 代码导航、Memos 线级契约不变量、环境变量与 QA 隔离规则 |
+| [lessons.md](lessons.md) | 已核实的工程教训、修复证据与自动化验证点 |
+| [docs/requirements.md](docs/requirements.md) | 需求正本、用户一手决定、MVP 范围与非目标 |
+| [docs/architecture.md](docs/architecture.md) | 统一 Memos 主干架构、数据契约、离线韧性与宿主集成细节 |
+| [docs/sources.md](docs/sources.md) | 复用与参考的 MIT 上游清单及 GPL/AGPL/无许可排除依据 |
+| [docs/privacy.md](docs/privacy.md) | 原文保护边界、钥匙串凭据隔离、数据导出与删除 |
+| [docs/milestones.md](docs/milestones.md) | M0 至 M4 里程碑定义与可执行验收方法 |
+| [docs/contributing.md](docs/contributing.md) | 人与 agent 协作准则 |
 
-## 已确认的核心需求与产品方向（摘要）
+## 核心产品边界
 
-以下综合 2026-11-10 用户一手直述（决定）与 2026-11-09 讨论方向（转述）；完整分级与出处见 [docs/requirements.md](docs/requirements.md)：
-
-1. **近期热窗口暂存（2～3 天尺度）**：解决「马上要用、不想进重型 Notes、放系统备忘录又不好用」的中间态，捕获时**不强迫当场开新对话**，也不打断当前主线。
-2. **围绕 Antigravity App 2.x + 网页版双场景设计**：桌面端针对独立应用 **Google Antigravity App 2.x**（`com.google.antigravity`，非 VS Code 分支的 IDE 版），同时覆盖网页版 AI 聊天。
-3. **选段一键留存，不强迫标题或标签，保留原问题、原文与出处**。
-4. **服务于写作与思考的「A + C」互动消费**：回顾时不仅能浏览和自然语言找回，还能 **（A）勾选暂存片段接着向 AI 追问推演**，以及 **（C）一边对照暂存片段一边写草稿、由 AI 辅助整理成文**。
-5. **纯 macOS 原生 UI 与两步落地顺序**：主程序采用纯 Swift 原生界面（参考 `Maccy`、`CodeIsland` 等高星 MIT 项目，吸收 `note-gen` 先记录后成文的两阶段思路而不引入其 GPL 代码）；MVP 第一刀先跑通原生主程序与 Antigravity 2.x Hook 及 MCP 联动，第二刀接入支持 ChatGPT、Claude、Gemini 的浏览器薄扩展。
-
-「自动暂存」和「相关时提示」只是候选，不是已定功能。更完整的分级见 [docs/requirements.md](docs/requirements.md)。
-
-## 明确未做
-
-v0.1 不做默认全量自动采集、相关时主动弹窗提示、未授权外发对话原文、复杂 CI 或制作 Page。浏览器端划选扩展排在 v0.2（v0.1 原生主程序已内置 `coding-rewind://stash?...&silent=true` 协议接收器）。
+1. **聚焦 72 小时热窗口**，服务近两三天马上要用的高质量对话片段，保存时不打断当前对话、不强迫当场开新会话、不要求手填标题或标签。
+2. **双端无感采集与脉络保真**，同时覆盖独立桌面端 `com.google.antigravity` 与 ChatGPT、Claude、Gemini 网页端，自动附带原问题、出处链接与近期轮次脉络。
+3. **交回主力宿主推演与成文**，浮窗只做毫秒级速览、检索筛选与多选勾选，长对话追问与对照写稿直接交给用户主力使用的 Antigravity App 2.x 及原生 `/mcp` 工具完成，不重复造本地富文本编辑器。
+4. **明确不做**，不做默认全量聊天自动采集，不做相关时主动弹窗打扰，不在配置文件写入明文密钥，也不引入任何 GPL、AGPL、Commons Clause 或无许可代码。
