@@ -47,7 +47,7 @@
 
 位于 `deploy/vps/`，由 `docker-compose.yml` 编排两个轻量容器：
 
-- **原版 `neosmemo/memos:26.11.0`**，零源码修改提供 `/api/memos` REST 接口、评论挂载以及进程内原生 `/mcp` 服务，暴露 `MemoService_ListMemos`、`MemoService_GetMemo`、`MemoService_CreateMemo`、`MemoService_UpdateMemo` 等标准工具。
+- **原版 `neosmemo/memos:26.11.0`**，零源码修改提供 `/api/memos` REST 接口、评论挂载以及进程内原生 `/mcp` 服务，暴露 `memo_list_memos`、`memo_get_memo`、`memo_list_memo_comments`、`memo_create_memo`、`memo_update_memo` 等标准工具。
 - **幂等增强器 `deploy/vps/enricher/enricher.py`**，使用 `python:3.12-slim` 纯标准库实现并固定非特权用户运行，零第三方 pip 依赖。由于 `Memos` 内置 Webhook 客户端对私网地址启用 SSRF 拦截，增强器同时提供两条触发通道：
   1. `POST /webhook` 接口按 Standard Webhooks 规范校验 `webhook-id`、`webhook-timestamp` 与 `webhook-signature` 的 HMAC-SHA256 签名，适用于经反代接入实时通知。
   2. 默认每 5 秒经容器内网查询 `http://memos:5230/api/memos?pageSize=50`，自动发现带有 `#rewind/pending` 的记录并幂等完成增强，确保开箱即用且任何漏包或重启都能自愈。
@@ -73,7 +73,7 @@
 位于 `Sources/AntigravityBridge/`、`Sources/CodingRewindCore/AntigravityIntegration.swift` 与 `scripts/memos-mcp-bridge.sh`：
 
 - **非阻塞会话钩子 `coding-rewind-hook`**，挂载 `PostInvocation` 与 `Stop` 事件，解析官方 `lastUserInput`、`conversationId`、`workspacePaths` 与 `transcriptPath`，从 `transcript.jsonl` 提取最近 4 轮 `USER_INPUT` 与 `PLANNER_RESPONSE` 正文后原子写入 `<dataDir>/active_turn.json` 并立即以退出码 0 返回。
-- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `MemoService_*` 工具的 `skills/rewind/SKILL.md`。
+- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `memo_*` 工具的 `skills/rewind/SKILL.md`。
 - **零明文令牌 MCP 桥接**，`scripts/memos-mcp-bridge.sh` 运行时从环境变量或 macOS Keychain 读取令牌，执行 `npx -y mcp-remote "${MEMOS_URL%/}/mcp"`，兼容 `~/.config/agent-mcp/servers.json` 与 `mcp-sync`，避免任何 JSON 配置文件落盘明文凭据。
 
 ## Memos REST 共享线级契约

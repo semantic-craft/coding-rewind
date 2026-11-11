@@ -136,10 +136,10 @@ public enum AntigravityIntegration {
 
         Use the configured Memos MCP tools to inspect, synthesize, and update `#rewind/` cards:
 
-        1. Call `MemoService_ListMemos` to list recent memos and filter to entries tagged `#rewind/ready` or `#rewind/pending` within the 72-hour hot window (skip `#rewind/synthesized` unless requested).
-        2. Call `MemoService_GetMemo` when inspecting a specific `memos/<id>` card; preserve verbatim body text unmodified and read the `> **Title:**`, `> **Session:**`, `> **Context:**`, and `> **Source:**` blockquote headers.
+        1. Call `memo_list_memos` to list recent memos and filter to entries tagged `#rewind/ready` or `#rewind/pending` within the 72-hour hot window (skip `#rewind/synthesized` unless requested).
+        2. Call `memo_get_memo` and `memo_list_memo_comments` when inspecting a specific `memos/<id>` card; preserve verbatim body text unmodified and read the `> **Title:**`, `> **Session:**`, `> **Context:**`, and `> **Source:**` blockquote headers.
         3. Always cite original provenance links (`[出处](conversation://<id>)` or web chat URLs) when referencing or quoting a highlight.
-        4. Use `MemoService_CreateMemo` to store new synthesized notes when requested, or `MemoService_UpdateMemo` (`updateMask: content`) to replace `#rewind/ready` / `#rewind/pending` with `#rewind/synthesized` once cards are incorporated.
+        4. Use `memo_create_memo` to store new synthesized notes when requested, or `memo_update_memo` (`updateMask: content`) to replace `#rewind/ready` / `#rewind/pending` with `#rewind/synthesized` once cards are incorporated.
         """
         try AtomicFile.writeUTF8(
             skillMarkdown + "\n",
@@ -212,7 +212,7 @@ public enum AntigravityIntegration {
         }
 
         if let skillText = try? String(contentsOf: skillURL, encoding: .utf8) {
-            if !skillText.contains("MemoService_ListMemos") || !skillText.contains("conversation://") {
+            if !skillText.contains("memo_list_memos") || !skillText.contains("conversation://") {
                 reasons.append("SKILL.md missing Memos MCP guidance")
             }
         } else {
