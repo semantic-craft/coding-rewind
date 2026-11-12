@@ -414,12 +414,19 @@ struct KeyboardShortcutsTests {
 	}
 
 	@Test("Disabling a name unregisters its hotkey")
-	func testDisableUnregistersHotKey() {
-		let shortcut = KeyboardShortcuts.Shortcut(.k, modifiers: [.command, .option, .shift, .control])
+	func testDisableUnregistersHotKey() throws {
+		let candidates: [KeyboardShortcuts.Key] = [.f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20]
+		let shortcut = try #require(
+			candidates
+				.map { KeyboardShortcuts.Shortcut($0, modifiers: [.command, .option, .shift, .control]) }
+				.first(where: Self.canRegisterHotKey(for:)),
+			"No unoccupied test hotkey is available"
+		)
 		let name = KeyboardShortcuts.Name("disableUnregister", initial: shortcut)
 
 		KeyboardShortcuts.onKeyDown(for: name) {}
 		#expect(KeyboardShortcuts.isEnabled(for: name))
+		#expect(!Self.canRegisterHotKey(for: shortcut))
 
 		KeyboardShortcuts.disable(name)
 		#expect(!KeyboardShortcuts.isEnabled(for: name))
