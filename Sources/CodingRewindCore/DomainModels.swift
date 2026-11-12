@@ -482,11 +482,19 @@ public enum MemosWireFormat {
     }
 
     public static func replacingWithSynthesizedTag(_ rawContent: String) -> String {
-        rawContent
-            .replacingOccurrences(of: "#rewind/ready", with: "#rewind/synthesized")
-            .replacingOccurrences(of: "#rewind/pending", with: "#rewind/synthesized")
-            .replacingOccurrences(of: " #rewind/has-ctx", with: "")
-            .replacingOccurrences(of: "#rewind/has-ctx ", with: "")
+        let headerEnd = rawContent.firstIndex(where: \.isNewline) ?? rawContent.endIndex
+        let updatedHeader = headerTokens(rawContent).compactMap { token -> String? in
+            switch token {
+            case "#rewind/pending", "#rewind/ready": return "#rewind/synthesized"
+            case "#rewind/has-ctx": return nil
+            default: return String(token)
+            }
+        }.joined(separator: " ")
+        return updatedHeader + rawContent[headerEnd...]
+    }
+
+    private static func headerTokens(_ rawContent: String) -> [Substring] {
+        rawContent.prefix { !$0.isNewline }.split(whereSeparator: \.isWhitespace)
     }
 
     public static func parseMemo(
@@ -497,25 +505,21 @@ public enum MemosWireFormat {
         hotWindow: TimeInterval = RewindCard.hotWindowSeconds,
         isOfflinePending: Bool = false
     ) -> RewindCard? {
-        guard rawContent.contains("#rewind/"),
-              !rawContent.contains("#rewind/synthesized"),
+        let tags = headerTokens(rawContent)
+        let status: CardStatus? = tags.contains("#rewind/ready") ? .ready
+            : tags.contains("#rewind/pending") ? .pending : nil
+        guard let status,
+              !tags.contains("#rewind/synthesized"),
               createdAt >= now.addingTimeInterval(-hotWindow) else {
             return nil
         }
 
-        let status: CardStatus = rawContent.contains("#rewind/ready") ? .ready : .pending
         let lines = rawContent.components(separatedBy: "\n")
-        var idx = 0
+        var idx = 1
         var sourcePlatform = "macos"
 
-        while idx < lines.count && lines[idx].trimmingCharacters(in: .whitespaces).isEmpty {
-            idx += 1
-        }
-        if idx < lines.count && lines[idx].contains("#rewind/") {
-            for token in lines[idx].split(separator: " ") where token.hasPrefix("#source/") {
-                sourcePlatform = String(token.dropFirst("#source/".count))
-            }
-            idx += 1
+        for token in tags where token.hasPrefix("#source/") {
+            sourcePlatform = String(token.dropFirst("#source/".count))
         }
         while idx < lines.count && lines[idx].trimmingCharacters(in: .whitespaces).isEmpty {
             idx += 1

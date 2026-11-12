@@ -107,7 +107,7 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
   if (!clip && fallbackSelectionText && fallbackSelectionText.trim()) {
     const sourceUrl = tab.url || "";
     clip = {
-      selectedMarkdown: fallbackSelectionText.trim(),
+      selectedMarkdown: fallbackSelectionText,
       sourcePlatform: detectPlatform(sourceUrl),
       sessionTitle: cleanSessionTitle(tab.title || ""),
       prompt: "",

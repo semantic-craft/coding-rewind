@@ -16,11 +16,11 @@ if [[ -z "$MEMOS_URL" ]]; then
   exit 1
 fi
 
-DEFAULT_SERVICE="com.codingrewind.memos"
 if [[ "${CODING_REWIND_QA:-0}" == "1" ]]; then
-  DEFAULT_SERVICE="com.codingrewind.memos.qa"
+  KEYCHAIN_SERVICE="com.codingrewind.memos.qa"
+else
+  KEYCHAIN_SERVICE="${CODING_REWIND_KEYCHAIN_SERVICE:-com.codingrewind.memos}"
 fi
-KEYCHAIN_SERVICE="${CODING_REWIND_KEYCHAIN_SERVICE:-$DEFAULT_SERVICE}"
 
 MEMOS_TOKEN="${CODING_REWIND_MEMOS_TOKEN:-}"
 if [[ -z "$MEMOS_TOKEN" ]]; then

@@ -86,8 +86,8 @@ function formatUtcIso(createdAt) {
 }
 
 export function buildMemosWirePayloads(clip, options = {}) {
-  const selectedMarkdown = String(clip?.selectedMarkdown || "").trim();
-  if (!selectedMarkdown) {
+  const selectedMarkdown = String(clip?.selectedMarkdown ?? "");
+  if (!selectedMarkdown.trim()) {
     throw new Error("selectedMarkdown must not be empty");
   }
 
@@ -231,8 +231,12 @@ export async function deliverEnvelopeToMemos({
           { method: "GET", headers }
         );
         if (getResp.ok) {
-          const existingJson = await getResp.json();
-          serverId = parseServerMemoId(existingJson);
+          try {
+            const existingJson = await getResp.json();
+            serverId = parseServerMemoId(existingJson);
+          } catch (err) {
+            return { ok: false, retryable: true, serverId: null, error: String(err) };
+          }
         } else {
           serverId = envelope.clipId;
         }
@@ -247,8 +251,12 @@ export async function deliverEnvelopeToMemos({
         serverId: null
       };
     } else {
-      const memoJson = await memoResp.json();
-      serverId = parseServerMemoId(memoJson);
+      try {
+        const memoJson = await memoResp.json();
+        serverId = parseServerMemoId(memoJson);
+      } catch (err) {
+        return { ok: false, retryable: true, serverId: null, error: String(err) };
+      }
     }
   }
 

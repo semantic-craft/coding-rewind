@@ -126,7 +126,7 @@ fi
 
 if [[ -d "${REPO_ROOT}/deploy/vps/enricher" ]] && compgen -G "${REPO_ROOT}/deploy/vps/enricher/test_*.py" > /dev/null; then
   echo "==> [3/6] VPS AI Enricher unit tests"
-  python3 -m unittest discover -s deploy/vps/enricher -p 'test_*.py'
+  python3 -B -m unittest discover -s deploy/vps/enricher -p 'test_*.py'
 else
   echo "==> [3/6] VPS AI Enricher unit tests (skipped: not present in this checkout)"
 fi
@@ -146,10 +146,12 @@ for sh_file in "${REPO_ROOT}"/scripts/*.sh; do
 done
 
 echo "==> [6/6] AppIcon & MenuBarIcon geometry verification"
-ICONSET_CHECK_DIR="${REPO_ROOT}/.build/check-AppIcon.iconset"
-rm -rf "${ICONSET_CHECK_DIR}"
+mkdir -p "${REPO_ROOT}/.build"
+ICON_CHECK_ROOT="$(mktemp -d "${REPO_ROOT}/.build/icon-check.XXXXXX")"
+trap 'rm -r "${ICON_CHECK_ROOT}"' EXIT
+ICONSET_CHECK_DIR="${ICON_CHECK_ROOT}/AppIcon.iconset"
 swift "${REPO_ROOT}/scripts/generate-app-icons.swift" "${ICONSET_CHECK_DIR}"
 swift "${REPO_ROOT}/scripts/verify-app-icon.swift" "${ICONSET_CHECK_DIR}" "${REPO_ROOT}/Resources"
-rm -rf "${ICONSET_CHECK_DIR}"
+python3 "${REPO_ROOT}/scripts/test-app-icon.py" "${ICONSET_CHECK_DIR}" "${REPO_ROOT}/Resources"
 
 echo "PASS: all verification checks succeeded."

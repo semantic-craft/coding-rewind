@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+import Darwin
 import Foundation
 
 public struct MemoWireDTO: Codable, Equatable, Sendable {
@@ -230,6 +231,13 @@ public struct OutboxEntry: Codable, Equatable, Sendable {
         self.commentContent = commentContent
         self.createdAt = createdAt
     }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.clientClipId == rhs.clientClipId &&
+        lhs.createdAt == rhs.createdAt &&
+        lhs.memoContent.utf8.elementsEqual(rhs.memoContent.utf8) &&
+        lhs.commentContent.map { Data($0.utf8) } == rhs.commentContent.map { Data($0.utf8) }
+    }
 }
 
 public struct OfflineOutbox: Sendable {
@@ -253,13 +261,15 @@ public struct OfflineOutbox: Sendable {
     }
 
     public func enqueue(_ entry: OutboxEntry) throws {
-        var existing = loadEntries()
-        if let idx = existing.firstIndex(where: { $0.clientClipId == entry.clientClipId }) {
-            existing[idx] = entry
-        } else {
-            existing.append(entry)
+        try withFileLock {
+            var existing = loadEntries()
+            if let idx = existing.firstIndex(where: { $0.clientClipId == entry.clientClipId }) {
+                existing[idx] = entry
+            } else {
+                existing.append(entry)
+            }
+            try writeEntries(existing)
         }
-        try writeEntries(existing)
     }
 
     @discardableResult
@@ -272,7 +282,7 @@ public struct OfflineOutbox: Sendable {
         guard !entries.isEmpty else { return ([], []) }
 
         var flushed: [RewindCard] = []
-        var remaining: [OutboxEntry] = []
+        var sentEntries: [String: OutboxEntry] = [:]
 
         for entry in entries {
             do {
@@ -285,19 +295,44 @@ public struct OfflineOutbox: Sendable {
                     fallbackCreatedAt: entry.createdAt
                 )
                 flushed.append(saved)
+                sentEntries[entry.clientClipId] = entry
             } catch {
-                remaining.append(entry)
+                continue
             }
         }
 
-        try writeEntries(remaining)
+        let remaining = try withFileLock {
+            let current = loadEntries()
+            let remaining = current.filter { sentEntries[$0.clientClipId] != $0 }
+            if remaining.count != current.count {
+                try writeEntries(remaining)
+            }
+            return remaining
+        }
         return (flushed, remaining)
+    }
+
+    private func withFileLock<T>(_ operation: () throws -> T) throws -> T {
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Atomic writes replace the queue inode, so every writer locks a separate stable file.
+        let lockURL = fileURL.appendingPathExtension("lock")
+        let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else {
+            throw RewindError.ioError("open(\(lockURL.lastPathComponent)) errno=\(errno)")
+        }
+        defer { close(fd) }
+        while flock(fd, LOCK_EX) != 0 {
+            if errno == EINTR { continue }
+            throw RewindError.ioError("flock errno=\(errno)")
+        }
+        defer { _ = flock(fd, LOCK_UN) }
+        return try operation()
     }
 
     private func writeEntries(_ entries: [OutboxEntry]) throws {
         if entries.isEmpty {
             if FileManager.default.fileExists(atPath: fileURL.path) {
-                try? FileManager.default.removeItem(at: fileURL)
+                try FileManager.default.removeItem(at: fileURL)
             }
             return
         }
@@ -327,25 +362,27 @@ public struct HotCache: Sendable {
         guard let cards = try? decoder.decode([RewindCard].self, from: data) else {
             return []
         }
-        return cards
-            .filter {
-                !$0.rawContent.contains("#rewind/synthesized") &&
-                $0.createdAt >= now.addingTimeInterval(-RewindCard.hotWindowSeconds)
-            }
-            .sorted { $0.createdAt > $1.createdAt }
+        return hotCards(cards, now: now)
     }
 
     public func saveCards(_ cards: [RewindCard], now: Date = Date()) throws {
-        let hot = cards
-            .filter {
-                !$0.rawContent.contains("#rewind/synthesized") &&
-                $0.createdAt >= now.addingTimeInterval(-RewindCard.hotWindowSeconds)
-            }
-            .sorted { $0.createdAt > $1.createdAt }
+        let hot = hotCards(cards, now: now)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.withoutEscapingSlashes]
         let data = try encoder.encode(hot)
         try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
+    }
+
+    private func hotCards(_ cards: [RewindCard], now: Date) -> [RewindCard] {
+        cards.compactMap { card in
+            MemosWireFormat.parseMemo(
+                id: card.id,
+                rawContent: card.rawContent,
+                createdAt: card.createdAt,
+                now: now,
+                isOfflinePending: card.isOfflinePending
+            )
+        }.sorted { $0.createdAt > $1.createdAt }
     }
 }
