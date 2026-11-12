@@ -2,6 +2,7 @@
 
 import AppKit
 import CodingRewindCore
+import KeyboardShortcuts
 import SwiftUI
 
 public enum AppCommand: Equatable, Sendable {
@@ -63,6 +64,7 @@ private func makeCommandMenuItem(
 @MainActor
 public enum MainMenuBuilder {
     public static func buildMainMenu(
+        shortcuts: AppShortcuts,
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) -> NSMenu {
         let mainMenu = NSMenu()
@@ -93,24 +95,12 @@ public enum MainMenuBuilder {
 
         let actionsMenuItem = NSMenuItem(title: "操作", action: nil, keyEquivalent: "")
         let actionsMenu = NSMenu(title: "操作")
-        actionsMenu.addItem(
-            makeCommandMenuItem(
-                title: "切换 Rewind 浮窗",
-                command: .toggleHUD,
-                keyEquivalent: "r",
-                modifiers: [.control, .option],
-                handler: onCommand
-            )
-        )
-        actionsMenu.addItem(
-            makeCommandMenuItem(
-                title: "捕获当前选段",
-                command: .captureSelectionFromMenu,
-                keyEquivalent: "s",
-                modifiers: [.control, .option],
-                handler: onCommand
-            )
-        )
+        let toggleItem = makeCommandMenuItem(title: "切换 Rewind 浮窗", command: .toggleHUD, handler: onCommand)
+        shortcuts.bindMenuItem(toggleItem, to: .toggleHUD)
+        actionsMenu.addItem(toggleItem)
+        let captureItem = makeCommandMenuItem(title: "捕获当前选段", command: .captureSelectionFromMenu, handler: onCommand)
+        shortcuts.bindMenuItem(captureItem, to: .captureSelection)
+        actionsMenu.addItem(captureItem)
         actionsMenu.addItem(
             makeCommandMenuItem(
                 title: "在 Antigravity 开聊",
@@ -303,17 +293,20 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
     public let statusItem: NSStatusItem
     public let menu: NSMenu
 
+    private let shortcuts: AppShortcuts
     private let snapshotProvider: @MainActor () -> MenuStatusSnapshot
     private let onCommand: @MainActor (AppCommand) -> Void
     private var appearanceObservation: NSKeyValueObservation?
     private var isPoppingUpMenu = false
 
     public init(
+        shortcuts: AppShortcuts,
         snapshotProvider: @escaping @MainActor () -> MenuStatusSnapshot,
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: 28)
         self.menu = NSMenu(title: "Coding Rewind")
+        self.shortcuts = shortcuts
         self.snapshotProvider = snapshotProvider
         self.onCommand = onCommand
         super.init()
@@ -396,24 +389,12 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        menu.addItem(
-            makeCommandMenuItem(
-                title: snapshot.toggleHUDTitle,
-                command: .toggleHUD,
-                keyEquivalent: "r",
-                modifiers: [.control, .option],
-                handler: onCommand
-            )
-        )
-        menu.addItem(
-            makeCommandMenuItem(
-                title: "捕获当前选段",
-                command: .captureSelectionFromMenu,
-                keyEquivalent: "s",
-                modifiers: [.control, .option],
-                handler: onCommand
-            )
-        )
+        let toggleItem = makeCommandMenuItem(title: snapshot.toggleHUDTitle, command: .toggleHUD, handler: onCommand)
+        shortcuts.applyMenuShortcut(to: toggleItem, for: .toggleHUD)
+        menu.addItem(toggleItem)
+        let captureItem = makeCommandMenuItem(title: "捕获当前选段", command: .captureSelectionFromMenu, handler: onCommand)
+        shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
+        menu.addItem(captureItem)
         menu.addItem(
             makeCommandMenuItem(
                 title: snapshot.launchTitle,
@@ -520,6 +501,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 @MainActor
 public final class SettingsWindowController: NSWindowController {
     private let coordinator: AppCoordinator
+    private let shortcuts: AppShortcuts
     private let onInstallPlugin: @MainActor () -> Void
     private let onRequestAccessibility: @MainActor () -> Void
     private let hostingView: NSHostingView<SettingsFormView>
@@ -527,15 +509,17 @@ public final class SettingsWindowController: NSWindowController {
 
     public init(
         coordinator: AppCoordinator,
+        shortcuts: AppShortcuts,
         onInstallPlugin: @escaping @MainActor () -> Void,
         onRequestAccessibility: @escaping @MainActor () -> Void
     ) {
         self.coordinator = coordinator
+        self.shortcuts = shortcuts
         self.onInstallPlugin = onInstallPlugin
         self.onRequestAccessibility = onRequestAccessibility
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 468, height: 324),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 570),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -546,6 +530,7 @@ public final class SettingsWindowController: NSWindowController {
 
         let placeholderView = SettingsFormView(
             coordinator: coordinator,
+            shortcuts: shortcuts,
             onInstallPlugin: onInstallPlugin,
             onRequestAccessibility: onRequestAccessibility,
             onClose: {}
@@ -555,7 +540,7 @@ public final class SettingsWindowController: NSWindowController {
 
         self.hostingView.rootView = makeRootView()
         window.contentView = self.hostingView
-        window.setContentSize(NSSize(width: 468, height: 324))
+        window.setContentSize(NSSize(width: 520, height: 570))
     }
 
     @available(*, unavailable)
@@ -577,6 +562,7 @@ public final class SettingsWindowController: NSWindowController {
     private func makeRootView() -> SettingsFormView {
         SettingsFormView(
             coordinator: coordinator,
+            shortcuts: shortcuts,
             onInstallPlugin: onInstallPlugin,
             onRequestAccessibility: onRequestAccessibility,
             onClose: { [weak self] in

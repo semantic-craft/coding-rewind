@@ -22,6 +22,7 @@ let package = Package(
             targets: ["CodingRewindApp"]
         )
     ],
+    dependencies: [.package(path: "Vendor/KeyboardShortcuts")],
     targets: [
         .target(
             name: "CodingRewindCore"
@@ -32,7 +33,15 @@ let package = Package(
         ),
         .executableTarget(
             name: "CodingRewindApp",
-            dependencies: ["CodingRewindCore"]
+            dependencies: ["CodingRewindCore", .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts")]
+        ),
+        .executableTarget(
+            name: "ShortcutConflictFixture",
+            path: "Tests/Support/ShortcutConflictFixture"
+        ),
+        .testTarget(
+            name: "CodingRewindAppTests",
+            dependencies: ["CodingRewindApp", "ShortcutConflictFixture", .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts")]
         ),
         .testTarget(
             name: "CodingRewindCoreTests",

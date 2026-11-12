@@ -69,7 +69,7 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         }
         if selectedText == nil {
             let targetPID = target.pid
-            selectedText = await MainActor.run { Self.copyViaCommandCPreservingPasteboard(targetPID: targetPID) }
+            selectedText = await Self.copyViaCommandCPreservingPasteboard(targetPID: targetPID)
         }
         guard let finalSelection = selectedText, !finalSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw RewindError.emptySelection
@@ -92,12 +92,14 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
     }
 
     @MainActor
-    private static func copyViaCommandCPreservingPasteboard(targetPID: pid_t) -> String? {
+    private static func copyViaCommandCPreservingPasteboard(targetPID: pid_t) async -> String? {
+        guard await waitForReleasedModifiers() else { return nil }
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID,
            let targetApp = NSRunningApplication(processIdentifier: targetPID) {
             _ = targetApp.activate()
-            usleep(40_000)
+            try? await Task.sleep(for: .milliseconds(80))
         }
+        guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else { return nil }
         let pasteboard = NSPasteboard.general
         let initialChangeCount = pasteboard.changeCount
         let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pasteboard.pasteboardItems ?? []).map { item in
@@ -120,11 +122,25 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         keyUp.flags = .maskCommand
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
-        for _ in 0..<12 {
-            usleep(10_000)
+        for _ in 0..<20 {
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return nil }
             if pasteboard.changeCount != initialChangeCount { return pasteboard.string(forType: .string) }
         }
         return nil
+    }
+
+    @MainActor
+    static func waitForReleasedModifiers(
+        timeout: Duration = .seconds(1),
+        flags: () -> CGEventFlags = { CGEventSource.flagsState(.combinedSessionState) }
+    ) async -> Bool {
+        let deadline = ContinuousClock.now + timeout
+        let modifiers: CGEventFlags = [.maskControl, .maskAlternate, .maskShift, .maskCommand]
+        while !flags().intersection(modifiers).isEmpty {
+            guard ContinuousClock.now < deadline else { return false }
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return false }
+        }
+        return !Task.isCancelled
     }
 
     private static func isSupportedBrowser(bundleID: String) -> Bool {
@@ -141,42 +157,5 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         guard let out = NSAppleScript(source: script)?.executeAndReturnError(&err).stringValue else { return (nil, nil) }
         let parts = out.components(separatedBy: "\n")
         return (parts.first, parts.count > 1 ? parts[1] : nil)
-    }
-}
-
-@MainActor
-public final class GlobalShortcutMonitor {
-    private final class DispatchBox {
-        let handler: @MainActor @Sendable (UInt32) -> Void
-        init(handler: @escaping @MainActor @Sendable (UInt32) -> Void) { self.handler = handler }
-    }
-    private let onCapture: @MainActor () -> Void
-    private let onToggleHUD: @MainActor () -> Void
-    private var captureRef: EventHotKeyRef?
-    private var toggleRef: EventHotKeyRef?
-    private var handlerRef: EventHandlerRef?
-    private var box: DispatchBox?
-
-    public init(onCapture: @escaping @MainActor () -> Void, onToggleHUD: @escaping @MainActor () -> Void) {
-        self.onCapture = onCapture
-        self.onToggleHUD = onToggleHUD
-    }
-
-    public func register() {
-        let box = DispatchBox { [weak self] id in if id == 1 { self?.onCapture() } else if id == 2 { self?.onToggleHUD() } }
-        self.box = box
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, event, userData -> OSStatus in
-            guard let event, let userData else { return noErr }
-            var hkID = EventHotKeyID()
-            guard GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout<EventHotKeyID>.size, nil, &hkID) == noErr else { return noErr }
-            let dispatch = Unmanaged<DispatchBox>.fromOpaque(userData).takeUnretainedValue().handler
-            let pressedID = hkID.id
-            Task { @MainActor in dispatch(pressedID) }
-            return noErr
-        }, 1, &spec, Unmanaged.passUnretained(box).toOpaque(), &handlerRef)
-        let mods = UInt32(controlKey | optionKey)
-        RegisterEventHotKey(UInt32(kVK_ANSI_S), mods, EventHotKeyID(signature: 0x4352_5744, id: 1), GetApplicationEventTarget(), 0, &captureRef)
-        RegisterEventHotKey(UInt32(kVK_ANSI_R), mods, EventHotKeyID(signature: 0x4352_5744, id: 2), GetApplicationEventTarget(), 0, &toggleRef)
     }
 }

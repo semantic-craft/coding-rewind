@@ -54,10 +54,11 @@
 
 ### 2. macOS 原生菜单栏与毛玻璃浮窗
 
-位于 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`，客户端与核心逻辑控制在约三四百行精炼 Swift 6 代码内：
+位于 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`：
 
-- **零污染选区捕获 `MacOSSelectionAndHotkeys.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，按下全局热键 `⌃⌥S` 时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 120 毫秒上限内轮询 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时自动合并 `active_turn.json` 上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
-- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，按下 `⌃⌥R` 瞬时呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待分析` 与 `AI 已定锚` 状态徽标。
+- **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，释放捕获快捷键（默认 `⌃⌥S`）时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时自动合并 `active_turn.json` 上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
+- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待分析` 与 `AI 已定锚` 状态徽标。
+- **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获与浮窗两个动作；`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
 - **一键拉起宿主对话**，选中一张或多张卡片按下 `⌘Return`，组装包含 AI 脉络抬头、原始选段及 `conversation://` 或网页回链的结构化 Markdown 提示词，直接以 `Process` 参数列表调用 `agentapi new-conversation` 开启新对话，不经 Shell 拼接；若本机未检出 `agentapi` 可执行文件，则将提示词写入剪贴板并通过 `NSWorkspace` 唤起 Antigravity。
 - **本地离线韧性**，未配置地址或网络异常时，采集请求追加写入 `<dataDir>/outbox.jsonl` 并镜像更新 `<dataDir>/hot_cache.json`，保证离线采集零丢失且浮窗在 5 毫秒内瞬时打开，网络恢复后凭 `?memoId=<clientClipId>` 幂等冲刷队列。
 
@@ -142,3 +143,5 @@ Prompt: <prompt>
 | Memos 地址 | `CODING_REWIND_MEMOS_URL` > `<dataDir>/config.json` 中 `memos_url` | `config.json` 严禁包含任何令牌字段 |
 | Memos 令牌 | `CODING_REWIND_MEMOS_TOKEN` > macOS Keychain `com.codingrewind.memos` | `CODING_REWIND_QA=1` 时强制切换至 `com.codingrewind.memos.qa`，缺失即报错，绝不回退个人钥匙串 |
 | 宿主 CLI | `CODING_REWIND_AGENTAPI_BIN` > `PATH` > `/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi` | 直接经 `Process` 参数数组调用，禁止拼接 Shell 字符串 |
+
+快捷键偏好使用库的 UserDefaults 存储，应用不维护第二份快捷键 JSON。普通运行使用 `.standard`；`CODING_REWIND_QA=1` 时在创建任何 Name 前注入按 `CODING_REWIND_DATA_DIR` 派生的独立域，重启稳定。QA 可通过 `CODING_REWIND_SHORTCUTS_SUITE` 指定 `dev.codingrewind.qa.` 前缀的域；非 QA 忽略该变量。构建脚本在 QA 模式使用 `dev.codingrewind.app.qa` bundle ID，签名策略不变。
