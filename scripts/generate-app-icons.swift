@@ -85,230 +85,69 @@ func renderMasterArtwork(to destinationURL: URL) throws {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
     let fullRect = CGRect(x: 0, y: 0, width: size, height: size)
 
-    let bgGradient = CGGradient(
+    let tileGradient = CGGradient(
         colorsSpace: space,
-        colors: [
-            srgb(0x16, 0x24, 0x47, 1.0),
-            srgb(0x0D, 0x16, 0x2C, 1.0),
-            srgb(0x09, 0x0E, 0x1A, 1.0)
-        ] as CFArray,
-        locations: [0.0, 0.52, 1.0]
+        colors: [srgb(0x18, 0x94, 0x83), srgb(0x06, 0x5E, 0x55)] as CFArray,
+        locations: [0.0, 1.0]
     )!
     ctx.drawLinearGradient(
-        bgGradient,
-        start: CGPoint(x: 160, y: 960),
-        end: CGPoint(x: 880, y: 64),
+        tileGradient,
+        start: CGPoint(x: 210, y: 930),
+        end: CGPoint(x: 820, y: 80),
         options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
     )
 
-    let cyanAura = CGGradient(
-        colorsSpace: space,
-        colors: [srgb(0x38, 0xBD, 0xF8, 0.26), srgb(0x38, 0xBD, 0xF8, 0.0)] as CFArray,
-        locations: [0.0, 1.0]
-    )!
-    ctx.drawRadialGradient(
-        cyanAura,
-        startCenter: CGPoint(x: 430, y: 600),
-        startRadius: 10,
-        endCenter: CGPoint(x: 430, y: 600),
-        endRadius: 430,
-        options: []
-    )
-
-    let amberAura = CGGradient(
-        colorsSpace: space,
-        colors: [srgb(0xF5, 0x9E, 0x0B, 0.22), srgb(0xF5, 0x9E, 0x0B, 0.0)] as CFArray,
-        locations: [0.0, 1.0]
-    )!
-    ctx.drawRadialGradient(
-        amberAura,
-        startCenter: CGPoint(x: 610, y: 390),
-        startRadius: 10,
-        endCenter: CGPoint(x: 610, y: 390),
-        endRadius: 390,
-        options: []
-    )
+    let cardPath = CGMutablePath()
+    cardPath.move(to: CGPoint(x: 248, y: 230))
+    cardPath.addQuadCurve(to: CGPoint(x: 168, y: 310), control: CGPoint(x: 168, y: 230))
+    cardPath.addLine(to: CGPoint(x: 168, y: 690))
+    cardPath.addQuadCurve(to: CGPoint(x: 248, y: 770), control: CGPoint(x: 168, y: 770))
+    cardPath.addLine(to: CGPoint(x: 728, y: 770))
+    cardPath.addLine(to: CGPoint(x: 856, y: 642))
+    cardPath.addLine(to: CGPoint(x: 856, y: 310))
+    cardPath.addQuadCurve(to: CGPoint(x: 776, y: 230), control: CGPoint(x: 856, y: 230))
+    cardPath.closeSubpath()
 
     ctx.saveGState()
-    ctx.addEllipse(in: CGRect(x: 150, y: 150, width: 724, height: 724))
-    ctx.clip()
-    ctx.setStrokeColor(srgb(0x7D, 0xD3, 0xFC, 0.065))
-    ctx.setLineWidth(1.5)
-    for step in stride(from: 192, through: 832, by: 64) {
-        let pos = CGFloat(step)
-        ctx.move(to: CGPoint(x: pos, y: 150))
-        ctx.addLine(to: CGPoint(x: pos, y: 874))
-        ctx.move(to: CGPoint(x: 150, y: pos))
-        ctx.addLine(to: CGPoint(x: 874, y: pos))
-    }
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    ctx.saveGState()
-    ctx.translateBy(x: 512, y: 506)
-    ctx.rotate(by: -9.0 * .pi / 180.0)
-    let cardRect = CGRect(x: -186, y: -144, width: 372, height: 288)
-    let cardPath = CGPath(roundedRect: cardRect, cornerWidth: 46, cornerHeight: 46, transform: nil)
-
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -18), blur: 36, color: srgb(0x02, 0x06, 0x17, 0.65))
+    ctx.setShadow(offset: CGSize(width: 0, height: -20), blur: 34, color: srgb(0x00, 0x27, 0x22, 0.42))
     ctx.addPath(cardPath)
-    ctx.setFillColor(srgb(0x1E, 0x29, 0x3B, 0.55))
+    ctx.setFillColor(srgb(0xF5, 0xF0, 0xDC))
     ctx.fillPath()
     ctx.restoreGState()
 
     ctx.saveGState()
     ctx.addPath(cardPath)
     ctx.clip()
-    let glassGrad = CGGradient(
+    let paperGradient = CGGradient(
         colorsSpace: space,
-        colors: [
-            srgb(0xFF, 0xFF, 0xFF, 0.20),
-            srgb(0x93, 0xC5, 0xFD, 0.09),
-            srgb(0x0F, 0x17, 0x2A, 0.36)
-        ] as CFArray,
-        locations: [0.0, 0.5, 1.0]
+        colors: [srgb(0xFF, 0xFC, 0xEE), srgb(0xEB, 0xE5, 0xD0)] as CFArray,
+        locations: [0.0, 1.0]
     )!
-    ctx.drawLinearGradient(
-        glassGrad,
-        start: CGPoint(x: cardRect.minX, y: cardRect.maxY),
-        end: CGPoint(x: cardRect.maxX, y: cardRect.minY),
-        options: []
-    )
+    ctx.drawLinearGradient(paperGradient, start: CGPoint(x: 300, y: 800), end: CGPoint(x: 750, y: 210), options: [])
     ctx.restoreGState()
 
-    ctx.addPath(cardPath)
-    ctx.setStrokeColor(srgb(0xE0, 0xF2, 0xFE, 0.34))
-    ctx.setLineWidth(3.0)
-    ctx.strokePath()
+    let foldPath = CGMutablePath()
+    foldPath.move(to: CGPoint(x: 728, y: 770))
+    foldPath.addLine(to: CGPoint(x: 728, y: 642))
+    foldPath.addLine(to: CGPoint(x: 856, y: 642))
+    foldPath.closeSubpath()
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: -8, height: -8), blur: 14, color: srgb(0x20, 0x3B, 0x34, 0.22))
+    ctx.addPath(foldPath)
+    ctx.setFillColor(srgb(0xD9, 0xE7, 0xD6))
+    ctx.fillPath()
+    ctx.restoreGState()
 
-    let barSpecs: [(CGRect, CGColor)] = [
-        (CGRect(x: -128, y: 58, width: 148, height: 22), srgb(0x38, 0xBD, 0xF8, 0.85)),
-        (CGRect(x: -128, y: 8, width: 248, height: 18), srgb(0xE2, 0xE8, 0xF0, 0.52)),
-        (CGRect(x: -128, y: -38, width: 204, height: 18), srgb(0xE2, 0xE8, 0xF0, 0.36)),
-        (CGRect(x: -128, y: -84, width: 126, height: 18), srgb(0xFB, 0xBF, 0x24, 0.65))
+    let strokeSpecs: [(rect: CGRect, radius: CGFloat)] = [
+        (CGRect(x: 286, y: 477, width: 500, height: 58), 29),
+        (CGRect(x: 286, y: 373, width: 350, height: 58), 29)
     ]
-    for (barRect, color) in barSpecs {
-        let barPath = CGPath(roundedRect: barRect, cornerWidth: 9, cornerHeight: 9, transform: nil)
-        ctx.addPath(barPath)
-        ctx.setFillColor(color)
+    for stroke in strokeSpecs {
+        let strokePath = CGPath(roundedRect: stroke.rect, cornerWidth: stroke.radius, cornerHeight: stroke.radius, transform: nil)
+        ctx.addPath(strokePath)
+        ctx.setFillColor(srgb(0x08, 0x70, 0x63))
         ctx.fillPath()
     }
-    ctx.restoreGState()
-
-    let center = CGPoint(x: 512, y: 512)
-    let radius: CGFloat = 296
-    let startAngle = -142.0 * .pi / 180.0
-    let arcEndAngle = 114.0 * .pi / 180.0
-    let arcCenterline = CGMutablePath()
-    let arcSteps = 160
-    for i in 0...arcSteps {
-        let t = CGFloat(i) / CGFloat(arcSteps)
-        let angle = startAngle + t * (arcEndAngle - startAngle)
-        let pt = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
-        if i == 0 {
-            arcCenterline.move(to: pt)
-        } else {
-            arcCenterline.addLine(to: pt)
-        }
-    }
-    let strokedArc = arcCenterline.copy(
-        strokingWithWidth: 54,
-        lineCap: .round,
-        lineJoin: .round,
-        miterLimit: 10
-    )
-
-    ctx.saveGState()
-    ctx.setShadow(offset: .zero, blur: 30, color: srgb(0x38, 0xBD, 0xF8, 0.50))
-    ctx.addPath(strokedArc)
-    ctx.setFillColor(srgb(0x38, 0xBD, 0xF8, 0.25))
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    ctx.saveGState()
-    ctx.addPath(strokedArc)
-    ctx.clip()
-    let arcGrad = CGGradient(
-        colorsSpace: space,
-        colors: [
-            srgb(0x38, 0xBD, 0xF8, 1.0),
-            srgb(0x0E, 0xA5, 0xE9, 1.0),
-            srgb(0xFB, 0xBF, 0x24, 1.0),
-            srgb(0xF5, 0x9E, 0x0B, 1.0)
-        ] as CFArray,
-        locations: [0.0, 0.48, 0.84, 1.0]
-    )!
-    ctx.drawLinearGradient(
-        arcGrad,
-        start: CGPoint(x: 320, y: 240),
-        end: CGPoint(x: 380, y: 790),
-        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
-    )
-    ctx.restoreGState()
-
-    for (chevAngleDeg, alphaScale, width) in [(138.0 as CGFloat, 1.0 as CGFloat, 42.0 as CGFloat), (120.0 as CGFloat, 0.82 as CGFloat, 38.0 as CGFloat)] {
-        let shiftedAngle = chevAngleDeg * .pi / 180.0
-        let tip = CGPoint(
-            x: center.x + cos(shiftedAngle) * radius,
-            y: center.y + sin(shiftedAngle) * radius
-        )
-        let localTangent = shiftedAngle + .pi / 2.0
-        let wingLen: CGFloat = 88
-        let wingA = CGPoint(
-            x: tip.x + cos(localTangent + 2.38) * wingLen,
-            y: tip.y + sin(localTangent + 2.38) * wingLen
-        )
-        let wingB = CGPoint(
-            x: tip.x + cos(localTangent - 2.38) * wingLen,
-            y: tip.y + sin(localTangent - 2.38) * wingLen
-        )
-        let chev = CGMutablePath()
-        chev.move(to: wingA)
-        chev.addLine(to: tip)
-        chev.addLine(to: wingB)
-        let strokedChev = chev.copy(strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 10)
-
-        ctx.saveGState()
-        ctx.setShadow(offset: .zero, blur: 20, color: srgb(0xF5, 0x9E, 0x0B, 0.55 * alphaScale))
-        ctx.addPath(strokedChev)
-        ctx.setFillColor(srgb(0xFB, 0xBF, 0x24, alphaScale))
-        ctx.fillPath()
-        ctx.restoreGState()
-    }
-
-    let sparkCenter = CGPoint(x: 534, y: 504)
-    let sparkGlow = CGGradient(
-        colorsSpace: space,
-        colors: [srgb(0xFD, 0xE6, 0x8A, 0.90), srgb(0xF5, 0x9E, 0x0B, 0.0)] as CFArray,
-        locations: [0.0, 1.0]
-    )!
-    ctx.drawRadialGradient(
-        sparkGlow,
-        startCenter: sparkCenter,
-        startRadius: 4,
-        endCenter: sparkCenter,
-        endRadius: 96,
-        options: []
-    )
-
-    let sparkPath = CGMutablePath()
-    let outerR: CGFloat = 54
-    let innerR: CGFloat = 16
-    for i in 0..<8 {
-        let angle = CGFloat(i) * (.pi / 4.0)
-        let r = (i % 2 == 0) ? outerR : innerR
-        let pt = CGPoint(x: sparkCenter.x + cos(angle) * r, y: sparkCenter.y + sin(angle) * r)
-        if i == 0 {
-            sparkPath.move(to: pt)
-        } else {
-            sparkPath.addLine(to: pt)
-        }
-    }
-    sparkPath.closeSubpath()
-    ctx.addPath(sparkPath)
-    ctx.setFillColor(srgb(0xFE, 0xF3, 0xC7, 1.0))
-    ctx.fillPath()
 
     guard let image = ctx.makeImage() else {
         throw NSError(domain: "GenerateAppIcons", code: 2, userInfo: [
@@ -388,53 +227,32 @@ func renderVectorMenuBarIcons(to resourcesDir: URL) throws {
         let px = 18 * scale
         let ctx = makeContext(width: px, height: px)
         ctx.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+        let card = CGMutablePath()
+        card.move(to: CGPoint(x: 4.0, y: 2.5))
+        card.addQuadCurve(to: CGPoint(x: 2.5, y: 4.0), control: CGPoint(x: 2.5, y: 2.5))
+        card.addLine(to: CGPoint(x: 2.5, y: 13.0))
+        card.addQuadCurve(to: CGPoint(x: 4.0, y: 14.5), control: CGPoint(x: 2.5, y: 14.5))
+        card.addLine(to: CGPoint(x: 12.1, y: 14.5))
+        card.addLine(to: CGPoint(x: 15.5, y: 11.1))
+        card.addLine(to: CGPoint(x: 15.5, y: 4.0))
+        card.addQuadCurve(to: CGPoint(x: 14.0, y: 2.5), control: CGPoint(x: 15.5, y: 2.5))
+        card.closeSubpath()
+        ctx.addPath(card)
         ctx.setStrokeColor(srgb(0, 0, 0, 1))
-        ctx.setLineWidth(1.75)
+        ctx.setLineWidth(1.35)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
-
-        let center = CGPoint(x: 9.2, y: 8.8)
-        let radius: CGFloat = 6.1
-        let startAngle = -140.0 * .pi / 180.0
-        let arcEndAngle = 122.0 * .pi / 180.0
-        let tipAngle = 132.0 * .pi / 180.0
-        let arcPath = CGMutablePath()
-        let steps = 64
-        for i in 0...steps {
-            let t = CGFloat(i) / CGFloat(steps)
-            let angle = startAngle + t * (arcEndAngle - startAngle)
-            let pt = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
-            if i == 0 {
-                arcPath.move(to: pt)
-            } else {
-                arcPath.addLine(to: pt)
-            }
-        }
-        let tip = CGPoint(x: center.x + cos(tipAngle) * radius, y: center.y + sin(tipAngle) * radius)
-        arcPath.addLine(to: tip)
-        ctx.addPath(arcPath)
         ctx.strokePath()
 
-        let tangent = tipAngle + .pi / 2.0
-        let wingLength: CGFloat = 3.25
-        let wingA = CGPoint(
-            x: tip.x + cos(tangent + 2.32) * wingLength,
-            y: tip.y + sin(tangent + 2.32) * wingLength
-        )
-        let wingB = CGPoint(
-            x: tip.x + cos(tangent - 2.32) * wingLength,
-            y: tip.y + sin(tangent - 2.32) * wingLength
-        )
-        ctx.move(to: wingA)
-        ctx.addLine(to: tip)
-        ctx.addLine(to: wingB)
+        ctx.move(to: CGPoint(x: 12.1, y: 14.5))
+        ctx.addLine(to: CGPoint(x: 12.1, y: 11.1))
+        ctx.addLine(to: CGPoint(x: 15.5, y: 11.1))
         ctx.strokePath()
 
-        ctx.setLineWidth(1.65)
-        ctx.move(to: CGPoint(x: 6.7, y: 10.1))
-        ctx.addLine(to: CGPoint(x: 11.8, y: 10.1))
-        ctx.move(to: CGPoint(x: 6.7, y: 7.4))
-        ctx.addLine(to: CGPoint(x: 10.3, y: 7.4))
+        ctx.move(to: CGPoint(x: 5.1, y: 8.8))
+        ctx.addLine(to: CGPoint(x: 12.2, y: 8.8))
+        ctx.move(to: CGPoint(x: 5.1, y: 6.0))
+        ctx.addLine(to: CGPoint(x: 9.4, y: 6.0))
         ctx.strokePath()
 
         guard let cg = ctx.makeImage() else { continue }
