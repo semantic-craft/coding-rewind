@@ -99,7 +99,9 @@ test("selectionToMarkdown preserves ancestor fenced code block language on parti
   const range = doc.createRangeFromNode(span);
   const md = selectionToMarkdown(range, "https://chatgpt.com/c/1");
   assert.equal(md, "```swift\nlet panel = NSPanel()\n```");
+});
 
+test("selectionToMarkdown preserves selected plain text boundaries", () => {
   const plainOnlySelection = {
     rangeCount: 0,
     isCollapsed: true,
@@ -113,11 +115,24 @@ test("selectionToMarkdown preserves ancestor fenced code block language on parti
   assert.equal(selectionToMarkdown(plainOnlySelection), "  fallback plain text  ");
   assert.equal(selectionToMarkdown("  first line\nsecond line \n"), "  first line\nsecond line \n");
   assert.equal(selectionToMarkdown(" \n\t "), "");
+});
 
+test("selectionToMarkdown preserves a plain Range without Markdown structure", () => {
+  const selectedText = "  first line\nsecond line  \n";
+  const doc = parseHtmlDocument(`<span id="plain">${selectedText}</span>`);
+  const range = doc.createRangeFromNode(doc.querySelector("#plain"));
+  assert.equal(selectionToMarkdown(range), selectedText);
+});
+
+test("selectionToMarkdown preserves selected code block boundaries", () => {
   const originalCode = "\n    let count = 1;  \n";
   const codeDoc = parseHtmlDocument(`<pre><code id="raw-code" class="language-swift">${originalCode}</code></pre>`);
   const codeRange = codeDoc.createRangeFromNode(codeDoc.querySelector("#raw-code"));
   assert.equal(selectionToMarkdown(codeRange), `\`\`\`swift\n${originalCode}\n\`\`\``);
+
+  const inlineCodeDoc = parseHtmlDocument(`<code id="inline-code">  inline value  </code>`);
+  const inlineCodeRange = inlineCodeDoc.createRangeFromNode(inlineCodeDoc.querySelector("#inline-code"));
+  assert.equal(selectionToMarkdown(inlineCodeRange), "`   inline value   `");
 });
 
 test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to 4 turns up to selection", () => {
@@ -397,7 +412,9 @@ test("saveClipWithOutbox queues malformed successful responses for same-ID repla
       assert.equal(memoPosts.length, 2);
       assert.deepEqual(memoPosts.map((call) => call.memoId), [saved.clipId, saved.clipId]);
       assert.equal(calls.filter((call) => call.method === "GET").length, 1);
-      assert.equal(calls.filter((call) => call.pathname.endsWith("/comments")).length, 1);
+      const commentPosts = calls.filter((call) => call.pathname.endsWith("/comments"));
+      assert.equal(commentPosts.length, 1);
+      assert.equal(commentPosts[0].pathname, "/api/memos/server-recovered/comments");
     });
   }
 });
