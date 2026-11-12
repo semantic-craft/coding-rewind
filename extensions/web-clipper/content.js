@@ -72,7 +72,8 @@
       .rw-dot[data-variant="queued"] {
         background: #ff9f0a;
       }
-      .rw-dot[data-variant="unconfigured"] {
+      .rw-dot[data-variant="unconfigured"],
+      .rw-dot[data-variant="error"] {
         background: #ff453a;
       }
       .rw-pill {
@@ -194,7 +195,7 @@
         showToast(resp.toast, resp.status || "saved");
       }
     } catch {
-      showToast("离线已暂存队列", "queued");
+      showToast("保存失败，请重试", "error");
     }
   }
 

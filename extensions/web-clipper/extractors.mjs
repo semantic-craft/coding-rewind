@@ -377,6 +377,7 @@ function convertNode(node, ctx) {
 
   const tag = getTagName(node);
   if (SKIP_TAGS.has(tag)) return "";
+  if (getAttr(node, "data-markdown-copy") === "exclude") return "";
 
   const katex = extractKatexTex(node);
   if (katex !== null) return katex;
@@ -524,6 +525,7 @@ export function nodeContains(ancestor, target) {
 function hasMarkdownStructure(node) {
   if (!node) return false;
   if (node.nodeType === ELEMENT_NODE) {
+    if (getAttr(node, "data-markdown-copy") === "exclude") return false;
     if (
       getAttr(node, "aria-hidden") === "true" ||
       MARKDOWN_STRUCTURE_TAGS.has(getTagName(node))
@@ -586,7 +588,14 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     const fragment = range.cloneContents();
     if (plainFallback && !hasMarkdownStructure(fragment)) return plainFallback;
     const md = htmlToMarkdown(fragment, { baseUrl });
-    if (md) return md;
+    if (md) {
+      if (typeof selectionOrRange.getRangeAt === "function") {
+        const leadingWhitespace = plainFallback.match(/^\s*/)[0];
+        const trailingWhitespace = plainFallback.match(/\s*$/)[0];
+        return `${leadingWhitespace}${md}${trailingWhitespace}`;
+      }
+      return md;
+    }
   } catch {
     return plainFallback;
   }
@@ -615,9 +624,9 @@ function inferChatGptTurnRole(el) {
   if (direct === "user") return "user";
   if (direct === "assistant") return "assistant";
   if (typeof el.querySelector === "function") {
-    const innerRole = el.querySelector("[data-message-author-role]");
+    const innerRole = el.querySelector("[data-message-author-role], h4[data-conversation-role]");
     if (innerRole) {
-      const r = (getAttr(innerRole, "data-message-author-role") || "").toLowerCase();
+      const r = (getAttr(innerRole, "data-message-author-role") || getAttr(innerRole, "data-conversation-role") || "").toLowerCase();
       if (r === "user" || r === "assistant") return r;
     }
     const srHeading = el.querySelector("h5, h6");
@@ -680,7 +689,7 @@ function extractTurnBodyMarkdown(turnEl, baseUrl) {
   let contentRoot = turnEl;
   if (typeof turnEl.querySelector === "function") {
     const specific = turnEl.querySelector(
-      ".markdown, message-content, .model-response-text, .user-query-text, .whitespace-pre-wrap"
+      ".markdown, [data-markdown-text-style='assistant-message'], message-content, .model-response-text, .user-query-text, .whitespace-pre-wrap"
     );
     if (specific && specific !== turnEl) {
       contentRoot = specific;
@@ -696,7 +705,10 @@ export function extractConversationTurns(doc, platform, baseUrl = "") {
   let inferRole = null;
 
   if (platform === "chatgpt") {
-    const roleNodes = Array.from(doc.querySelectorAll("[data-message-author-role]"));
+    const roleNodes = Array.from(
+      doc.querySelectorAll("[data-message-author-role], h4[data-conversation-role]"),
+      (node) => getAttr(node, "data-conversation-role") ? node.parentElement : node
+    );
     candidates = roleNodes.length > 0
       ? roleNodes
       : Array.from(doc.querySelectorAll("article[data-testid^='conversation-turn-'], [data-testid^='conversation-turn-']"));
@@ -828,7 +840,7 @@ export function extractClipContext({
 } = {}) {
   const sourceUrl = String(url || (doc && doc.location && doc.location.href) || "").trim();
   const sourcePlatform = detectPlatform(sourceUrl);
-  const selectedMarkdown = selectionToMarkdown(selectionRange || selection, sourceUrl);
+  const selectedMarkdown = selectionToMarkdown(selection || selectionRange, sourceUrl);
   const sessionTitle = extractSessionTitle(doc, sourceUrl, sourcePlatform);
 
   const turns = extractConversationTurns(doc, sourcePlatform, sourceUrl);
