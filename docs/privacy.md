@@ -38,8 +38,11 @@ VPS 内部的 `rewind-enricher` 仅读取带 `#rewind/pending` 的新片段及�
 ## 凭据保护机制
 
 - **桌面端钥匙串存储**，`CodingRewindApp` 与 `scripts/memos-mcp-bridge.sh` 统一将 `Memos` 访问令牌保存在 macOS Security Keychain 服务 `com.codingrewind.memos` 中；`config.json`、`~/.gemini/config/plugins/coding-rewind/mcp_config.json` 与 `~/.config/agent-mcp/servers.json` 均不写入明文令牌。
+- **可选本机开发启动器**，显式设置 `CODING_REWIND_MEMOS_TOKEN_REFERENCE` 构建时，包内 `DeveloperCredentials.plist` 只保存 1Password 引用与 `op` 的绝对路径。启动器通过 `op run` 仅向应用进程树注入令牌，不读取或更新钥匙串，也不设置全局环境。注入失败、空值、含空白或未解析的引用均不会启动应用，避免回落到钥匙串。未配置该构建选项的普通用户无需安装 1Password CLI。
 - **开发与 QA 钥匙串隔离**，设置环境变量 `CODING_REWIND_QA=1` 时，客户端与桥接脚本固定访问 `com.codingrewind.memos.qa`，凭据缺失时直接报错返回非零退出码，绝不暗中回退读取个人日常钥匙串。
 - **服务端环境变量隔离**，`MEMOS_ACCESS_TOKEN`、`AI_API_KEY` 与 `REWIND_WEBHOOK_SECRET` 仅通过服务器本地未入库的 `.env` 注入容器环境，仓库只保留占位模板 `.env.example`。
+
+2026-11-12 的本机交付安装验收已确认，普通启动可读取远端热池，未出现 Keychain 弹窗。该次验收使用本机 ad-hoc 构建和进程环境注入。
 
 ## 导出、删除与留存期限
 

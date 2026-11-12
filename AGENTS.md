@@ -18,7 +18,7 @@
 
 - **云端主干 `deploy/vps/`**，运行官方固定版本 `neosmemo/memos:26.11.0` 容器提供 `/api/memos` 与原生 Streamable HTTP `/mcp`，旁挂纯 Python 3 标准库服务 `deploy/vps/enricher/enricher.py`，同时支持 Standard Webhooks `POST /webhook` 验签触发与 5 秒容器内网轮询自愈。
 - **网页端剪藏 `extensions/web-clipper/`**，Manifest V3 薄扩展，适配 ChatGPT、Claude 与 Gemini，提取选中 Markdown、会话标题、紧邻前序提问及最近 4 轮对话，由后台 Service Worker 直连 Memos REST API 并附带 `chrome.storage.local` 离线重放队列。
-- **桌面端浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，原生 Swift 6 AppKit 状态栏（`NSStatusItem` + `NSMenu`）、应用主菜单与非激活毛玻璃浮窗，支持 `⌃⌥S` 捕获选区、`⌃⌥R` 速览近 72 小时热流卡片、`⌘Return` 经 `agentapi new-conversation` 直接在 Google Antigravity App 2.x 开启带脉络的新对话，并通过 `outbox.jsonl` 与 `hot_cache.json` 保障断网可用。
+- **桌面端浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，原生 Swift 6 AppKit 状态栏（`NSStatusItem` + `NSMenu`）、应用主菜单与非激活毛玻璃浮窗，支持 `⌃⌥S` 捕获选区、`⌃⌥R` 速览近 72 小时热流卡片。`⌘Return` 在宿主环境可用时调用 `agentapi new-conversation`；普通桌面启动回退到复制上下文并打开 Antigravity，需新建会话后粘贴发送。通过 `outbox.jsonl` 与 `hot_cache.json` 保障断网可用。
 - **宿主桥接 `Sources/AntigravityBridge/` 与 `scripts/memos-mcp-bridge.sh`**，非阻塞钩子 `coding-rewind-hook` 在 `PostInvocation` 与 `Stop` 时提取 `lastUserInput` 与最近 4 轮会话写入 `active_turn.json`；`memos-mcp-bridge.sh` 从钥匙串读取令牌后调用 `mcp-remote` 连接远端 `/mcp`。
 
 ## Memos REST 线级契约不变量
@@ -34,7 +34,7 @@
 - **数据目录**，`CODING_REWIND_DATA_DIR` 优先，缺省为 `~/Library/Application Support/CodingRewind`。
 - **服务地址**，`CODING_REWIND_MEMOS_URL` 优先，其次读取 `<dataDir>/config.json` 的 `memos_url` 字段；严禁将访问令牌写入 `config.json`、`mcp_config.json` 或 `servers.json`。
 - **访问令牌与 QA 隔离**，`CODING_REWIND_MEMOS_TOKEN` 优先，其次读取 macOS Keychain 服务 `com.codingrewind.memos`；当设置 `CODING_REWIND_QA=1` 时强制切换至独立钥匙串服务 `com.codingrewind.memos.qa`，缺失时直接报错退出，绝不回退读取个人钥匙串。
-- **宿主 CLI 解析**，`CODING_REWIND_AGENTAPI_BIN` 优先，其次查找 `PATH`，最后检查 `/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi`。
+- **宿主 CLI 解析**，`CODING_REWIND_AGENTAPI_BIN` 优先，其次查找 `PATH`。代码保留的旧应用包候选路径在本机 Antigravity 2.31.2 不存在；现成入口为 `~/.gemini/antigravity/bin/agentapi`，但仍需宿主提供运行环境。官方 sidecar 创建会话要求配置 `projectId`，不能只凭入口存在认定可直开。实际接聊边界见 [README.md](README.md#在-antigravity-接聊)。
 - **固定安装位置与目录禁区**，安装 Antigravity 插件时必须将辅助可执行文件拷入 `~/Library/Application Support/CodingRewind/bin/`，严禁在插件或钩子配置中引用 `.build/`；任何构建输出与本地 QA 目录均不得使用 `/tmp` 或 `/private/tmp`。
 
 ## 验证与构建入口

@@ -153,6 +153,7 @@ else
 fi
 
 echo "==> [5/6] Shell syntax checks"
+python3 -B "${REPO_ROOT}/scripts/test-memos-op-launcher.py"
 bash -n "${REPO_ROOT}/scripts/check"
 for sh_file in "${REPO_ROOT}"/scripts/*.sh; do
   [[ -e "${sh_file}" ]] || continue
