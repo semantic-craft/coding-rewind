@@ -6,7 +6,7 @@
 
 在使用独立桌面端 **Google Antigravity App 2.x** 或网页版 ChatGPT、Claude、Gemini 聊天时，经常会撞见接下来两三天马上要用、带来灵感的对话段落。当下正在推进主线任务，不想立刻切走新开对话分叉，存进重型笔记库太重，贴进系统备忘录又会丢掉提问语境且难以继续追问成文。
 
-**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可复制完整上下文并打开 Antigravity，在新会话粘贴发送，继续推演或对照写稿。
+**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可通过官方 sidecar 在 Antigravity 新建会话并发送完整上下文，继续推演或对照写稿。
 
 立项需求正本来自用户 t4624u 于 2026-11-10 的记录：
 
@@ -27,9 +27,15 @@
 
 ## 在 Antigravity 接聊
 
-在浮窗勾选卡片，按 `⌘Return` 或点击“在 Antigravity 开聊”。普通桌面启动会复制上下文并打开 Antigravity。新建会话后粘贴发送，内容包含卡片原文、已有脉络和出处。
+先在应用菜单或设置中点击“安装或检查 Antigravity 插件”。安装器将 `coding-rewind-sidecar` 放入固定的应用数据目录，注册并启用 `coding-rewind/launcher`。Antigravity 管理该进程，并提供调用 `agentapi` 所需的运行环境。
 
-自动直开使用 `agentapi new-conversation <prompt>`，需要可执行入口和有效的宿主运行环境。[官方 sidecar 文档](https://antigravity.google/docs/sidecars)要求启用 sidecar 并配置 `projectId`。本机 Antigravity 2.31.2 的入口是 `~/.gemini/antigravity/bin/agentapi`，但在普通外部进程直接调用会报 `ANTIGRAVITY_LS_ADDRESS is not set`，仅设置 `CODING_REWIND_AGENTAPI_BIN` 不能补齐运行环境。当前应用没有自动配置 sidecar；找不到入口或调用失败时均回退到复制并打开应用。
+在浮窗勾选卡片，按 `⌘Return` 或点击“在 Antigravity 开聊”。应用会打开 Antigravity，由 sidecar 新建会话并发送卡片原文、已有脉络和出处。收到会话编号后才显示成功，同时清除本次勾选。要再次使用同一张卡片，请重新勾选。
+
+请求期间重复点击不会再建会话。进程中断或超时导致结果不明时，应用保留原请求编号，重启后查询该请求，不自动重发。收到明确的未知结果后，可先核对 Antigravity，再点击“已核对 Antigravity，结束本次请求”恢复。“开聊后归档”只在确认创建成功后执行，归档失败仍保留卡片供重试，也可点击“结束接聊，保留未归档卡片”。
+
+新会话出现在 Antigravity 的 sidecar 专属项目中。当前官方接口能创建并发送，但没有已核实的按会话编号自动切换正文接口，因此应用只唤起 Antigravity，不猜测 deep link。点击新会话即可继续，无须粘贴或再次发送。
+
+[官方 sidecar 文档](https://antigravity.google/docs/sidecars)说明宿主运行环境、项目配置和 `agentapi`。普通外部进程直接调用 CLI 不能替代 sidecar。交接请求和宿主事件的留存范围见 [隐私说明](docs/privacy.md#4-一键接聊的短期请求与宿主记录)。
 
 ## 快速验证与构建
 

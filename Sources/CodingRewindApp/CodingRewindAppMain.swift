@@ -37,10 +37,6 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 self?.lastExternalApplication
             }
             let coord = try AppCoordinator(paths: paths, capturer: capturer)
-            coord.onCopyToClipboard = { text in
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-            }
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
             }
@@ -205,7 +201,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         ]
         coord.installOrRepairPlugin(
             sourceHookURL: dirs.map { $0.appendingPathComponent("coding-rewind-hook") }.first { fm.isExecutableFile(atPath: $0.path) },
-            sourceBridgeURL: dirs.map { $0.appendingPathComponent("memos-mcp-bridge.sh") }.first { fm.fileExists(atPath: $0.path) }
+            sourceBridgeURL: dirs.map { $0.appendingPathComponent("memos-mcp-bridge.sh") }.first { fm.fileExists(atPath: $0.path) },
+            sourceSidecarURL: dirs.map { $0.appendingPathComponent("coding-rewind-sidecar") }.first { fm.isExecutableFile(atPath: $0.path) }
         )
     }
 

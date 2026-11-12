@@ -19,6 +19,10 @@ public enum AntigravityIntegration {
             .appendingPathComponent("coding-rewind-hook", isDirectory: false)
     }
 
+    public static func stableSidecarBinaryURL(in dataDirectoryURL: URL) -> URL {
+        dataDirectoryURL.standardizedFileURL.appendingPathComponent("bin/coding-rewind-sidecar")
+    }
+
     public static func stableMCPBridgeURL(in dataDirectoryURL: URL) -> URL {
         dataDirectoryURL.standardizedFileURL
             .appendingPathComponent("bin", isDirectory: true)
@@ -39,7 +43,8 @@ public enum AntigravityIntegration {
         dataDirectoryURL: URL,
         configDirectoryURL: URL,
         sourceHookBinaryURL: URL? = nil,
-        sourceMCPBridgeURL: URL? = nil
+        sourceMCPBridgeURL: URL? = nil,
+        sourceSidecarBinaryURL: URL? = nil
     ) throws -> URL {
         let fm = FileManager.default
         let resolvedData = dataDirectoryURL.standardizedFileURL
@@ -69,6 +74,16 @@ public enum AntigravityIntegration {
                 _ = chmod(destBridge.path, 0o755)
             }
         }
+
+        let destSidecar = stableSidecarBinaryURL(in: resolvedData)
+        if let source = sourceSidecarBinaryURL?.standardizedFileURL, source != destSidecar,
+           fm.isExecutableFile(atPath: source.path) {
+            try AtomicFile.writeData(Data(contentsOf: source), to: destSidecar, permissions: 0o755)
+        }
+        guard fm.isExecutableFile(atPath: destSidecar.path) else {
+            throw RewindError.ioError("缺少 coding-rewind-sidecar，请用完整应用包安装插件")
+        }
+        _ = try ConversationHandoffStore(dataDirectoryURL: resolvedData)
 
         let pluginDir = resolvedConfig
             .appendingPathComponent("plugins", isDirectory: true)
@@ -146,6 +161,35 @@ public enum AntigravityIntegration {
             to: skillDir.appendingPathComponent("SKILL.md", isDirectory: false),
             permissions: 0o644
         )
+        let sidecarDirectory = pluginDir.appendingPathComponent("sidecars/launcher", isDirectory: true)
+        try fm.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
+        let sidecar: [String: Any] = [
+            "command": destSidecar.path,
+            "args": ["--data-dir", resolvedData.path],
+            "restart_policy": "always",
+            "display_name": "Coding Rewind"
+        ]
+        try AtomicFile.writeData(JSONSerialization.data(withJSONObject: sidecar, options: [.prettyPrinted, .sortedKeys]), to: sidecarDirectory.appendingPathComponent("sidecar.json"))
+        let configURL = resolvedConfig.appendingPathComponent("config.json")
+        var config: [String: Any] = [:]
+        if fm.fileExists(atPath: configURL.path) {
+            guard let decoded = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
+                throw RewindError.ioError("Antigravity config.json 必须是 JSON 对象，未改写配置")
+            }
+            config = decoded
+        }
+        guard config["sidecars"] == nil || config["sidecars"] is [String: Any] else {
+            throw RewindError.ioError("Antigravity sidecars 配置类型无效，未改写配置")
+        }
+        var sidecars = config["sidecars"] as? [String: Any] ?? [:]
+        guard sidecars["coding-rewind/launcher"] == nil || sidecars["coding-rewind/launcher"] is [String: Any] else {
+            throw RewindError.ioError("Antigravity launcher 配置类型无效，未改写配置")
+        }
+        var launcher = sidecars["coding-rewind/launcher"] as? [String: Any] ?? [:]
+        launcher["enabled"] = true
+        sidecars["coding-rewind/launcher"] = launcher
+        config["sidecars"] = sidecars
+        try AtomicFile.writeData(JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]), to: configURL)
         return pluginDir
     }
 
@@ -219,6 +263,27 @@ public enum AntigravityIntegration {
             reasons.append("skills/rewind/SKILL.md missing")
         }
 
+        let expectedSidecar = stableSidecarBinaryURL(in: resolvedData)
+        if !FileManager.default.isExecutableFile(atPath: expectedSidecar.path) {
+            reasons.append("接聊 sidecar 尚未安装")
+        }
+        let sidecarURL = pluginDir.appendingPathComponent("sidecars/launcher/sidecar.json")
+        if let data = try? Data(contentsOf: sidecarURL),
+           let definition = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           definition["command"] as? String == expectedSidecar.path,
+           definition["args"] as? [String] == ["--data-dir", resolvedData.path],
+           definition["restart_policy"] as? String == "always" {
+        } else {
+            reasons.append("接聊 sidecar 配置缺失或不匹配")
+        }
+        if let data = try? Data(contentsOf: configDirectoryURL.appendingPathComponent("config.json")),
+           let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let sidecars = config["sidecars"] as? [String: Any],
+           let launcher = sidecars["coding-rewind/launcher"] as? [String: Any], launcher["enabled"] as? Bool == true {
+        } else {
+            reasons.append("接聊 sidecar 尚未启用")
+        }
+
         return reasons.isEmpty
             ? .installed(pluginDirectoryURL: pluginDir, hookBinaryURL: expectedHookURL)
             : .needsInstallOrRepair(reasons: reasons)
@@ -226,12 +291,9 @@ public enum AntigravityIntegration {
 }
 
 public enum AntigravityLauncher {
-    public static let agentAPIEnvironmentKey = "CODING_REWIND_AGENTAPI_BIN"
-    public static let defaultBundledAgentAPIPath = "/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi"
-
     public enum LaunchOutcome: Equatable, Sendable {
-        case launchedViaAgentAPI(binaryURL: URL, prompt: String)
-        case copiedToClipboardFallback(prompt: String)
+        case succeeded(conversationId: String)
+        case failed(state: ConversationReceipt.State)
     }
 
     public static func buildPrompt(for cards: [RewindCard]) -> String {
@@ -264,59 +326,4 @@ public enum AntigravityLauncher {
         return sections.joined(separator: "\n\n")
     }
 
-    public static func resolveAgentAPIBinary(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        defaultAppBinaryPath: String = defaultBundledAgentAPIPath
-    ) -> URL? {
-        let fm = FileManager.default
-        if let explicit = environment[agentAPIEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !explicit.isEmpty {
-            let expanded = (explicit as NSString).expandingTildeInPath
-            if fm.isExecutableFile(atPath: expanded) {
-                return URL(fileURLWithPath: expanded).standardizedFileURL
-            }
-        }
-        if let pathVar = environment["PATH"] {
-            for dir in pathVar.split(separator: ":") {
-                let candidate = URL(fileURLWithPath: String(dir), isDirectory: true)
-                    .appendingPathComponent("agentapi", isDirectory: false)
-                if fm.isExecutableFile(atPath: candidate.path) {
-                    return candidate.standardizedFileURL
-                }
-            }
-        }
-        if fm.isExecutableFile(atPath: defaultAppBinaryPath) {
-            return URL(fileURLWithPath: defaultAppBinaryPath).standardizedFileURL
-        }
-        return nil
-    }
-
-    public static func launchConversation(
-        cards: [RewindCard],
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        defaultAppBinaryPath: String = defaultBundledAgentAPIPath,
-        copyToClipboard: (String) -> Void,
-        openAntigravityApp: () -> Void
-    ) -> LaunchOutcome {
-        let prompt = buildPrompt(for: cards)
-        if let binURL = resolveAgentAPIBinary(environment: environment, defaultAppBinaryPath: defaultAppBinaryPath) {
-            let process = Process()
-            process.executableURL = binURL
-            process.arguments = ["new-conversation", prompt]
-            process.environment = environment
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-                process.waitUntilExit()
-                if process.terminationStatus == 0 {
-                    return .launchedViaAgentAPI(binaryURL: binURL, prompt: prompt)
-                }
-            } catch {
-            }
-        }
-        copyToClipboard(prompt)
-        openAntigravityApp()
-        return .copiedToClipboardFallback(prompt: prompt)
-    }
 }

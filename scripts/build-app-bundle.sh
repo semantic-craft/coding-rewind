@@ -80,6 +80,7 @@ if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     /usr/bin/plutil -insert op_executable -string "${OP_EXECUTABLE}" "${LAUNCHER_CONFIG}"
     chmod 0600 "${LAUNCHER_CONFIG}"
 fi
+install -m 0755 "${BIN_DIR}/coding-rewind-sidecar" "${HELPERS_DIR}/coding-rewind-sidecar"
 install -m 0755 "${BIN_DIR}/coding-rewind-hook" "${HELPERS_DIR}/coding-rewind-hook"
 
 if [[ -f "${REPO_ROOT}/scripts/memos-mcp-bridge.sh" ]]; then

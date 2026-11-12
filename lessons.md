@@ -109,8 +109,8 @@
 - 标签：#宿主契约 #Antigravity #验收
 - 起因与后果：2026-11-12 实测 Antigravity 2.31.2 的 `agentapi` 虽存在，普通外部进程调用仍报 `ANTIGRAVITY_LS_ADDRESS is not set`，不能据此承诺直接创建会话。
 - 修复与证据：[AppCoordinator.swift](Sources/CodingRewindCore/AppCoordinator.swift) 的回退提示改为复制上下文并打开应用，明确需要新建会话后粘贴发送；运行环境边界见 [README.md](README.md#在-antigravity-接聊)。实机已验证浮窗勾选卡片、完整复制上下文并在 Antigravity 新会话发送。
-- 正确做法 `Done right`：先验证宿主提供的运行环境和真实操作结果；普通桌面环境使用已验证的复制回退，不把入口发现当作集成完成。
-- 验证点：运行 `./scripts/check` 保留 CLI 成功与失败回退回归，并从已安装应用核对提示、剪贴板内容和宿主接收结果。
+- 正确做法 `Done right`：先验证宿主提供的运行环境和真实操作结果。本次后续实现使用官方 `coding-rewind/launcher` sidecar，从已安装 HUD 触发并核对宿主新会话；普通桌面进程不直调 CLI，不把入口发现当作集成完成。
+- 验证点：运行 `./scripts/check`，由 [ConversationHandoffTests.swift](Tests/CodingRewindCoreTests/ConversationHandoffTests.swift) 覆盖结构化回执、重复提交、崩溃恢复与过期清理；从已安装 HUD 核对新会话、原文、失败不归档、应用重启及 sidecar 原位升级。未知结果不自动重发，成功回执不能冒充前台已切换。
 - 复发记录：`Seen 1x (2026-11-12)`，桌面接聊实机验收检出。
 
 ## 记录模板

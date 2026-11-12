@@ -60,7 +60,7 @@
 
 **可执行验收**
 
-1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端通过 `Process` 直接调用 `agentapi new-conversation` 传入含脉络抬头、原文与回链的结构化提示词拉起新对话。
+1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端经官方 sidecar 调用 `agentapi new-conversation`，传入含脉络抬头、原文与回链的提示词，并以成功回执和真实桌面会话共同验收。
 2. 插件安装器将辅助二进制拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，`hooks.json` 中 `PostInvocation` 与 `Stop` 为扁平处理器数组。
 3. `scripts/memos-mcp-bridge.sh` 在 `CODING_REWIND_QA=1` 下严格隔离至 `com.codingrewind.memos.qa` 钥匙串服务，不落盘明文令牌即可将 `Memos` 原生 `/mcp` 接入 Antigravity 供 `/rewind` 检索与成文引用。
 4. 运行 `./scripts/check` 与 `./scripts/build-app-bundle.sh` 全部退出码为 0。

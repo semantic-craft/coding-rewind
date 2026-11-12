@@ -7,7 +7,7 @@ import Testing
 @Suite("CodingRewindCLI Subprocess Suite")
 struct CodingRewindCLITests {
     private func makeIsolatedDirectory() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/test-data", isDirectory: true)
             .appendingPathComponent("coding-rewind-cli-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
@@ -192,4 +192,39 @@ struct CodingRewindCLITests {
             Issue.record("Unexpected repair needed: \(reasons)")
         }
     }
+    @Test("A staged sidecar exits after its executable is atomically upgraded")
+    func sidecarUpgradeLifecycle() throws {
+        let dir = try makeIsolatedDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = try builtExecutableURL(named: "coding-rewind-sidecar")
+        let staged = dir.appendingPathComponent("bin/coding-rewind-sidecar")
+        let data = dir.appendingPathComponent("Data", isDirectory: true)
+        try FileManager.default.createDirectory(at: data, withIntermediateDirectories: true)
+        let binary = try Data(contentsOf: source)
+        try AtomicFile.writeData(binary, to: staged, permissions: 0o755)
+        let process = Process()
+        process.executableURL = staged
+        process.arguments = ["--data-dir", data.path]
+        process.environment = ["PATH": "/usr/bin:/bin"]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer {
+            if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+            process.waitUntilExit()
+        }
+        let readyDeadline = Date().addingTimeInterval(3)
+        while !FileManager.default.fileExists(atPath: data.appendingPathComponent("handoff/worker.lock").path), process.isRunning, Date() < readyDeadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        #expect(process.isRunning)
+        try AtomicFile.writeData(binary, to: staged, permissions: 0o755)
+        let exitDeadline = Date().addingTimeInterval(3)
+        while process.isRunning && Date() < exitDeadline { Thread.sleep(forTimeInterval: 0.01) }
+        #expect(!process.isRunning)
+        if !process.isRunning { #expect(process.terminationStatus == 0) }
+    }
+
 }

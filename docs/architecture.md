@@ -59,7 +59,7 @@
 - **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，释放捕获快捷键（默认 `⌃⌥S`）时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时自动合并 `active_turn.json` 上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
 - **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待分析` 与 `AI 已定锚` 状态徽标。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获与浮窗两个动作；`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
-- **一键拉起宿主对话**，选中一张或多张卡片按下 `⌘Return`，组装包含 AI 脉络抬头、原始选段及 `conversation://` 或网页回链的结构化 Markdown 提示词，直接以 `Process` 参数列表调用 `agentapi new-conversation` 开启新对话，不经 Shell 拼接；若本机未检出 `agentapi` 可执行文件，则将提示词写入剪贴板并通过 `NSWorkspace` 唤起 Antigravity。
+- **一键创建宿主对话**，勾选卡片按下 `⌘Return`，组装包含脉络抬头、原始选段及出处链接的 Markdown 提示词。桌面端写入私有交接请求，Antigravity 管理的 `coding-rewind/launcher` sidecar 在宿主环境中以参数数组调用 `agentapi new-conversation`。桌面端异步等待会话编号回执，不读取其他进程环境，不使用剪贴板回退。只有确认创建成功后才允许“开聊后归档”。
 - **本地离线韧性**，未配置地址或网络异常时，采集请求追加写入 `<dataDir>/outbox.jsonl` 并镜像更新 `<dataDir>/hot_cache.json`，保证离线采集零丢失且浮窗在 5 毫秒内瞬时打开，网络恢复后凭 `?memoId=<clientClipId>` 幂等冲刷队列。
 
 ### 3. 浏览器 Manifest V3 薄剪藏扩展
@@ -74,8 +74,16 @@
 位于 `Sources/AntigravityBridge/`、`Sources/CodingRewindCore/AntigravityIntegration.swift` 与 `scripts/memos-mcp-bridge.sh`：
 
 - **非阻塞会话钩子 `coding-rewind-hook`**，挂载 `PostInvocation` 与 `Stop` 事件，解析官方 `lastUserInput`、`conversationId`、`workspacePaths` 与 `transcriptPath`，从 `transcript.jsonl` 提取最近 4 轮 `USER_INPUT` 与 `PLANNER_RESPONSE` 正文后原子写入 `<dataDir>/active_turn.json` 并立即以退出码 0 返回。
-- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `memo_*` 工具的 `skills/rewind/SKILL.md`。
+- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook`、`coding-rewind-sidecar` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `memo_*` 工具的 `skills/rewind/SKILL.md`。
 - **零明文令牌 MCP 桥接**，`scripts/memos-mcp-bridge.sh` 运行时从环境变量或 macOS Keychain 读取令牌，执行 `npx -y mcp-remote "${MEMOS_URL%/}/mcp"`，兼容 `~/.config/agent-mcp/servers.json` 与 `mcp-sync`，避免任何 JSON 配置文件落盘明文凭据。
+
+### 接聊请求与回执
+
+`ConversationHandoff.swift` 统一管理 `handoff/` 中的当前请求、独立请求文件和回执。应用先持久化请求编号与选卡信息，再发布正文。sidecar 持有独占进程锁，先记录 `dispatching`，然后调用宿主。成功只认结构化回执中的会话编号，已启动调用但结果不明时记录 `unknown`，不重发。
+
+请求在 30 秒后过期。未发布完整的请求会在过期后收敛为 `expired`，不会补发。成功、拒绝、过期或未知结果都会清理请求正文。已完成回执保留七天，仍被当前请求引用的回执继续保留，避免重启后失去结果。归档进度按卡片编号单独保存，重试不会重新创建会话。
+
+安装器保留宿主配置的其他字段和已有 `projectId`。sidecar 检测到稳定二进制被替换后退出，由宿主的 `always` 重启策略启动新版。它不读取 Memos 令牌。
 
 ## Memos REST 共享线级契约
 
@@ -142,6 +150,6 @@ Prompt: <prompt>
 | 数据目录 | `CODING_REWIND_DATA_DIR` > `~/Library/Application Support/CodingRewind` | 禁止指向 `/tmp` 或 `/private/tmp` |
 | Memos 地址 | `CODING_REWIND_MEMOS_URL` > `<dataDir>/config.json` 中 `memos_url` | `config.json` 严禁包含任何令牌字段 |
 | Memos 令牌 | `CODING_REWIND_MEMOS_TOKEN` > macOS Keychain `com.codingrewind.memos` | `CODING_REWIND_QA=1` 时强制切换至 `com.codingrewind.memos.qa`，缺失即报错，绝不回退个人钥匙串 |
-| 宿主 CLI | `CODING_REWIND_AGENTAPI_BIN` > `PATH` > `/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi` | 直接经 `Process` 参数数组调用，禁止拼接 Shell 字符串 |
+| 宿主 CLI | Antigravity sidecar 提供的 `PATH` | 仅由 sidecar 调用 `agentapi`，返回会话编号后确认成功 |
 
 快捷键偏好使用库的 UserDefaults 存储，应用不维护第二份快捷键 JSON。普通运行使用 `.standard`；`CODING_REWIND_QA=1` 时在创建任何 Name 前注入按 `CODING_REWIND_DATA_DIR` 派生的独立域，重启稳定。QA 可通过 `CODING_REWIND_SHORTCUTS_SUITE` 指定 `dev.codingrewind.qa.` 前缀的域；非 QA 忽略该变量。构建脚本在 QA 模式使用 `dev.codingrewind.app.qa` bundle ID，签名策略不变。
