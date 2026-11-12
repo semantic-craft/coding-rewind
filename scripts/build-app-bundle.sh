@@ -5,6 +5,22 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RAW_DIST_DIR="${DIST_DIR:-${1:-${REPO_ROOT}/.build}}"
+MEMOS_TOKEN_REFERENCE="${CODING_REWIND_MEMOS_TOKEN_REFERENCE:-}"
+
+if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
+    case "${MEMOS_TOKEN_REFERENCE}" in
+        op://?*/?*/?*) ;;
+        *)
+            echo "Error: CODING_REWIND_MEMOS_TOKEN_REFERENCE must be an op secret reference" >&2
+            exit 1
+            ;;
+    esac
+    OP_EXECUTABLE="${CODING_REWIND_OP_BIN:-$(command -v op || true)}"
+    if [[ "${OP_EXECUTABLE}" != /* || ! -x "${OP_EXECUTABLE}" ]]; then
+        echo "Error: an executable absolute op path is required for the developer launcher" >&2
+        exit 1
+    fi
+fi
 
 case "${RAW_DIST_DIR}" in
     /tmp|/tmp/*|/private/tmp|/private/tmp/*)
@@ -55,6 +71,15 @@ fi
 install -m 0644 "${REPO_ROOT}/Vendor/KeyboardShortcuts/license" "${RESOURCES_DIR}/KeyboardShortcuts-LICENSE.txt"
 
 install -m 0755 "${BIN_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp"
+if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
+    mv "${MACOS_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp-native"
+    install -m 0755 "${REPO_ROOT}/scripts/memos-op-launcher.sh" "${MACOS_DIR}/CodingRewindApp"
+    LAUNCHER_CONFIG="${RESOURCES_DIR}/DeveloperCredentials.plist"
+    /usr/bin/plutil -create xml1 "${LAUNCHER_CONFIG}"
+    /usr/bin/plutil -insert token_reference -string "${MEMOS_TOKEN_REFERENCE}" "${LAUNCHER_CONFIG}"
+    /usr/bin/plutil -insert op_executable -string "${OP_EXECUTABLE}" "${LAUNCHER_CONFIG}"
+    chmod 0600 "${LAUNCHER_CONFIG}"
+fi
 install -m 0755 "${BIN_DIR}/coding-rewind-hook" "${HELPERS_DIR}/coding-rewind-hook"
 
 if [[ -f "${REPO_ROOT}/scripts/memos-mcp-bridge.sh" ]]; then

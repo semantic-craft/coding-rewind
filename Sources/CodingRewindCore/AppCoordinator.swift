@@ -379,7 +379,7 @@ public final class AppCoordinator {
         case .launchedViaAgentAPI:
             setBanner("已在 Antigravity 开启新会话（共 \(selected.count) 张卡片）", isError: false)
         case .copiedToClipboardFallback:
-            setBanner("未找到 agentapi，已复制提示词到剪贴板并打开 Antigravity", isError: false)
+            setBanner("已复制上下文并打开 Antigravity，请新建会话后粘贴发送", isError: false)
         }
 
         if markSynthesized,
