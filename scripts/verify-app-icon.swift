@@ -54,7 +54,7 @@ func loadRasterizedPNG(at url: URL) -> (width: Int, height: Int, bytes: [UInt8])
     return rasterizeAlphaBuffer(cgImage: cg)
 }
 
-func computeOpaqueBounds(width: Int, height: Int, bytes: [UInt8], threshold: Double = 0.5) -> OpaqueBounds {
+func computeOpaqueBounds(width: Int, height: Int, bytes: [UInt8], source: String, threshold: Double = 0.5) -> OpaqueBounds {
     var minX = width
     var maxX = -1
     var minY = height
@@ -71,7 +71,7 @@ func computeOpaqueBounds(width: Int, height: Int, bytes: [UInt8], threshold: Dou
         }
     }
     guard maxX >= minX && maxY >= minY else {
-        fail("No opaque pixels (alpha >= \(threshold)) found in \(width)x\(height) image")
+        fail("No opaque pixels (alpha >= \(threshold)) found in \(width)x\(height) image at \(source)")
     }
     return OpaqueBounds(minX: minX, maxX: maxX, minY: minY, maxY: maxY)
 }
@@ -82,7 +82,16 @@ func referenceMailBounds(side: Int) -> OpaqueBounds {
         let inset = Int((Double(side) * 100.0 / 1024.0).rounded(.down))
         return OpaqueBounds(minX: inset, maxX: side - 1 - inset, minY: inset, maxY: side - 1 - inset)
     }
-    let icon = NSWorkspace.shared.icon(forFile: mailPath)
+    guard let mailBundle = Bundle(url: URL(fileURLWithPath: mailPath)),
+          let iconName = mailBundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String,
+          let resourcesURL = mailBundle.resourceURL else {
+        fail("Unable to locate Mail.app icon resource in \(mailPath)")
+    }
+    let iconURL = resourcesURL.appendingPathComponent(iconName)
+    let resolvedIconURL = iconURL.pathExtension.isEmpty ? iconURL.appendingPathExtension("icns") : iconURL
+    guard let icon = NSImage(contentsOf: resolvedIconURL) else {
+        fail("Unable to read Mail.app icon resource at \(resolvedIconURL.path)")
+    }
     guard let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
         pixelsWide: side,
@@ -105,7 +114,7 @@ func referenceMailBounds(side: Int) -> OpaqueBounds {
         fail("Unable to extract reference CGImage at \(side)px")
     }
     let raster = rasterizeAlphaBuffer(cgImage: cg)
-    return computeOpaqueBounds(width: raster.width, height: raster.height, bytes: raster.bytes, threshold: 0.5)
+    return computeOpaqueBounds(width: raster.width, height: raster.height, bytes: raster.bytes, source: resolvedIconURL.path, threshold: 0.5)
 }
 
 let scriptURL = URL(fileURLWithPath: #filePath).standardizedFileURL
@@ -151,7 +160,7 @@ let benchmarkSlices: [(String, Int)] = [
 
 for (name, side) in benchmarkSlices {
     guard let raster = rasterBySlice[name] else { continue }
-    let actual = computeOpaqueBounds(width: raster.width, height: raster.height, bytes: raster.bytes, threshold: 0.5)
+    let actual = computeOpaqueBounds(width: raster.width, height: raster.height, bytes: raster.bytes, source: iconsetDir.appendingPathComponent(name).path, threshold: 0.5)
     let expected = referenceMailBounds(side: side)
     let delta = max(
         abs(actual.minX - expected.minX),

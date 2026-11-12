@@ -18,6 +18,14 @@ const SKIP_TAGS = new Set([
   "script", "style", "noscript", "svg", "button", "nav", "form", "textarea", "select"
 ]);
 
+const MARKDOWN_STRUCTURE_TAGS = new Set([
+  ...VOID_TAGS,
+  ...SKIP_TAGS,
+  "pre", "code", "h1", "h2", "h3", "h4", "h5", "h6",
+  "strong", "b", "em", "i", "del", "s", "a", "ul", "ol", "li",
+  "blockquote", "table", "p", "section", "article", "div"
+]);
+
 const GENERIC_TITLES = new Set([
   "", "chatgpt", "claude", "gemini", "google gemini",
   "new chat", "untitled", "新对话", "新建对话", "新建聊天"
@@ -206,8 +214,9 @@ function inferPreHeaderLanguage(preNode, codeNode) {
   return "";
 }
 
-export function formatFencedCodeBlock(rawCode, language = "") {
-  const cleanedCode = String(rawCode || "").replace(/^\n+|\n+$/g, "");
+export function formatFencedCodeBlock(rawCode, language = "", preserveWhitespace = false) {
+  const sourceCode = String(rawCode || "");
+  const cleanedCode = preserveWhitespace ? sourceCode : sourceCode.replace(/^\n+|\n+$/g, "");
   const runs = cleanedCode.match(/`{3,}/g) || [];
   let fenceLen = 3;
   for (const run of runs) {
@@ -221,14 +230,17 @@ export function formatFencedCodeBlock(rawCode, language = "") {
 function formatInlineCode(rawText) {
   const text = String(rawText || "").replace(/\r?\n/g, " ");
   if (!text) return "";
-  if (!text.includes("`")) return `\`${text}\``;
+  const pad = text.startsWith("`") || text.endsWith("`") ||
+    (text.startsWith(" ") && text.endsWith(" ") && text.trim().length > 0)
+    ? " "
+    : "";
+  if (!text.includes("`")) return `\`${pad}${text}${pad}\``;
   const runs = text.match(/`+/g) || [];
   let maxLen = 1;
   for (const run of runs) {
     if (run.length >= maxLen) maxLen = run.length + 1;
   }
   const ticks = "`".repeat(maxLen);
-  const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
   return `${ticks}${pad}${text}${pad}${ticks}`;
 }
 
@@ -509,6 +521,22 @@ export function nodeContains(ancestor, target) {
   return false;
 }
 
+function hasMarkdownStructure(node) {
+  if (!node) return false;
+  if (node.nodeType === ELEMENT_NODE) {
+    if (
+      getAttr(node, "aria-hidden") === "true" ||
+      MARKDOWN_STRUCTURE_TAGS.has(getTagName(node))
+    ) {
+      return true;
+    }
+  }
+  for (const child of node.childNodes || []) {
+    if (hasMarkdownStructure(child)) return true;
+  }
+  return false;
+}
+
 export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
   if (!selectionOrRange) return "";
 
@@ -516,15 +544,17 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
   let plainFallback = "";
 
   if (typeof selectionOrRange.getRangeAt === "function") {
-    plainFallback = (selectionOrRange.toString() || "").trim();
+    plainFallback = selectionOrRange.toString() || "";
+    if (!plainFallback.trim()) plainFallback = "";
     if (selectionOrRange.rangeCount > 0 && !selectionOrRange.isCollapsed) {
       range = selectionOrRange.getRangeAt(0);
     }
   } else if (typeof selectionOrRange.cloneContents === "function") {
     range = selectionOrRange;
-    plainFallback = typeof range.toString === "function" ? range.toString().trim() : "";
+    plainFallback = typeof range.toString === "function" ? range.toString() : "";
+    if (!plainFallback.trim()) plainFallback = "";
   } else if (typeof selectionOrRange === "string") {
-    return selectionOrRange.trim();
+    return selectionOrRange.trim() ? selectionOrRange : "";
   }
 
   if (!range) return plainFallback;
@@ -541,19 +571,20 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     const fragment = range.cloneContents();
     const codeText = extractCodeText(fragment) || plainFallback;
     if (codeText.trim()) {
-      return formatFencedCodeBlock(codeText, lang).trim();
+      return formatFencedCodeBlock(codeText, lang, true).trim();
     }
   }
 
   const ancestorInlineCode = findAncestorTag(range.commonAncestorContainer, "code");
   if (ancestorInlineCode) {
     const fragment = range.cloneContents();
-    const codeText = (extractCodeText(fragment) || plainFallback).trim();
-    if (codeText) return formatInlineCode(codeText);
+    const codeText = extractCodeText(fragment) || plainFallback;
+    if (codeText.trim()) return formatInlineCode(codeText);
   }
 
   try {
     const fragment = range.cloneContents();
+    if (plainFallback && !hasMarkdownStructure(fragment)) return plainFallback;
     const md = htmlToMarkdown(fragment, { baseUrl });
     if (md) return md;
   } catch {

@@ -80,6 +80,17 @@
 - 验证点：运行 `./scripts/check` 通过全部 6 项门禁；通过 `open ~/Applications/CodingRewind.app` 实机验证首次启动与关闭浮窗后二次打开均呈递窗口，且 AX 树包含主菜单与 `Coding Rewind` 状态栏项。
 - 复发记录：`Seen 1x (2026-11-11)`，用户实机启动反馈无响应后复现定位。
 
+### 状态标签只属于首行，网络等待不能覆盖新队列
+
+**只解析和更新首行状态标签；离线发送完成后重读队列，仅移除已成功发送且内容未变的条目。**
+
+- 标签：#原文保真 #离线队列 #并发
+- 起因与后果：2026-11-12 对 `1d36ca0` 的本机审查发现，全文替换状态标签会改写选区中的同名文字，全文查找归档标签会隐藏正常卡片；网络请求等待期间的新入队条目可能被旧快照覆盖。
+- 修复与证据：首行标签处理与队列提交分别收敛到 [DomainModels.swift](Sources/CodingRewindCore/DomainModels.swift) 和 [MemosClient.swift](Sources/CodingRewindCore/MemosClient.swift)，回归在 [CodingRewindCoreTests.swift](Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift)。
+- 正确做法 `Done right`：原文保持独立于元数据的字节序列；队列同步读改写以文件事务保护，网络等待不持锁，提交时核对最新条目与发送快照。
+- 验证点：运行 `./scripts/check`，覆盖正文内同名标签、UTF-8 原文、并发入队、同 ID 更新及交错刷新。
+- 复发记录：`Seen 1x (2026-11-12)`，本机质量审查检出。
+
 ## 记录模板
 
 复制下列模板新增条目，已有同类条目则更新原条。未知的提交、原因或验收结果明确写待核实。

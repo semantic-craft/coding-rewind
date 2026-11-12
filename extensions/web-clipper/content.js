@@ -160,8 +160,8 @@
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
       return null;
     }
-    const rawText = selection.toString().trim();
-    if (!rawText) return null;
+    const rawText = selection.toString() || "";
+    if (!rawText.trim()) return null;
 
     const range = selection.getRangeAt(0);
     const { extractClipContext } = await loadExtractors();
@@ -171,7 +171,7 @@
       selectionRange: range,
       url: location.href
     });
-    if (!clip.selectedMarkdown) {
+    if (!clip.selectedMarkdown || !clip.selectedMarkdown.trim()) {
       clip.selectedMarkdown = rawText;
     }
     return clip;

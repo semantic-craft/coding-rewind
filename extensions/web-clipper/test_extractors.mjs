@@ -99,7 +99,9 @@ test("selectionToMarkdown preserves ancestor fenced code block language on parti
   const range = doc.createRangeFromNode(span);
   const md = selectionToMarkdown(range, "https://chatgpt.com/c/1");
   assert.equal(md, "```swift\nlet panel = NSPanel()\n```");
+});
 
+test("selectionToMarkdown preserves selected plain text boundaries", () => {
   const plainOnlySelection = {
     rangeCount: 0,
     isCollapsed: true,
@@ -110,7 +112,27 @@ test("selectionToMarkdown preserves ancestor fenced code block language on parti
       return "  fallback plain text  ";
     }
   };
-  assert.equal(selectionToMarkdown(plainOnlySelection), "fallback plain text");
+  assert.equal(selectionToMarkdown(plainOnlySelection), "  fallback plain text  ");
+  assert.equal(selectionToMarkdown("  first line\nsecond line \n"), "  first line\nsecond line \n");
+  assert.equal(selectionToMarkdown(" \n\t "), "");
+});
+
+test("selectionToMarkdown preserves a plain Range without Markdown structure", () => {
+  const selectedText = "  first line\nsecond line  \n";
+  const doc = parseHtmlDocument(`<span id="plain">${selectedText}</span>`);
+  const range = doc.createRangeFromNode(doc.querySelector("#plain"));
+  assert.equal(selectionToMarkdown(range), selectedText);
+});
+
+test("selectionToMarkdown preserves selected code block boundaries", () => {
+  const originalCode = "\n    let count = 1;  \n";
+  const codeDoc = parseHtmlDocument(`<pre><code id="raw-code" class="language-swift">${originalCode}</code></pre>`);
+  const codeRange = codeDoc.createRangeFromNode(codeDoc.querySelector("#raw-code"));
+  assert.equal(selectionToMarkdown(codeRange), `\`\`\`swift\n${originalCode}\n\`\`\``);
+
+  const inlineCodeDoc = parseHtmlDocument(`<code id="inline-code">  inline value  </code>`);
+  const inlineCodeRange = inlineCodeDoc.createRangeFromNode(inlineCodeDoc.querySelector("#inline-code"));
+  assert.equal(selectionToMarkdown(inlineCodeRange), "`   inline value   `");
 });
 
 test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to 4 turns up to selection", () => {
@@ -292,6 +314,109 @@ test("buildMemosWirePayloads matches exact canonical wire contract with and with
   assert.doesNotMatch(withoutCtx.memoBody.content, /#rewind\/has-ctx/);
   assert.match(withoutCtx.memoBody.content, /^#rewind\/pending #source\/web\n\n> \*\*Source:\*\* \[web\]\(https:\/\/example\.org\/notes\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/);
   assert.equal(parseServerMemoId({ name: "memos/abc999" }), "abc999");
+});
+
+test("buildMemosWirePayloads validates selected text without trimming its contents", () => {
+  const selectedMarkdown = "\n  let count = 1;  \n";
+  const payload = buildMemosWirePayloads(
+    { selectedMarkdown, sourcePlatform: "web" },
+    { clipId: "rw-1794366666123-preserve01", createdAt: "2026-11-11T03:16:00Z" }
+  );
+
+  assert.ok(payload.memoBody.content.endsWith(selectedMarkdown));
+  assert.throws(
+    () => buildMemosWirePayloads({ selectedMarkdown: " \n\t " }),
+    /selectedMarkdown must not be empty/
+  );
+});
+
+test("saveClipWithOutbox queues malformed successful responses for same-ID replay", async (t) => {
+  const malformedResponseCases = [
+    {
+      name: "invalid JSON",
+      response: {
+        ok: true,
+        status: 201,
+        async json() {
+          throw new SyntaxError("invalid JSON response");
+        }
+      }
+    },
+    {
+      name: "missing memo name",
+      response: { ok: true, status: 201, async json() { return {}; } }
+    }
+  ];
+
+  for (let i = 0; i < malformedResponseCases.length; i += 1) {
+    const malformedCase = malformedResponseCases[i];
+    await t.test(malformedCase.name, async () => {
+      const storage = createMemoryOutboxStorage();
+      const selectedMarkdown = `\n  preserved ${malformedCase.name}  \n`;
+      const clip = {
+        selectedMarkdown,
+        sourcePlatform: "chatgpt",
+        sessionTitle: "Retry malformed response",
+        prompt: "How should a malformed success response retry?",
+        recentTurns: "User: How should a malformed success response retry?\n\nAssistant: Reuse the same memo ID.",
+        sourceUrl: "https://chatgpt.com/c/retry-malformed"
+      };
+      const calls = [];
+      let memoPostCount = 0;
+      const fetchImpl = async (requestUrl, init) => {
+        const url = new URL(requestUrl);
+        const body = init.body ? JSON.parse(init.body) : null;
+        calls.push({ method: init.method, pathname: url.pathname, memoId: url.searchParams.get("memoId"), body });
+
+        if (init.method === "POST" && url.pathname === "/api/memos" && url.searchParams.has("memoId")) {
+          memoPostCount += 1;
+          return memoPostCount === 1
+            ? malformedCase.response
+            : { ok: false, status: 409, async json() { return {}; } };
+        }
+        if (init.method === "GET" && url.pathname.startsWith("/api/memos/")) {
+          return { ok: true, status: 200, async json() { return { name: "memos/server-recovered" }; } };
+        }
+        if (init.method === "POST" && url.pathname.endsWith("/comments")) {
+          return { ok: true, status: 201, async json() { return { name: "memos/server-recovered/comments/1" }; } };
+        }
+        throw new Error(`Unexpected request ${init.method} ${url.pathname}`);
+      };
+
+      const saved = await saveClipWithOutbox({
+        clip,
+        baseUrl: "https://memos.internal.test",
+        token: "test-token",
+        storage,
+        fetchImpl,
+        nowMs: 1794366900000 + i,
+        randomFn: () => 0.4
+      });
+
+      assert.equal(saved.status, "queued");
+      assert.equal(saved.queued, true);
+      assert.equal(storage.peek().length, 1);
+      assert.equal(storage.peek()[0].clipId, saved.clipId);
+      assert.ok(storage.peek()[0].memoBody.content.endsWith(selectedMarkdown));
+
+      const flushed = await flushOutbox({
+        baseUrl: "https://memos.internal.test",
+        token: "test-token",
+        storage,
+        fetchImpl
+      });
+
+      assert.deepEqual(flushed, { flushed: 1, remaining: 0 });
+      assert.equal(storage.peek().length, 0);
+      const memoPosts = calls.filter((call) => call.method === "POST" && call.pathname === "/api/memos");
+      assert.equal(memoPosts.length, 2);
+      assert.deepEqual(memoPosts.map((call) => call.memoId), [saved.clipId, saved.clipId]);
+      assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+      const commentPosts = calls.filter((call) => call.pathname.endsWith("/comments"));
+      assert.equal(commentPosts.length, 1);
+      assert.equal(commentPosts[0].pathname, "/api/memos/server-recovered/comments");
+    });
+  }
 });
 
 test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-item cap, and idempotent retry", async () => {

@@ -443,6 +443,7 @@ class MemosMcpBridgeTests(unittest.TestCase):
         # CODING_REWIND_QA=1 MUST query com.codingrewind.memos.qa and NEVER fall back to personal Keychain
         env["CODING_REWIND_MEMOS_URL"] = "https://qa.example.org"
         env["CODING_REWIND_QA"] = "1"
+        env["CODING_REWIND_KEYCHAIN_SERVICE"] = "com.codingrewind.memos"
         env["MOCK_PERSONAL_TOKEN"] = "personal-token-must-not-leak"
         sec_log = self.temp_dir / "security_calls.log"
         env["MOCK_SECURITY_LOG"] = str(sec_log)
