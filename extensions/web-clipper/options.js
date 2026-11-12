@@ -20,7 +20,7 @@ export async function testMemosConnection({ baseUrl, token, fetchImpl = globalTh
       return { ok: false, status: resp.status, message: `连接失败 (HTTP ${resp.status})` };
     }
     await resp.json();
-    return { ok: true, message: "连接成功 · Memos API 可正常读写" };
+    return { ok: true, message: "连接成功 · 已验证读取，尚未验证保存" };
   } catch (err) {
     return { ok: false, message: `网络请求失败: ${err?.message || String(err)}` };
   }

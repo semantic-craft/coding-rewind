@@ -135,6 +135,34 @@ test("selectionToMarkdown preserves selected code block boundaries", () => {
   assert.equal(selectionToMarkdown(inlineCodeRange), "`   inline value   `");
 });
 
+test("selected text excludes ChatGPT copy-excluded footers while preserving Markdown and selection boundaries", async (t) => {
+  for (const formatted of [false, true]) {
+    await t.test(formatted ? "formatted selection" : "plain selection", () => {
+      const selectedText = "Keep only the selected sentence.\n\n";
+      const sentence = formatted ? "<strong>Keep only the selected sentence.</strong>" : "<span>Keep only the selected sentence.</span>";
+      const doc = parseHtmlDocument(`
+        <div id="selection-region">
+          <p>${sentence}</p>
+          <div data-markdown-copy="exclude" class="select-none">
+            <div data-markdown-copy="exclude">ChatGPT may make mistakes. Check important information.</div>
+          </div>
+        </div>
+      `);
+      const range = doc.createRangeFromNode(doc.querySelector("#selection-region"));
+      const selection = {
+        rangeCount: 1,
+        isCollapsed: false,
+        getRangeAt() { return range; },
+        toString() { return selectedText; }
+      };
+      assert.match(range.toString(), /Check important information/);
+
+      const ctx = extractClipContext({ doc, selection, selectionRange: range, url: "https://chatgpt.com/c/boundaries" });
+      assert.equal(ctx.selectedMarkdown, formatted ? "**Keep only the selected sentence.**\n\n" : selectedText);
+    });
+  }
+});
+
 test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to 4 turns up to selection", () => {
   const url = "https://chatgpt.com/c/67f0a1b2-3344";
   const doc = parseHtmlDocument(
@@ -187,6 +215,56 @@ test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to
   assert.match(turnBlocks[2], /^User: How do I keep NSPanel from stealing focus\?$/);
   assert.match(turnBlocks[3], /^Assistant: Use `\.nonactivatingPanel` in your style mask:/);
   assert.doesNotMatch(ctx.recentTurns, /later follow-up below selection/);
+});
+
+test("ChatGPT role headings preserve separate messages inside shared turn containers", () => {
+  const url = "https://chatgpt.com/c/role-heading-chat";
+  const doc = parseHtmlDocument(`
+    <html>
+      <head><title>Keep nearby context - ChatGPT</title></head>
+      <body><main>
+        <div data-talvt-turn-state="complete" class="group flex flex-col">
+          <div class="BQZwFn7g">
+            <h4 data-conversation-role="user">你说：你</h4>
+            <div><div class="whitespace-pre-wrap">How do I save a snippet?</div></div>
+          </div>
+          <div data-content-search-unit-key="fallback-turn-1:2:assistant">
+            <h4 data-conversation-role="assistant">ChatGPT 说：ChatGPT</h4>
+            <div><div data-markdown-text-style="assistant-message"><p>Select the text and save it.</p></div></div>
+          </div>
+        </div>
+        <div data-talvt-turn-state="complete" class="group flex flex-col">
+          <div class="BQZwFn7g">
+            <h4 data-conversation-role="user">You said: You</h4>
+            <div><div class="whitespace-pre-wrap">Can it preserve the nearby question?</div></div>
+          </div>
+          <div data-content-search-unit-key="fallback-turn-2:2:assistant">
+            <h4 data-conversation-role="assistant">ChatGPT said: ChatGPT</h4>
+            <div><div data-markdown-text-style="assistant-message"><p id="new-chatgpt-pick">Keep the <strong>nearby question</strong> with the snippet.</p></div></div>
+          </div>
+        </div>
+      </main></body>
+    </html>
+  `, { url });
+
+  const turns = extractConversationTurns(doc, "chatgpt", url);
+  assert.deepEqual(turns.map(({ role, text }) => ({ role, text })), [
+    { role: "user", text: "How do I save a snippet?" },
+    { role: "assistant", text: "Select the text and save it." },
+    { role: "user", text: "Can it preserve the nearby question?" },
+    { role: "assistant", text: "Keep the **nearby question** with the snippet." }
+  ]);
+
+  const range = doc.createRangeFromNode(doc.querySelector("#new-chatgpt-pick"));
+  const ctx = extractClipContext({ doc, selectionRange: range, url });
+  assert.equal(ctx.prompt, "Can it preserve the nearby question?");
+  assert.equal(ctx.selectedMarkdown, "Keep the **nearby question** with the snippet.");
+  assert.equal(ctx.recentTurns,
+    "User: How do I save a snippet?\n\n" +
+    "Assistant: Select the text and save it.\n\n" +
+    "User: Can it preserve the nearby question?\n\n" +
+    "Assistant: Keep the **nearby question** with the snippet."
+  );
 });
 
 test("Claude DOM extraction deduplicates nested message containers and enforces 4000-char recentTurns cap", () => {
@@ -550,18 +628,22 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
 test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.json is valid MV3", async () => {
   let seenUrl = "";
   let seenAuth = "";
+  const methods = [];
   const conn = await testMemosConnection({
     baseUrl: "https://memos.internal.test/",
     token: "tok-abc",
     fetchImpl: async (url, init) => {
       seenUrl = url;
       seenAuth = init.headers.Authorization;
+      methods.push(init.method);
       return { ok: true, status: 200, async json() { return { memos: [] }; } };
     }
   });
   assert.equal(conn.ok, true);
+  assert.equal(conn.message, "连接成功 · 已验证读取，尚未验证保存");
   assert.equal(seenUrl, "https://memos.internal.test/api/memos?pageSize=1");
   assert.equal(seenAuth, "Bearer tok-abc");
+  assert.deepEqual(methods, ["GET"]);
 
   assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/memos/"), "https://memos.internal.test");
   assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/v1/memos/"), "https://memos.internal.test");
@@ -575,5 +657,20 @@ test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.j
   }
   for (const host of ["https://chatgpt.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]) {
     assert.ok(manifest.host_permissions.includes(host), `missing host permission ${host}`);
+  }
+});
+
+test("extension and toolbar icons provide each declared PNG size", () => {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest.icons), ["16", "32", "48", "128"]);
+  assert.deepEqual(manifest.action.default_icon, manifest.icons);
+
+  for (const [size, resource] of Object.entries(manifest.icons)) {
+    const png = fs.readFileSync(path.join(extensionDir, resource));
+    assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    assert.equal(png.toString("ascii", 12, 16), "IHDR");
+    assert.equal(png.readUInt32BE(16), Number(size), `${resource} width`);
+    assert.equal(png.readUInt32BE(20), Number(size), `${resource} height`);
   }
 });
