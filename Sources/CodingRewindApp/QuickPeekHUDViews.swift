@@ -3,12 +3,14 @@
 
 import AppKit
 import CodingRewindCore
+import KeyboardShortcuts
 import SwiftUI
 
 @MainActor
 public final class QuickPeekHUDPanel: NSPanel {
     public init(
         coordinator: AppCoordinator,
+        shortcuts: AppShortcuts,
         onInstallPlugin: @escaping @MainActor () -> Void,
         onOpenSettings: @escaping @MainActor () -> Void
     ) {
@@ -41,6 +43,7 @@ public final class QuickPeekHUDPanel: NSPanel {
         let hosting = NSHostingView(
             rootView: QuickPeekHUDRootView(
                 coordinator: coordinator,
+                shortcuts: shortcuts,
                 onClose: { [weak self] in self?.orderOut(nil) },
                 onInstallPlugin: onInstallPlugin,
                 onOpenSettings: onOpenSettings
@@ -139,6 +142,7 @@ public final class QuickPeekHUDPanel: NSPanel {
 @MainActor
 public struct QuickPeekHUDRootView: View {
     @Bindable public var coordinator: AppCoordinator
+    @Bindable public var shortcuts: AppShortcuts
     public let onClose: @MainActor () -> Void
     public let onInstallPlugin: @MainActor () -> Void
     public let onOpenSettings: @MainActor () -> Void
@@ -148,11 +152,13 @@ public struct QuickPeekHUDRootView: View {
 
     public init(
         coordinator: AppCoordinator,
+        shortcuts: AppShortcuts,
         onClose: @escaping @MainActor () -> Void,
         onInstallPlugin: @escaping @MainActor () -> Void,
         onOpenSettings: @escaping @MainActor () -> Void
     ) {
         self.coordinator = coordinator
+        self.shortcuts = shortcuts
         self.onClose = onClose
         self.onInstallPlugin = onInstallPlugin
         self.onOpenSettings = onOpenSettings
@@ -167,7 +173,7 @@ public struct QuickPeekHUDRootView: View {
                 Button {
                     Task { await coordinator.captureSelection() }
                 } label: {
-                    Label("抓选段 ⌃⌥S", systemImage: "plus.viewfinder").font(.system(size: 11))
+                    Label("抓选段 \(shortcuts.hint(for: .captureSelection))", systemImage: "plus.viewfinder").font(.system(size: 11))
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -269,8 +275,8 @@ public struct QuickPeekHUDRootView: View {
                     .font(.system(size: 13, weight: .semibold))
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("• 选中 Antigravity 或网页对话好段落，按 ⌃⌥S 零打断顺手暂存")
-                Text("• 随时按 ⌃⌥R 速览近 72 小时热流卡片，勾选后按 ⌘↵ 拉起新对话")
+                Text("• \(shortcuts.instruction(for: .captureSelection))")
+                Text("• \(shortcuts.instruction(for: .toggleHUD))，勾选后按 ⌘↵ 拉起新对话")
                 Text("• 打开 设置… (⌘,) 配置 Memos 地址与令牌即可云端同步（离线可先暂存）")
             }
             .font(.system(size: 11.5))
@@ -341,6 +347,7 @@ public struct QuickPeekHUDRootView: View {
 @MainActor
 public struct SettingsFormView: View {
     @Bindable public var coordinator: AppCoordinator
+    @Bindable public var shortcuts: AppShortcuts
     public let onInstallPlugin: @MainActor () -> Void
     public let onRequestAccessibility: @MainActor () -> Void
     public let onClose: @MainActor () -> Void
@@ -352,16 +359,23 @@ public struct SettingsFormView: View {
 
     public init(
         coordinator: AppCoordinator,
+        shortcuts: AppShortcuts,
         onInstallPlugin: @escaping @MainActor () -> Void,
         onRequestAccessibility: @escaping @MainActor () -> Void,
         onClose: @escaping @MainActor () -> Void
     ) {
         self.coordinator = coordinator
+        self.shortcuts = shortcuts
         self.onInstallPlugin = onInstallPlugin
         self.onRequestAccessibility = onRequestAccessibility
         self.onClose = onClose
         self._urlDraft = State(initialValue: coordinator.paths.readConfiguredMemosURLString(environment: coordinator.environment) ?? "")
         self._isAccessibilityTrusted = State(initialValue: MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false))
+    }
+
+    private func isFailed(_ action: ShortcutAction) -> Bool {
+        if case .failed = shortcuts.state(for: action) { return true }
+        return shortcuts.validationMessages[action] != nil
     }
 
     public var body: some View {
@@ -380,6 +394,34 @@ public struct SettingsFormView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("全局快捷键").font(.headline)
+                Text("修改立即生效并保存；清空即关闭。Hyper = ⌃⌥⇧⌘。")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                ForEach(ShortcutAction.allCases) { action in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(action.title).font(.system(size: 12))
+                            Spacer()
+                            KeyboardShortcuts.Recorder(for: action.name)
+                                .shortcutValidation { shortcuts.validate($0, for: action) }
+                                .keyboardShortcutsConflictPolicy(.init(systemShortcut: .block))
+                            Button("恢复默认") { shortcuts.restoreDefault(for: action) }.controlSize(.small)
+                        }
+                        HStack {
+                            Text(shortcuts.validationMessages[action] ?? shortcuts.statusText(for: action))
+                                .font(.system(size: 11))
+                                .foregroundStyle(isFailed(action) ? Color.orange : Color.secondary)
+                            if case .failed = shortcuts.state(for: action) {
+                                Button("重试") { shortcuts.retry(action) }.controlSize(.small)
+                            }
+                        }
+                    }
+                }
             }
 
             Divider()
@@ -427,9 +469,9 @@ public struct SettingsFormView: View {
 
             HStack {
                 Spacer()
-                Button("取消") { onClose() }
+                Button("关闭") { onClose() }
                     .keyboardShortcut(.cancelAction)
-                Button("保存") {
+                Button("保存连接设置") {
                     do {
                         try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
                         errorMessage = nil
@@ -445,7 +487,7 @@ public struct SettingsFormView: View {
             }
         }
         .padding(18)
-        .frame(width: 468, height: 324)
+        .frame(width: 520, height: 570)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
             coordinator.refreshPluginStatus()

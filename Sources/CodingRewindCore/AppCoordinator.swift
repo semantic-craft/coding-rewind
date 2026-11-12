@@ -111,6 +111,7 @@ public final class AppCoordinator {
     public let activeTurns: ActiveTurnStore
     public var capturer: any SelectionCapturing
 
+    public private(set) var isCapturingSelection = false
     public var cards: [RewindCard] = []
     public var searchText: String = ""
     public var statusFilter: StatusFilter = .all
@@ -263,6 +264,9 @@ public final class AppCoordinator {
     }
 
     public func captureSelection() async {
+        guard !isCapturingSelection else { return }
+        isCapturingSelection = true
+        defer { isCapturingSelection = false }
         do {
             let selection = try await capturer.captureFrontmostSelection()
             let (platform, sourceTitle, sourceURL, context) = buildProvenance(from: selection)

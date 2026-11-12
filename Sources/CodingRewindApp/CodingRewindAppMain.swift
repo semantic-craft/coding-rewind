@@ -10,7 +10,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var hudPanel: QuickPeekHUDPanel?
     public var statusItemController: StatusItemController?
     public var settingsWindowController: SettingsWindowController?
-    public var shortcutMonitor: GlobalShortcutMonitor?
+    public var shortcuts: AppShortcuts?
     public private(set) var lastExternalApplication: NSRunningApplication?
 
     private var workspaceObserver: NSObjectProtocol?
@@ -57,12 +57,17 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu { [weak self] command in
+            AppShortcuts.configurePreferences(environment: coord.environment, dataDirectory: paths.dataDirectoryURL)
+            let shortcuts = AppShortcuts { [weak self] command in self?.perform(command) }
+            self.shortcuts = shortcuts
+
+            NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts) { [weak self] command in
                 self?.perform(command)
             }
 
             let panel = QuickPeekHUDPanel(
                 coordinator: coord,
+                shortcuts: shortcuts,
                 onInstallPlugin: { [weak self] in self?.perform(.installOrRepairPlugin) },
                 onOpenSettings: { [weak self] in self?.perform(.openSettings) }
             )
@@ -70,12 +75,14 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
             let settings = SettingsWindowController(
                 coordinator: coord,
+                shortcuts: shortcuts,
                 onInstallPlugin: { [weak self] in self?.perform(.installOrRepairPlugin) },
                 onRequestAccessibility: { [weak self] in self?.perform(.requestAccessibility) }
             )
             self.settingsWindowController = settings
 
             let statusController = StatusItemController(
+                shortcuts: shortcuts,
                 snapshotProvider: { [weak self] in
                     guard let self, let coord = self.coordinator else {
                         return MenuStatusSnapshot(
@@ -101,13 +108,6 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             )
             self.statusItemController = statusController
 
-            let shortcuts = GlobalShortcutMonitor(
-                onCapture: { [weak self] in self?.perform(.captureSelectionHotkey) },
-                onToggleHUD: { [weak self] in self?.perform(.toggleHUD) }
-            )
-            shortcuts.register()
-            self.shortcutMonitor = shortcuts
-
             observeCoordinatorChanges()
 
             if !CommandLine.arguments.contains("--background") {
@@ -122,6 +122,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             NSLog("CodingRewind startup failed: \(error.localizedDescription)")
         }
     }
+
+    public func applicationWillTerminate(_ notification: Notification) { shortcuts?.stop() }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         perform(.presentHUDAndFocus)

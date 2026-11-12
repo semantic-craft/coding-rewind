@@ -120,6 +120,20 @@ PY
 if [[ -f "${REPO_ROOT}/Package.swift" ]]; then
   echo "==> [2/6] Swift test suite"
   swift test
+  VENDOR_TEST_LOG="$(mktemp "${REPO_ROOT}/.build/vendor-tests.XXXXXX")"
+  trap 'rm -f "${VENDOR_TEST_LOG}"' EXIT
+  swift test --package-path Vendor/KeyboardShortcuts 2>&1 | tee "${VENDOR_TEST_LOG}"
+  python3 - "${VENDOR_TEST_LOG}" <<'PYTEST'
+import pathlib
+import re
+import sys
+
+output = pathlib.Path(sys.argv[1]).read_text()
+if "Test Suite 'RunLoopMonitorTests' passed" not in output or not re.search(r"Test run with [1-9][0-9]* tests .*passed", output):
+    sys.exit("FAIL: KeyboardShortcuts tests exited without complete XCTest and Swift Testing results")
+PYTEST
+  rm -f "${VENDOR_TEST_LOG}"
+  trap - EXIT
 else
   echo "==> [2/6] Swift test suite (skipped: no Package.swift)"
 fi

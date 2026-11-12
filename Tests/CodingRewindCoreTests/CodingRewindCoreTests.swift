@@ -140,6 +140,29 @@ private struct StubCapturer: SelectionCapturing {
     func captureFrontmostSelection() async throws -> CapturedSelection { selection }
 }
 
+private actor GatedCapturer: SelectionCapturing {
+    private(set) var calls = 0
+    private var started: CheckedContinuation<Void, Never>?
+    private var release: CheckedContinuation<Void, Never>?
+
+    func captureFrontmostSelection() async throws -> CapturedSelection {
+        calls += 1
+        if calls == 1 {
+            started?.resume()
+            started = nil
+            await withCheckedContinuation { release = $0 }
+        }
+        return CapturedSelection(text: "Only one clip", bundleIdentifier: "test.capture", appName: "Fixture")
+    }
+
+    func waitUntilStarted() async {
+        if calls > 0 { return }
+        await withCheckedContinuation { started = $0 }
+    }
+
+    func finish() { release?.resume(); release = nil }
+}
+
 @Suite("CodingRewindCore Memos Wire, Outbox & Plugin Suite")
 struct CodingRewindCoreTests {
     private func makeIsolatedDir() throws -> URL {
@@ -147,6 +170,24 @@ struct CodingRewindCoreTests {
             .appendingPathComponent("coding-rewind-core-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    @Test("Overlapping capture requests create one offline clip")
+    @MainActor
+    func captureReentrancy() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let capturer = GatedCapturer()
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: capturer)
+        let first = Task { await coordinator.captureSelection() }
+        await capturer.waitUntilStarted()
+        await coordinator.captureSelection()
+        await capturer.finish()
+        await first.value
+        #expect(await capturer.calls == 1)
+        #expect(coordinator.outbox.loadEntries().count == 1)
+        #expect(!coordinator.isCapturingSelection)
     }
 
     private func makeMockSession() -> URLSession {

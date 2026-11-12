@@ -31,9 +31,9 @@
 
 - 标签：#macOS原生 #剪贴板 #选区捕获
 - 起因与后果：v0.1 提交 `194cdc0` 在 `kAXSelectedTextAttribute` 未取到文本时没有模拟 `⌘C`，而是直接读取 `NSPasteboard.general` 现有字符串，导致用户在未选中文本或 Electron 特殊视图中按下热键时静默把旧剪贴板内容当成新片段入库。
-- 修复与证据：v0.2 在 [MacOSSelectionAndHotkeys.swift](Sources/CodingRewindApp/MacOSSelectionAndHotkeys.swift) 参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy` 重写回退逻辑，先快照全部 `NSPasteboardItem` 原始类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 后在 120 毫秒上限内轮询 `changeCount` 增长，并在 `defer` 块无条件恢复备份条目。
+- 修复与证据：v0.2 在 [MacOSSelection.swift](Sources/CodingRewindApp/MacOSSelection.swift) 参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy` 重写回退逻辑，先快照全部 `NSPasteboardItem` 原始类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 后在有界窗口内检查 `changeCount` 增长，并在 `defer` 块无条件恢复备份条目。
 - 正确做法 `Done right`：优先读取辅助功能选区属性，回退剪贴板时严格以 `changeCount` 递增作为复制成功证据，未递增一律视作无选区并给出提示，绝不误存旧剪贴板且绝不污染用户原有剪贴板。
-- 验证点：查看 [MacOSSelectionAndHotkeys.swift](Sources/CodingRewindApp/MacOSSelectionAndHotkeys.swift) 确认包含 `changeCount` 对比与 `defer` 快照还原，运行 `./scripts/check` 通过单元测试。
+- 验证点：查看 [MacOSSelection.swift](Sources/CodingRewindApp/MacOSSelection.swift) 确认包含 `changeCount` 对比与 `defer` 快照还原，运行 `./scripts/check` 通过单元测试。
 - 复发记录：`Seen 1x (2026-11-11)`，v0.1 提交 `194cdc0` 代码走查检出。
 
 ### Antigravity 插件清单与钩子结构必须严格对齐官方规范
@@ -90,6 +90,17 @@
 - 正确做法 `Done right`：原文保持独立于元数据的字节序列；队列同步读改写以文件事务保护，网络等待不持锁，提交时核对最新条目与发送快照。
 - 验证点：运行 `./scripts/check`，覆盖正文内同名标签、UTF-8 原文、并发入队、同 ID 更新及交错刷新。
 - 复发记录：`Seen 1x (2026-11-12)`，本机质量审查检出。
+
+### 跨应用快捷键占用须用独立进程验证
+
+**Carbon 同进程重复注册和跨进程占用语义不同，冲突验收必须包含真实独立进程，并区分共享与独占注册。**
+
+- 标签：#macOS原生 #快捷键 #验收
+- 起因与后果：2026-11-12 Hyper 快捷键实现中，同进程占用测试能得到 `-9878`，但 GUI 验收发现上游 `RegisterEventHotKey` 的零选项允许不同应用共享组合，不能据此声称跨应用冲突检测有效。
+- 修复与证据：库内唯一注册调用改用 `kEventHotKeyExclusive`，初次注册及恢复均报告实际 OSStatus；[AppShortcutsTests.swift](Tests/CodingRewindAppTests/AppShortcutsTests.swift) 使用独立 [ShortcutConflictFixture](Tests/Support/ShortcutConflictFixture/main.swift) 验证共享占用可被独占注册优先处理，独占占用返回 `-9878`，释放后重试恢复。
+- 正确做法 `Done right`：依据系统 API 真实能力描述冲突范围，不从已存配置推断生效，也不承诺枚举其他应用所有绑定；跨进程行为不能只用同进程夹具证明。
+- 验证点：运行 `./scripts/check`，确认跨进程共享/独占两种情况、初次失败、恢复失败及重试全部通过。
+- 复发记录：`Seen 1x (2026-11-12)`，隔离 GUI 验收检出。
 
 ## 记录模板
 

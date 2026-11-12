@@ -44,6 +44,16 @@ rm -rf "${ICONSET_DIR}"
 install -m 0644 "${REPO_ROOT}/Resources/MenuBarIcon.png" "${RESOURCES_DIR}/MenuBarIcon.png"
 install -m 0644 "${REPO_ROOT}/Resources/MenuBarIcon@2x.png" "${RESOURCES_DIR}/MenuBarIcon@2x.png"
 
+for resource_bundle in "${BIN_DIR}"/*.bundle; do
+    [[ -d "${resource_bundle}" ]] || continue
+    cp -R "${resource_bundle}" "${RESOURCES_DIR}/"
+done
+if [[ ! -d "${RESOURCES_DIR}/KeyboardShortcuts_KeyboardShortcuts.bundle" ]]; then
+    echo "Error: KeyboardShortcuts resource bundle is missing" >&2
+    exit 1
+fi
+install -m 0644 "${REPO_ROOT}/Vendor/KeyboardShortcuts/license" "${RESOURCES_DIR}/KeyboardShortcuts-LICENSE.txt"
+
 install -m 0755 "${BIN_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp"
 install -m 0755 "${BIN_DIR}/coding-rewind-hook" "${HELPERS_DIR}/coding-rewind-hook"
 
@@ -83,6 +93,10 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+if [[ "${CODING_REWIND_QA:-0}" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.codingrewind.app.qa" "${CONTENTS_DIR}/Info.plist"
+fi
 
 codesign --force --deep --sign - "${APP_BUNDLE}"
 codesign --verify --deep --strict "${APP_BUNDLE}"
