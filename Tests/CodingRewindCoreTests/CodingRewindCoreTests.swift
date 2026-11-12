@@ -13,10 +13,10 @@ private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
     }
 
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var handlers: [String: @Sendable (URLRequest, Data) -> (Int, Data)] = [:]
+    nonisolated(unsafe) private static var handlers: [String: @Sendable (URLRequest, Data) async -> (Int, Data)] = [:]
     nonisolated(unsafe) private static var requestsBySuite: [String: [RecordedRequest]] = [:]
 
-    static func register(suiteID: String, handler: @escaping @Sendable (URLRequest, Data) -> (Int, Data)) {
+    static func register(suiteID: String, handler: @escaping @Sendable (URLRequest, Data) async -> (Int, Data)) {
         lock.lock()
         defer { lock.unlock() }
         handlers[suiteID] = handler
@@ -66,7 +66,13 @@ private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
-        let (status, respData) = handler(request, bodyData)
+        Task {
+            let (status, respData) = await handler(request, bodyData)
+            respond(url: url, status: status, data: respData)
+        }
+    }
+
+    private func respond(url: URL, status: Int, data: Data) {
         if status < 0 {
             client?.urlProtocol(self, didFailWithError: URLError(.notConnectedToInternet))
             return
@@ -81,7 +87,7 @@ private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         client?.urlProtocol(self, didReceive: httpResp, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: respData)
+        client?.urlProtocol(self, didLoad: data)
         client?.urlProtocolDidFinishLoading(self)
     }
 
@@ -103,6 +109,32 @@ private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
     }
 }
 
+private actor MemosResponseGate {
+    private var responses: [CheckedContinuation<(Int, Data), Never>?] = []
+    private var arrivalWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+
+    func response() async -> (Int, Data) {
+        await withCheckedContinuation { continuation in
+            responses.append(continuation)
+            let ready = arrivalWaiters.filter { $0.0 <= responses.count }
+            arrivalWaiters.removeAll { $0.0 <= responses.count }
+            for (_, waiter) in ready { waiter.resume() }
+        }
+    }
+
+    func waitForRequests(_ count: Int) async {
+        if responses.count >= count { return }
+        await withCheckedContinuation { continuation in
+            arrivalWaiters.append((count, continuation))
+        }
+    }
+
+    func release(_ index: Int, status: Int) {
+        responses[index]?.resume(returning: (status, Data()))
+        responses[index] = nil
+    }
+}
+
 private struct StubCapturer: SelectionCapturing {
     let selection: CapturedSelection
     func captureFrontmostSelection() async throws -> CapturedSelection { selection }
@@ -121,6 +153,149 @@ struct CodingRewindCoreTests {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [MockMemosURLProtocol.self]
         return URLSession(configuration: cfg)
+    }
+
+    @Test("Synthesizing changes only exact first-line state tokens and preserves the remaining bytes", arguments: ["pending", "ready"])
+    func synthesizedTagPreservesVerbatimBytes(state: String) {
+        let header = "#rewind/\(state) #rewind/has-ctx #source/macos #rewind/pending-extra #rewind/ready-made #rewind/has-ctx-more"
+        let suffix = "\r\n\r\n> **Source:** [Notes](macos://macos)\r\n\r\n#rewind/pending #rewind/ready #rewind/has-ctx #rewind/synthesized\n  原样 e\u{301} 😀\t\r\n"
+        let expected = "#rewind/synthesized #source/macos #rewind/pending-extra #rewind/ready-made #rewind/has-ctx-more" + suffix
+        let actual = MemosWireFormat.replacingWithSynthesizedTag(header + suffix)
+        #expect(Data(actual.utf8) == Data(expected.utf8))
+        #expect(MemosWireFormat.replacingWithSynthesizedTag(actual) == actual)
+
+        let unrelated = "#rewind/ready-made #source/macos\n\n#rewind/pending"
+        #expect(MemosWireFormat.replacingWithSynthesizedTag(unrelated) == unrelated)
+    }
+
+    @Test("Memo state comes only from exact first-line tokens")
+    func memoStateIgnoresBodyTags() {
+        let now = Date(timeIntervalSince1970: 1_794_452_400)
+        let cases: [(String, CardStatus?)] = [
+            ("#rewind/pending\t#source/macos\n\n#rewind/ready", .pending),
+            ("#rewind/ready #source/macos\n\n#rewind/synthesized", .ready),
+            ("#rewind/pending #rewind/synthesized-extra\n\nbody", .pending),
+            ("#rewind/pending-extra #source/macos\n\nbody", nil),
+            ("#rewind/ready-made #source/macos\n\nbody", nil),
+            ("#rewind/has-ctx #source/macos\n\nbody", nil),
+            ("ordinary first line\n\n#rewind/ready", nil),
+            ("\n#rewind/ready #source/macos\n\nbody", nil),
+            ("#rewind/synthesized #source/macos\n\n#rewind/pending", nil)
+        ]
+        for (raw, expectedStatus) in cases {
+            let card = MemosWireFormat.parseMemo(id: "memo-state", rawContent: raw, createdAt: now, now: now)
+            #expect(card?.status == expectedStatus, "Input: \(raw)")
+            if let card {
+                #expect(card.rawContent == raw)
+                #expect(card.verbatimText == raw.components(separatedBy: "\n\n").last)
+            }
+        }
+    }
+
+    @Test("HotCache repairs cached state from the first line and ignores body state tags")
+    func hotCacheUsesHeaderState() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = HotCache(fileURL: dir.appendingPathComponent("hot_cache.json"))
+        let now = Date(timeIntervalSince1970: 1_794_452_400)
+        func card(_ id: String, _ raw: String, createdAt: Date? = nil) -> RewindCard {
+            RewindCard(
+                id: id, rawContent: raw, status: .ready, sourcePlatform: "macos",
+                sourceTitle: "macos", verbatimText: "body", createdAt: createdAt ?? now,
+                isOfflinePending: true
+            )
+        }
+        let cards = [
+            card("pending", "#rewind/pending #source/macos\n\n#rewind/ready"),
+            card("ready", "#rewind/ready #source/macos\n\n#rewind/synthesized"),
+            card("synthesized", "#rewind/synthesized #source/macos\n\n#rewind/pending"),
+            card("prefix", "#rewind/pending-extra #source/macos\n\nbody"),
+            card("body-only", "body\n\n#rewind/pending"),
+            card("old", "#rewind/ready #source/macos\n\nbody", createdAt: now.addingTimeInterval(-RewindCard.hotWindowSeconds - 1))
+        ]
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(cards).write(to: cache.fileURL)
+        let loaded = cache.loadCards(now: now)
+        #expect(Set(loaded.map(\.id)) == Set(["pending", "ready"]))
+        #expect(loaded.first { $0.id == "pending" }?.status == .pending)
+        #expect(loaded.first { $0.id == "ready" }?.verbatimText == "#rewind/synthesized")
+        #expect(loaded.allSatisfy { $0.isOfflinePending })
+
+        try cache.saveCards(cards, now: now)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let saved = try decoder.decode([RewindCard].self, from: Data(contentsOf: cache.fileURL))
+        #expect(Set(saved.map(\.id)) == Set(["pending", "ready"]))
+        #expect(saved.first { $0.id == "pending" }?.status == .pending)
+    }
+
+    @Test("Outbox flush retains new and replaced entries queued while the request is suspended", arguments: [false, true], [false, true])
+    func outboxPreservesEnqueuesDuringFlush(independentWriter: Bool, replaceSnapshot: Bool) async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let outbox = OfflineOutbox(fileURL: dir.appendingPathComponent("outbox.jsonl"))
+        let writer = independentWriter ? OfflineOutbox(fileURL: outbox.fileURL) : outbox
+        let now = Date(timeIntervalSince1970: 1_794_452_400)
+        let old = OutboxEntry(clientClipId: "queued-old", memoContent: "#rewind/pending\n\nold", commentContent: nil, createdAt: now)
+        let replacement = OutboxEntry(clientClipId: old.clientClipId, memoContent: "#rewind/pending\n\nreplacement", commentContent: nil, createdAt: now)
+        let added = OutboxEntry(clientClipId: "queued-new", memoContent: "#rewind/pending\n\nnew", commentContent: nil, createdAt: now)
+        try outbox.enqueue(old)
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let baseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local"))
+        let gate = MemosResponseGate()
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in await gate.response() }
+        let session = makeMockSession()
+        defer { session.invalidateAndCancel() }
+        let flush = Task { try await outbox.flush(using: MemosClient(session: session), baseURL: baseURL, token: "test-token") }
+        await gate.waitForRequests(1)
+        if replaceSnapshot { try writer.enqueue(replacement) }
+        try writer.enqueue(added)
+        await gate.release(0, status: 409)
+        let result = try await flush.value
+
+        let expected = replaceSnapshot ? [replacement, added] : [added]
+        #expect(result.flushed.map(\.id) == [old.clientClipId])
+        #expect(result.remaining == expected)
+        #expect(OfflineOutbox(fileURL: outbox.fileURL).loadEntries() == expected)
+    }
+
+    @Test("A failed overlapping flush cannot resurrect entries removed by a successful flush")
+    func overlappingOutboxFlushDoesNotResurrectEntries() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let first = OfflineOutbox(fileURL: dir.appendingPathComponent("outbox.jsonl"))
+        let second = OfflineOutbox(fileURL: first.fileURL)
+        try first.enqueue(OutboxEntry(clientClipId: "overlapping", memoContent: "#rewind/pending\n\nbody", commentContent: nil))
+        let firstSuite = UUID().uuidString.lowercased()
+        let secondSuite = UUID().uuidString.lowercased()
+        defer {
+            MockMemosURLProtocol.unregister(suiteID: firstSuite)
+            MockMemosURLProtocol.unregister(suiteID: secondSuite)
+        }
+        let firstURL = try #require(URL(string: "https://\(firstSuite).mock.memos.local"))
+        let secondURL = try #require(URL(string: "https://\(secondSuite).mock.memos.local"))
+        let firstGate = MemosResponseGate()
+        let secondGate = MemosResponseGate()
+        MockMemosURLProtocol.register(suiteID: firstSuite) { _, _ in await firstGate.response() }
+        MockMemosURLProtocol.register(suiteID: secondSuite) { _, _ in await secondGate.response() }
+        let session = makeMockSession()
+        defer { session.invalidateAndCancel() }
+        let client = MemosClient(session: session)
+        let failedFlush = Task { try await first.flush(using: client, baseURL: firstURL, token: "test-token") }
+        await firstGate.waitForRequests(1)
+        let successfulFlush = Task { try await second.flush(using: client, baseURL: secondURL, token: "test-token") }
+        await secondGate.waitForRequests(1)
+        await secondGate.release(0, status: 409)
+        let success = try await successfulFlush.value
+        #expect(success.flushed.map(\.id) == ["overlapping"])
+        #expect(first.loadEntries().isEmpty)
+        await firstGate.release(0, status: 503)
+        let failure = try await failedFlush.value
+        #expect(failure.remaining.isEmpty)
+        #expect(first.loadEntries().isEmpty)
     }
 
     @Test("MemosClient wire contract creates pending clip + context comment, lists 72h hot cards, and patches synthesized")
