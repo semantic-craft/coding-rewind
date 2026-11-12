@@ -230,15 +230,16 @@ struct CodingRewindCoreTests {
         #expect(saved.first { $0.id == "pending" }?.status == .pending)
     }
 
-    @Test("Outbox flush retains new and replaced entries queued while the request is suspended", arguments: [false, true], [false, true])
-    func outboxPreservesEnqueuesDuringFlush(independentWriter: Bool, replaceSnapshot: Bool) async throws {
+    @Test("Outbox flush retains new and replaced entries queued while the request is suspended", arguments: [false, true], [nil, "replacement", "\u{e9}"])
+    func outboxPreservesEnqueuesDuringFlush(independentWriter: Bool, replacementBody: String?) async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let outbox = OfflineOutbox(fileURL: dir.appendingPathComponent("outbox.jsonl"))
         let writer = independentWriter ? OfflineOutbox(fileURL: outbox.fileURL) : outbox
         let now = Date(timeIntervalSince1970: 1_794_452_400)
-        let old = OutboxEntry(clientClipId: "queued-old", memoContent: "#rewind/pending\n\nold", commentContent: nil, createdAt: now)
-        let replacement = OutboxEntry(clientClipId: old.clientClipId, memoContent: "#rewind/pending\n\nreplacement", commentContent: nil, createdAt: now)
+        let replaceSnapshot = replacementBody != nil
+        let old = OutboxEntry(clientClipId: "queued-old", memoContent: "#rewind/pending\n\ne\u{301}", commentContent: nil, createdAt: now)
+        let replacement = OutboxEntry(clientClipId: old.clientClipId, memoContent: "#rewind/pending\n\n\(replacementBody ?? "")", commentContent: nil, createdAt: now)
         let added = OutboxEntry(clientClipId: "queued-new", memoContent: "#rewind/pending\n\nnew", commentContent: nil, createdAt: now)
         try outbox.enqueue(old)
 
