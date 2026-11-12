@@ -35,6 +35,14 @@ VPS 内部的 `rewind-enricher` 仅读取带 `#rewind/pending` 的新片段及�
 - **macOS 桌面端**，在 `~/Library/Application Support/CodingRewind/` 下存放最近热流镜像 `hot_cache.json`、断网待发队列 `outbox.jsonl`、当前回合快照 `active_turn.json` 及仅含服务地址的 `config.json`。
 - **浏览器扩展端**，在 `chrome.storage.local` 存放用户配置的 `Memos` 地址、访问令牌以及上限 50 条的断网待发队列 `outbox`，重放成功后即刻移出队列。
 
+### 4. 一键接聊的短期请求与宿主记录
+
+勾选卡片并点击开聊后，应用将原文、标题、脉络和出处组成提示词，交给 Antigravity 创建新会话并发送。接聊不经过剪贴板。
+
+`<dataDir>/handoff/` 使用 `0700` 目录与 `0600` 文件。请求正文只用于本次交接，处理完成或过期后清除。回执保存请求编号、状态和成功时的会话编号，不保存提示词。进程中断后，无法确认的请求不会自动重发。
+
+Antigravity 自己会在 `~/.gemini/antigravity/sidecar_data/<sidecarId>/events/` 记录 `agentapi` 调用，记录可能包含完整提示词。2026-11-12 的无敏感测试确认事件含测试提示词。此记录及已创建会话属于宿主的留存范围，不随 Coding Rewind 请求清理而删除。[官方 sidecar 运行数据说明](https://antigravity.google/docs/sidecars#runtime-data)描述了这些目录。
+
 ## 凭据保护机制
 
 - **桌面端钥匙串存储**，`CodingRewindApp` 与 `scripts/memos-mcp-bridge.sh` 统一将 `Memos` 访问令牌保存在 macOS Security Keychain 服务 `com.codingrewind.memos` 中；`config.json`、`~/.gemini/config/plugins/coding-rewind/mcp_config.json` 与 `~/.config/agent-mcp/servers.json` 均不写入明文令牌。

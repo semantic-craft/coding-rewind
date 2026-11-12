@@ -9,6 +9,7 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
+        .executable(name: "coding-rewind-sidecar", targets: ["ConversationSidecar"]),
         .library(
             name: "CodingRewindCore",
             targets: ["CodingRewindCore"]
@@ -24,6 +25,7 @@ let package = Package(
     ],
     dependencies: [.package(path: "Vendor/KeyboardShortcuts")],
     targets: [
+        .executableTarget(name: "ConversationSidecar", dependencies: ["CodingRewindCore"]),
         .target(
             name: "CodingRewindCore"
         ),
@@ -51,7 +53,8 @@ let package = Package(
             name: "CodingRewindCLITests",
             dependencies: [
                 "CodingRewindCore",
-                "AntigravityBridge"
+                "AntigravityBridge",
+                "ConversationSidecar"
             ]
         )
     ]

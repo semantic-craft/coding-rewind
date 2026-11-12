@@ -240,17 +240,30 @@ public struct QuickPeekHUDRootView: View {
                 }
             }
 
+            if coordinator.canEndUnarchivedConversation {
+                Button("结束接聊，保留未归档卡片") {
+                    coordinator.endUnarchivedConversation()
+                }
+                .font(.system(size: 11))
+            }
+            if coordinator.canEndUnconfirmedConversation {
+                Button("已核对 Antigravity，结束本次请求") {
+                    coordinator.endUnconfirmedConversation()
+                }
+                .font(.system(size: 11))
+            }
             Divider()
             HStack(spacing: 8) {
                 Text("已选 \(coordinator.checkedCardIDs.count) 张").font(.system(size: 11, weight: .medium))
                 Toggle("开聊后归档", isOn: $markSynthesizedOnLaunch).toggleStyle(.checkbox).font(.system(size: 11))
                 Spacer()
-                Button("在 Antigravity 开聊 ⌘↵") {
+                Button(coordinator.isLaunchingConversation ? "正在接聊…" : "在 Antigravity 开聊 ⌘↵") {
                     Task { await coordinator.launchCheckedInAntigravity(markSynthesized: markSynthesizedOnLaunch) }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
                 .keyboardShortcut(.return, modifiers: [.command])
+                .disabled(coordinator.isLaunchingConversation)
             }
         }
         .padding(.top, 24)

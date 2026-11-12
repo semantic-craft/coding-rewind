@@ -166,7 +166,7 @@ private actor GatedCapturer: SelectionCapturing {
 @Suite("CodingRewindCore Memos Wire, Outbox & Plugin Suite")
 struct CodingRewindCoreTests {
     private func makeIsolatedDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/test-data", isDirectory: true)
             .appendingPathComponent("coding-rewind-core-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
@@ -593,7 +593,7 @@ struct CodingRewindCoreTests {
         let paths = try StoragePaths.resolve(environment: [
             StoragePaths.dataDirEnvironmentKey: dataDir.path
         ])
-        #expect(paths.dataDirectoryURL == dataDir.standardizedFileURL)
+        #expect(paths.dataDirectoryURL.path == dataDir.standardizedFileURL.path)
 
         try paths.saveMemosURLString("https://memos.example.com/api/memos/")
         #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
@@ -686,7 +686,8 @@ struct CodingRewindCoreTests {
             dataDirectoryURL: dataDir,
             configDirectoryURL: configDir,
             sourceHookBinaryURL: fakeHookSrc,
-            sourceMCPBridgeURL: fakeBridgeSrc
+            sourceMCPBridgeURL: fakeBridgeSrc,
+            sourceSidecarBinaryURL: fakeHookSrc
         )
 
         let status = AntigravityIntegration.verify(dataDirectoryURL: dataDir, configDirectoryURL: configDir)
@@ -722,77 +723,6 @@ struct CodingRewindCoreTests {
             #expect(!cmd.contains(".build"))
             #expect(cmd.hasPrefix("'") && cmd.hasSuffix("'"))
         }
-    }
-
-    @Test("AntigravityLauncher invokes agentapi new-conversation directly without shell interpolation and falls back cleanly")
-    func agentAPILauncherDirectProcessAndFallback() throws {
-        let dir = try makeIsolatedDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        let argsDumpFile = dir.appendingPathComponent("argv.json")
-        let mockAgentAPI = dir.appendingPathComponent("agentapi")
-        let pythonMock = """
-        #!/usr/bin/env python3
-        import json, os, sys
-        with open(os.environ["MOCK_ARGV_OUT"], "w", encoding="utf-8") as fh:
-            json.dump(sys.argv[1:], fh, ensure_ascii=False)
-        """
-        try AtomicFile.writeUTF8(pythonMock + "\n", to: mockAgentAPI, permissions: 0o755)
-        _ = chmod(mockAgentAPI.path, 0o755)
-
-        let card = RewindCard(
-            id: "card-1",
-            rawContent: "#rewind/ready #source/antigravity",
-            status: .ready,
-            sourcePlatform: "antigravity",
-            title: "零 Shell 注入测试",
-            sessionTopic: "coding-rewind",
-            contextSummary: "确保提示词中的反引号与 $(cmd) 原样作为进程参数传递。",
-            sourceTitle: "coding-rewind",
-            sourceURL: "conversation://conv-safe-99",
-            verbatimText: "Dangerous literal: $(touch should_not_exist) `uname -a`",
-            createdAt: Date()
-        )
-
-        var clipboardCaptured: String?
-        var openedApp = false
-        let outcome = AntigravityLauncher.launchConversation(
-            cards: [card],
-            environment: [
-                AntigravityLauncher.agentAPIEnvironmentKey: mockAgentAPI.path,
-                "MOCK_ARGV_OUT": argsDumpFile.path,
-                "PATH": "/usr/bin:/bin"
-            ],
-            defaultAppBinaryPath: dir.appendingPathComponent("missing-agentapi").path,
-            copyToClipboard: { clipboardCaptured = $0 },
-            openAntigravityApp: { openedApp = true }
-        )
-
-        guard case .launchedViaAgentAPI(let binURL, let prompt) = outcome else {
-            Issue.record("Expected launchedViaAgentAPI, got \(outcome)")
-            return
-        }
-        #expect(binURL == mockAgentAPI.standardizedFileURL)
-        #expect(clipboardCaptured == nil)
-        #expect(openedApp == false)
-
-        let recordedArgv = try JSONDecoder().decode([String].self, from: Data(contentsOf: argsDumpFile))
-        #expect(recordedArgv.count == 2)
-        #expect(recordedArgv[0] == "new-conversation")
-        #expect(recordedArgv[1] == prompt)
-        #expect(prompt.contains("[出处](conversation://conv-safe-99)"))
-        #expect(prompt.contains("$(touch should_not_exist) `uname -a`"))
-
-        let fallbackOutcome = AntigravityLauncher.launchConversation(
-            cards: [card],
-            environment: ["PATH": dir.appendingPathComponent("empty-path").path],
-            defaultAppBinaryPath: dir.appendingPathComponent("nonexistent-agentapi").path,
-            copyToClipboard: { clipboardCaptured = $0 },
-            openAntigravityApp: { openedApp = true }
-        )
-        #expect(fallbackOutcome == .copiedToClipboardFallback(prompt: prompt))
-        #expect(clipboardCaptured == prompt)
-        #expect(openedApp == true)
     }
 
     @Test("MenuStatusSnapshot models connection host+port, outbox badge, recent card truncation, and focusAndCheckCard")
@@ -858,7 +788,7 @@ struct CodingRewindCoreTests {
         try paths.saveMemosURLString("http://localhost:5230")
         let fakeHook = dir.appendingPathComponent("coding-rewind-hook")
         try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeHook, permissions: 0o755)
-        coord.installOrRepairPlugin(sourceHookURL: fakeHook, sourceBridgeURL: nil)
+        coord.installOrRepairPlugin(sourceHookURL: fakeHook, sourceBridgeURL: nil, sourceSidecarURL: fakeHook)
 
         let now = Date()
         coord.checkedCardIDs.removeAll()
@@ -896,4 +826,115 @@ struct CodingRewindCoreTests {
         #expect(customPortSnap.recentCards[2].isChecked == true)
         #expect(customPortSnap.launchTitle == "在 Antigravity 开聊（已选 1 张）")
     }
+    @Test("Sidecar installation preserves host project assignment and refuses unknown config shapes")
+    func sidecarInstallationConfigBoundaries() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("helper")
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: source, permissions: 0o755)
+        let data = dir.appendingPathComponent("Data", isDirectory: true)
+        let config = dir.appendingPathComponent("Config", isDirectory: true)
+        let plugin = try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config, sourceHookBinaryURL: source, sourceSidecarBinaryURL: source)
+        let configURL = config.appendingPathComponent("config.json")
+        var root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        let sidecars = try #require(root["sidecars"] as? [String: Any])
+        #expect((sidecars["coding-rewind/launcher"] as? [String: Bool]) == ["enabled": true])
+        let sidecar = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent("sidecars/launcher/sidecar.json"))) as? [String: Any])
+        #expect(sidecar["command"] as? String == AntigravityIntegration.stableSidecarBinaryURL(in: data).path)
+        #expect(sidecar["args"] as? [String] == ["--data-dir", data.path])
+        #expect(sidecar["restart_policy"] as? String == "always")
+        root["sidecars"] = ["coding-rewind/launcher": ["enabled": false, "projectId": "host-project", "schemaVersion": 1], "other/worker": ["enabled": true]]
+        root["unrelated"] = "preserve me"
+        try AtomicFile.writeData(JSONSerialization.data(withJSONObject: root), to: configURL)
+        try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config)
+        let repaired = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
+        let repairedSidecars = try #require(repaired["sidecars"] as? [String: Any])
+        let launcher = try #require(repairedSidecars["coding-rewind/launcher"] as? [String: Any])
+        #expect(launcher["enabled"] as? Bool == true)
+        #expect(launcher["projectId"] as? String == "host-project")
+        #expect(launcher["schemaVersion"] as? Int == 1)
+        #expect(repairedSidecars["other/worker"] != nil)
+        #expect(repaired["unrelated"] as? String == "preserve me")
+        for invalid in ["[]", "{\"sidecars\":[]}", "{\"sidecars\":{\"coding-rewind/launcher\":[]}}"] {
+            try AtomicFile.writeUTF8(invalid, to: configURL)
+            #expect(throws: RewindError.self) { try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config) }
+            #expect(try String(contentsOf: configURL, encoding: .utf8) == invalid)
+        }
+    }
+
+    @Test("HUD resumes an uncertain request, never resends it, and requires explicit acknowledgment")
+    @MainActor
+    func uncertainConversationRecovery() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let store = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL)
+        let current = try store.submit(prompt: "private prompt", cardIDs: ["memo"], markSynthesized: false)
+        let capturer = StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
+        #expect(coordinator.checkedCardIDs == ["memo"])
+        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .failed(state: .unknown))
+        coordinator.endUnconfirmedConversation()
+        #expect(try store.current()?.requestId == current.requestId)
+        #expect(try store.pendingRequests().count == 1)
+        try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
+        try store.removeRequest(current.requestId)
+        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .failed(state: .unknown))
+        #expect(coordinator.canEndUnconfirmedConversation)
+        coordinator.endUnconfirmedConversation()
+        #expect(try store.current() == nil)
+        #expect(coordinator.checkedCardIDs.isEmpty)
+        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == nil)
+        #expect(try store.pendingRequests().isEmpty)
+    }
+
+    @Test("A confirmed conversation archives only successfully patched cards and retries archiving without another conversation")
+    @MainActor
+    func conversationArchiveFailureAndRetry() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (500, Data()) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        let card = RewindCard(id: "memo", rawContent: "#rewind/ready #source/macos\n\noriginal", status: .ready, sourcePlatform: "macos", sourceTitle: "Fixture", verbatimText: "original", createdAt: Date())
+        coordinator.cards = [card]
+        coordinator.checkedCardIDs = [card.id]
+        let current = try coordinator.handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: [card]), cardIDs: [card.id], markSynthesized: true)
+        let conversationID = UUID().uuidString
+        try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .succeeded, conversationId: conversationID))
+        try coordinator.handoff.removeRequest(current.requestId)
+        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .succeeded(conversationId: conversationID))
+        #expect(coordinator.isErrorBanner)
+        #expect(coordinator.checkedCardIDs == [card.id])
+        #expect(coordinator.cards == [card])
+        #expect(try coordinator.handoff.current()?.requestId == current.requestId)
+        #expect(try coordinator.handoff.pendingRequests().isEmpty)
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (200, Data()) }
+        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .succeeded(conversationId: conversationID))
+        #expect(coordinator.checkedCardIDs.isEmpty)
+        #expect(coordinator.cards.isEmpty)
+        #expect(try coordinator.handoff.current() == nil)
+        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == nil)
+        #expect(try coordinator.handoff.pendingRequests().isEmpty)
+        coordinator.cards = [card]
+        coordinator.checkedCardIDs = [card.id, "missing-old-card"]
+        let partial = try coordinator.handoff.submit(prompt: "another confirmed conversation", cardIDs: [card.id, "missing-old-card"], markSynthesized: true)
+        try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: partial.requestId, state: .succeeded, conversationId: conversationID))
+        try coordinator.handoff.removeRequest(partial.requestId)
+        _ = await coordinator.launchCheckedInAntigravity(waitSeconds: 0)
+        #expect(coordinator.isErrorBanner)
+        #expect(coordinator.canEndUnarchivedConversation)
+        #expect(try coordinator.handoff.current()?.archiveCardIDs == ["missing-old-card"])
+        #expect(coordinator.checkedCardIDs == ["missing-old-card"])
+        _ = await coordinator.launchCheckedInAntigravity(waitSeconds: 0)
+        #expect(try coordinator.handoff.current()?.archiveCardIDs == ["missing-old-card"])
+        #expect(coordinator.isErrorBanner)
+        coordinator.endUnarchivedConversation()
+        #expect(try coordinator.handoff.current() == nil)
+        #expect(coordinator.checkedCardIDs.isEmpty)
+        #expect(try coordinator.handoff.pendingRequests().isEmpty)
+    }
+
 }

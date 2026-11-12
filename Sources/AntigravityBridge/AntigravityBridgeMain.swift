@@ -11,12 +11,14 @@ struct AntigravityBridgeMain {
             do {
                 let paths = try StoragePaths.resolve(environment: environment)
                 let selfURL = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+                let siblingSidecar = selfURL.deletingLastPathComponent().appendingPathComponent("coding-rewind-sidecar")
                 let siblingBridge = selfURL.deletingLastPathComponent().appendingPathComponent("memos-mcp-bridge.sh")
                 let pluginDir = try AntigravityIntegration.installOrRepair(
                     dataDirectoryURL: paths.dataDirectoryURL,
                     configDirectoryURL: paths.antigravityConfigDirectoryURL,
                     sourceHookBinaryURL: selfURL,
-                    sourceMCPBridgeURL: FileManager.default.fileExists(atPath: siblingBridge.path) ? siblingBridge : nil
+                    sourceMCPBridgeURL: FileManager.default.fileExists(atPath: siblingBridge.path) ? siblingBridge : nil,
+                    sourceSidecarBinaryURL: siblingSidecar
                 )
                 let out = try JSONSerialization.data(
                     withJSONObject: ["installed": true, "pluginDir": pluginDir.path],

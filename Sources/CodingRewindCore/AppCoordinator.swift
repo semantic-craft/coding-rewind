@@ -108,6 +108,10 @@ public final class AppCoordinator {
     public let memosClient: MemosClient
     public let outbox: OfflineOutbox
     public let hotCache: HotCache
+    public let handoff: ConversationHandoffStore
+    public private(set) var isLaunchingConversation = false
+    public private(set) var canEndUnconfirmedConversation = false
+    public private(set) var canEndUnarchivedConversation = false
     public let activeTurns: ActiveTurnStore
     public var capturer: any SelectionCapturing
 
@@ -121,7 +125,6 @@ public final class AppCoordinator {
     public var isErrorBanner: Bool = false
     public var pluginStatusText: String = ""
 
-    public var onCopyToClipboard: (@MainActor (String) -> Void)?
     public var onOpenURL: (@MainActor (URL) -> Void)?
     public var onOpenAntigravityApp: (@MainActor () -> Void)?
 
@@ -136,10 +139,18 @@ public final class AppCoordinator {
         self.memosClient = memosClient
         self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
+        self.handoff = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL)
         self.activeTurns = try ActiveTurnStore(dataDirectoryURL: paths.dataDirectoryURL)
         self.capturer = capturer
         self.cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
         self.focusedCardID = self.cards.first?.id
+        if let current = try handoff.current() {
+            checkedCardIDs = Set(current.cardIDs)
+            let receipt = try handoff.receipt(for: current.requestId)
+            canEndUnconfirmedConversation = receipt?.state == .unknown
+            canEndUnarchivedConversation = receipt?.state == .succeeded && current.markSynthesized && !current.archiveCardIDs.isEmpty
+            bannerMessage = "上次接聊请求尚待确认，点击开聊查询结果，不会重复发送"
+        }
         refreshPluginStatus()
     }
 
@@ -356,42 +367,110 @@ public final class AppCoordinator {
     }
 
     @discardableResult
-    public func launchCheckedInAntigravity(markSynthesized: Bool = false) async -> AntigravityLauncher.LaunchOutcome? {
-        let visible = filteredCards
-        var selected = cards.filter { checkedCardIDs.contains($0.id) }
-        if selected.isEmpty, let first = visible.first {
-            selected = [first]
-            checkedCardIDs.insert(first.id)
-        }
-        guard !selected.isEmpty else {
-            setBanner("请先捕获或勾选至少一条卡片", isError: true)
+    public func launchCheckedInAntigravity(markSynthesized: Bool = false, waitSeconds: TimeInterval = 40) async -> AntigravityLauncher.LaunchOutcome? {
+        guard !isLaunchingConversation else { return nil }
+        isLaunchingConversation = true
+        canEndUnconfirmedConversation = false
+        canEndUnarchivedConversation = false
+        defer { isLaunchingConversation = false }
+        do {
+            let current: CurrentConversation
+            if let existing = try handoff.current() {
+                current = existing
+            } else {
+                let selected = cards.filter { checkedCardIDs.contains($0.id) }
+                guard !selected.isEmpty else {
+                    setBanner("请先捕获或勾选至少一条卡片", isError: true)
+                    return nil
+                }
+                guard case .installed = AntigravityIntegration.verify(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL) else {
+                    setBanner("请先安装或修复 Antigravity 插件，再点击开聊", isError: true)
+                    return nil
+                }
+                current = try handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesized)
+            }
+            onOpenAntigravityApp?()
+            setBanner("正在等待 Antigravity 创建新会话并发送上下文…", isError: false)
+            let deadline = Date().addingTimeInterval(max(0, waitSeconds))
+            repeat {
+                if let receipt = try handoff.receipt(for: current.requestId), receipt.state != .dispatching {
+                    switch receipt.state {
+                    case .succeeded:
+                        guard let conversationID = receipt.conversationId else { throw RewindError.ioError("接聊回执缺少会话编号") }
+                        if current.markSynthesized && !current.archiveCardIDs.isEmpty {
+                            canEndUnarchivedConversation = true
+                            let remainingIDs = Set(current.archiveCardIDs)
+                            let selected = cards.filter { remainingIDs.contains($0.id) }
+                            guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
+                                  let token = KeychainTokenStore.resolveToken(environment: environment) else {
+                                setBanner("新会话已发送，归档未完成：Memos 未连接。卡片仍保留，可再次点击重试归档", isError: true)
+                                return .succeeded(conversationId: conversationID)
+                            }
+                            var failed = selected.count != remainingIDs.count
+                            for card in selected {
+                                if card.isOfflinePending { failed = true; continue }
+                                do {
+                                    try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
+                                    try handoff.recordArchivedCard(card.id, requestId: current.requestId)
+                                    checkedCardIDs.remove(card.id)
+                                    cards.removeAll { $0.id == card.id }
+                                } catch { failed = true }
+                            }
+                            try hotCache.saveCards(cards)
+                            if failed {
+                                setBanner("新会话已发送，部分卡片归档失败或已不在热池，未归档卡片保留。再次点击仅重试归档", isError: true)
+                                return .succeeded(conversationId: conversationID)
+                            }
+                        }
+                        canEndUnarchivedConversation = false
+                        checkedCardIDs.subtract(current.cardIDs)
+                        try handoff.clearCurrent(requestId: current.requestId)
+                        setBanner("已在 Antigravity 新会话发送上下文（共 \(current.cardIDs.count) 张卡片）", isError: false)
+                        return .succeeded(conversationId: conversationID)
+                    case .rejected, .expired:
+                        try handoff.clearCurrent(requestId: current.requestId)
+                        setBanner(receipt.state == .expired ? "接聊请求已过期，未发送。卡片保留，请确认 Antigravity 已启动后重试" : "Antigravity 尚未提供接聊入口，未发送。请安装插件并重新启动 Antigravity 后重试", isError: true)
+                        return .failed(state: receipt.state)
+                    case .unknown:
+                        canEndUnconfirmedConversation = true
+                        setBanner("接聊结果无法确认，已停止自动重发。请到 Antigravity 检查新会话，卡片未归档", isError: true)
+                        return .failed(state: .unknown)
+                    case .dispatching: break
+                    }
+                }
+                if Date() >= deadline { break }
+                try await Task.sleep(for: .milliseconds(250))
+            } while !Task.isCancelled
+            setBanner("仍未收到接聊结果，卡片与请求已保留。再次点击仅查询，不会重复发送", isError: true)
+            return .failed(state: .unknown)
+        } catch {
+            setBanner(error.localizedDescription, isError: true)
             return nil
         }
+    }
 
-        let outcome = AntigravityLauncher.launchConversation(
-            cards: selected,
-            environment: environment,
-            copyToClipboard: { [weak self] text in self?.onCopyToClipboard?(text) },
-            openAntigravityApp: { [weak self] in self?.onOpenAntigravityApp?() }
-        )
+    public func endUnconfirmedConversation() {
+        guard !isLaunchingConversation else { return }
+        do {
+            guard let current = try handoff.current(),
+                  try handoff.receipt(for: current.requestId)?.state == .unknown else { return }
+            checkedCardIDs.subtract(current.cardIDs)
+            try handoff.clearCurrent(requestId: current.requestId)
+            canEndUnconfirmedConversation = false
+            setBanner("已结束本次未确认请求。重新勾选卡片后可发起新会话", isError: false)
+        } catch { setBanner(error.localizedDescription, isError: true) }
+    }
 
-        switch outcome {
-        case .launchedViaAgentAPI:
-            setBanner("已在 Antigravity 开启新会话（共 \(selected.count) 张卡片）", isError: false)
-        case .copiedToClipboardFallback:
-            setBanner("已复制上下文并打开 Antigravity，请新建会话后粘贴发送", isError: false)
-        }
-
-        if markSynthesized,
-           let baseURL = paths.resolveMemosBaseURL(environment: environment),
-           let token = KeychainTokenStore.resolveToken(environment: environment) {
-            for card in selected where !card.isOfflinePending {
-                try? await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
-                checkedCardIDs.remove(card.id)
-            }
-            await refresh()
-        }
-        return outcome
+    public func endUnarchivedConversation() {
+        guard !isLaunchingConversation else { return }
+        do {
+            guard let current = try handoff.current(), current.markSynthesized,
+                  try handoff.receipt(for: current.requestId)?.state == .succeeded else { return }
+            checkedCardIDs.subtract(current.cardIDs)
+            try handoff.clearCurrent(requestId: current.requestId)
+            canEndUnarchivedConversation = false
+            setBanner("已结束本次接聊，未归档卡片已保留。重新勾选后可再开聊", isError: false)
+        } catch { setBanner(error.localizedDescription, isError: true) }
     }
 
     public func markCardSynthesized(_ card: RewindCard) async {
@@ -419,13 +498,14 @@ public final class AppCoordinator {
         setBanner("已保存 Memos 连接配置", isError: false)
     }
 
-    public func installOrRepairPlugin(sourceHookURL: URL?, sourceBridgeURL: URL?) {
+    public func installOrRepairPlugin(sourceHookURL: URL?, sourceBridgeURL: URL?, sourceSidecarURL: URL? = nil) {
         do {
             try AntigravityIntegration.installOrRepair(
                 dataDirectoryURL: paths.dataDirectoryURL,
                 configDirectoryURL: paths.antigravityConfigDirectoryURL,
                 sourceHookBinaryURL: sourceHookURL,
-                sourceMCPBridgeURL: sourceBridgeURL
+                sourceMCPBridgeURL: sourceBridgeURL,
+                sourceSidecarBinaryURL: sourceSidecarURL
             )
             refreshPluginStatus()
             setBanner(pluginStatusText, isError: false)
