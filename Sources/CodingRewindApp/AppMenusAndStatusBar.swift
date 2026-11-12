@@ -268,54 +268,32 @@ public final class StatusItemIcon {
     }
 
     private static func drawVectorGlyph(in ctx: CGContext, strokeColor: CGColor) {
+        let card = CGMutablePath()
+        card.move(to: CGPoint(x: 4.0, y: 2.5))
+        card.addQuadCurve(to: CGPoint(x: 2.5, y: 4.0), control: CGPoint(x: 2.5, y: 2.5))
+        card.addLine(to: CGPoint(x: 2.5, y: 13.0))
+        card.addQuadCurve(to: CGPoint(x: 4.0, y: 14.5), control: CGPoint(x: 2.5, y: 14.5))
+        card.addLine(to: CGPoint(x: 12.1, y: 14.5))
+        card.addLine(to: CGPoint(x: 15.5, y: 11.1))
+        card.addLine(to: CGPoint(x: 15.5, y: 4.0))
+        card.addQuadCurve(to: CGPoint(x: 14.0, y: 2.5), control: CGPoint(x: 15.5, y: 2.5))
+        card.closeSubpath()
         ctx.setStrokeColor(strokeColor)
-        ctx.setLineWidth(1.75)
+        ctx.setLineWidth(1.35)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
-
-        let center = CGPoint(x: 9.2, y: 8.8)
-        let radius: CGFloat = 6.1
-        let startAngle = -140.0 * .pi / 180.0
-        let arcEndAngle = 122.0 * .pi / 180.0
-        let tipAngle = 132.0 * .pi / 180.0
-
-        let arcPath = CGMutablePath()
-        let steps = 48
-        for i in 0...steps {
-            let t = CGFloat(i) / CGFloat(steps)
-            let angle = startAngle + t * (arcEndAngle - startAngle)
-            let pt = CGPoint(x: center.x + cos(angle) * radius, y: center.y + sin(angle) * radius)
-            if i == 0 {
-                arcPath.move(to: pt)
-            } else {
-                arcPath.addLine(to: pt)
-            }
-        }
-        let tip = CGPoint(x: center.x + cos(tipAngle) * radius, y: center.y + sin(tipAngle) * radius)
-        arcPath.addLine(to: tip)
-        ctx.addPath(arcPath)
+        ctx.addPath(card)
         ctx.strokePath()
 
-        let tangent = tipAngle + .pi / 2.0
-        let wingLength: CGFloat = 3.25
-        let wingA = CGPoint(
-            x: tip.x + cos(tangent + 2.32) * wingLength,
-            y: tip.y + sin(tangent + 2.32) * wingLength
-        )
-        let wingB = CGPoint(
-            x: tip.x + cos(tangent - 2.32) * wingLength,
-            y: tip.y + sin(tangent - 2.32) * wingLength
-        )
-        ctx.move(to: wingA)
-        ctx.addLine(to: tip)
-        ctx.addLine(to: wingB)
+        ctx.move(to: CGPoint(x: 12.1, y: 14.5))
+        ctx.addLine(to: CGPoint(x: 12.1, y: 11.1))
+        ctx.addLine(to: CGPoint(x: 15.5, y: 11.1))
         ctx.strokePath()
 
-        ctx.setLineWidth(1.65)
-        ctx.move(to: CGPoint(x: 6.7, y: 10.1))
-        ctx.addLine(to: CGPoint(x: 11.8, y: 10.1))
-        ctx.move(to: CGPoint(x: 6.7, y: 7.4))
-        ctx.addLine(to: CGPoint(x: 10.3, y: 7.4))
+        ctx.move(to: CGPoint(x: 5.1, y: 8.8))
+        ctx.addLine(to: CGPoint(x: 12.2, y: 8.8))
+        ctx.move(to: CGPoint(x: 5.1, y: 6.0))
+        ctx.addLine(to: CGPoint(x: 9.4, y: 6.0))
         ctx.strokePath()
     }
 }
