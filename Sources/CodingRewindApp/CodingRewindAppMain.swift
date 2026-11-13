@@ -11,12 +11,12 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var statusItemController: StatusItemController?
     public var settingsWindowController: SettingsWindowController?
     public var shortcuts: AppShortcuts?
+    public var appearance: AppAppearancePreferences?
     public private(set) var lastExternalApplication: NSRunningApplication?
 
     private var workspaceObserver: NSObjectProtocol?
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApplication.shared.setActivationPolicy(.accessory)
         recordFrontmostExternalApp(NSWorkspace.shared.frontmostApplication)
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -33,6 +33,11 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             let paths = try StoragePaths.resolve()
+            let appearance = AppAppearancePreferences(defaults: AppShortcuts.preferences(
+                environment: ProcessInfo.processInfo.environment, dataDirectory: paths.dataDirectoryURL
+            ))
+            self.appearance = appearance
+            appearance.apply()
             let capturer = MacOSAccessibilitySelectionCapturer { [weak self] in
                 self?.lastExternalApplication
             }
@@ -71,6 +76,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
             let settings = SettingsWindowController(
                 coordinator: coord,
+                appearance: appearance,
                 shortcuts: shortcuts,
                 onInstallPlugin: { [weak self] in self?.perform(.installOrRepairPlugin) },
                 onRequestAccessibility: { [weak self] in self?.perform(.requestAccessibility) }

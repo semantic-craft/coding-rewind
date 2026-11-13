@@ -4,6 +4,8 @@
 
 | 入口 | 内容与触发时机 |
 | --- | --- |
+| [docs/code-quality.md](docs/code-quality.md) | 修复、实现与后续验收的代码标准和证据要求 |
+| [progress/index.html](progress/index.html) | 当前实现、验证、合并及安装进度，数据原件为 progress/progress.json |
 | [README.md](README.md) | 项目定位、组件分工与快速开始 |
 | [docs/architecture.md](docs/architecture.md) | 端到端数据流、Memos REST 线级契约、离线缓冲与宿主接线 |
 | [docs/requirements.md](docs/requirements.md) | 用户一手原话、已拍板决定、MVP 与非目标边界 |

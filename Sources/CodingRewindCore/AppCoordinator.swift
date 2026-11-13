@@ -23,7 +23,7 @@ public enum StatusFilter: String, CaseIterable, Equatable, Sendable {
 
 public struct MenuStatusSnapshot: Equatable, Sendable {
     public enum ConnectionState: Equatable, Sendable {
-        case connected(hostSummary: String, baseURL: URL)
+        case configured(hostSummary: String, baseURL: URL)
         case unconfigured
     }
 
@@ -82,8 +82,8 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     public var headerSubtitle: String {
         let memosPart: String
         switch connection {
-        case .connected(let hostSummary, _):
-            memosPart = "Memos 已连接 \(hostSummary)"
+        case .configured(let hostSummary, _):
+            memosPart = "Memos 已配置 \(hostSummary)"
         case .unconfigured:
             memosPart = "Memos 未配置（离线队列可用）"
         }
@@ -209,7 +209,7 @@ public final class AppCoordinator {
             } else {
                 hostSummary = host
             }
-            connection = .connected(hostSummary: hostSummary, baseURL: baseURL)
+            connection = .configured(hostSummary: hostSummary, baseURL: baseURL)
         } else {
             connection = .unconfigured
         }
@@ -490,9 +490,16 @@ public final class AppCoordinator {
         }
     }
 
+    public var connectionSettings: ConnectionSettingsState {
+        ConnectionSettingsState(paths: paths, environment: environment)
+    }
+
     public func saveCredentials(memosURL: String, token: String) throws {
-        try paths.saveMemosURLString(memosURL)
-        if !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        let settings = connectionSettings
+        if !settings.isURLManaged {
+            try paths.saveMemosURLString(memosURL)
+        }
+        if !settings.isTokenManaged && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try KeychainTokenStore.saveToken(token, environment: environment)
         }
         setBanner("已保存 Memos 连接配置", isError: false)

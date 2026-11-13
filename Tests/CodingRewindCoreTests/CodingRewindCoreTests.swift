@@ -165,6 +165,41 @@ private actor GatedCapturer: SelectionCapturing {
 
 @Suite("CodingRewindCore Memos Wire, Outbox & Plugin Suite")
 struct CodingRewindCoreTests {
+    @Test("Environment-managed connection fields never overwrite local settings")
+    @MainActor
+    func managedConnectionSettingsDoNotWrite() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        try paths.saveMemosURLString("https://saved.example.com")
+        let before = try Data(contentsOf: paths.configFileURL)
+        let environment = [StoragePaths.memosURLEnvironmentKey: "https://managed.example.com", StoragePaths.memosTokenEnvironmentKey: "fixture", StoragePaths.qaEnvironmentKey: "1"]
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        #expect(coordinator.connectionSettings.isURLManaged)
+        #expect(coordinator.connectionSettings.isTokenManaged)
+        #expect(coordinator.connectionSettings.memosURL == "https://managed.example.com")
+        try coordinator.saveCredentials(memosURL: "https://ignored.example.com", token: "")
+        #expect(try Data(contentsOf: paths.configFileURL) == before)
+    }
+
+    @Test("Editable connection saves and invalid input preserves the prior address")
+    @MainActor
+    func editableConnectionSettingsPersist() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let environment = [StoragePaths.qaEnvironmentKey: "1"]
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        #expect(!coordinator.connectionSettings.isURLManaged)
+        #expect(!coordinator.connectionSettings.isTokenManaged)
+        try coordinator.saveCredentials(memosURL: "https://saved.example.com", token: "")
+        let reopened = try AppCoordinator(paths: paths, environment: environment, capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        #expect(reopened.connectionSettings.memosURL == "https://saved.example.com")
+        #expect(throws: (any Error).self) { try reopened.saveCredentials(memosURL: "invalid", token: "") }
+        #expect(reopened.connectionSettings.memosURL == "https://saved.example.com")
+        #expect(reopened.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: false).headerSubtitle.contains("已配置"))
+    }
+
     private func makeIsolatedDir() throws -> URL {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/test-data", isDirectory: true)
             .appendingPathComponent("coding-rewind-core-\(UUID().uuidString)", isDirectory: true)
@@ -779,7 +814,7 @@ struct CodingRewindCoreTests {
         try paths.saveMemosURLString("https://memos.example.com:443/api/memos/")
         let defaultPortSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
         #expect(
-            defaultPortSnap.connection == .connected(
+            defaultPortSnap.connection == .configured(
                 hostSummary: "memos.example.com",
                 baseURL: try #require(URL(string: "https://memos.example.com:443"))
             )
@@ -813,13 +848,13 @@ struct CodingRewindCoreTests {
 
         let customPortSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
         #expect(
-            customPortSnap.connection == .connected(
+            customPortSnap.connection == .configured(
                 hostSummary: "localhost:5230",
                 baseURL: try #require(URL(string: "http://localhost:5230"))
             )
         )
         #expect(customPortSnap.isPluginReady == true)
-        #expect(customPortSnap.headerSubtitle == "Memos 已连接 localhost:5230 · 插件已就绪")
+        #expect(customPortSnap.headerSubtitle == "Memos 已配置 localhost:5230 · 插件已就绪")
         #expect(customPortSnap.recentCards.count == 5)
         #expect(customPortSnap.recentCards[0].titlePreview == "Multi line Card One")
         #expect(customPortSnap.recentCards[2].id == "c-3")
