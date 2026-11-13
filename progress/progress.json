@@ -2,7 +2,7 @@
   "facts": {
     "default_branch": "main",
     "issues": [],
-    "main": "98c29a5b288cc39ad3f86a7dd53d5b84a7730068",
+    "main": "bbce860947ae31b767231f6c5ae74341408eb113",
     "open_pulls": [],
     "pulls": [
       {
@@ -68,6 +68,14 @@
         "merged": true,
         "number": 8,
         "state": "closed"
+      },
+      {
+        "base": "ee0512e8a7029a09fd903ad9f63afeb1def44745",
+        "head": "4c2c29a7888a746c5b4e969ada9417a15221d390",
+        "merge_commit": "bbce860947ae31b767231f6c5ae74341408eb113",
+        "merged": true,
+        "number": 9,
+        "state": "closed"
       }
     ],
     "releases": []
@@ -77,7 +85,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T03:28:40.258726Z",
+  "observed_at": "2026-11-13T03:53:42.161669Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -339,65 +347,65 @@
     },
     {
       "id": "architecture-quality",
-      "title": "架构与代码标准核验",
       "items": [
         {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "逐条标准与核验结论",
+              "ref": "docs/code-quality.md"
+            }
+          ],
           "id": "architecture-fixes",
-          "title": "七处架构缺陷修复",
+          "next": "后续变更继续执行相同标准。",
           "status": "done",
           "summary": "统一菜单归档意图，阻止过期刷新覆盖新卡，显式传递 Hook 目录；修复代码空行、存储失败误报和桌面/云端分页遗漏。未增加框架或业务数据库。",
+          "title": "七处架构缺陷修复"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/code-quality.md",
-              "note": "逐条标准与核验结论"
+              "note": "明确实测边界",
+              "ref": "docs/code-quality.md"
             }
           ],
-          "next": "后续变更继续执行相同标准。"
-        },
-        {
           "id": "architecture-verification",
-          "title": "自动回归与实机对照",
+          "next": "回归已进入统一门禁；修改对应路径时重跑。",
           "status": "done",
           "summary": "失败基线后，Swift 48、扩展 24、增强器 10 项通过，全仓门禁通过。隔离原生菜单请求正确保存归档意图；Chrome 真实 DOM 对照保留代码空行。",
-          "evidence": [
-            {
-              "kind": "file",
-              "ref": "docs/code-quality.md",
-              "note": "明确实测边界"
-            }
-          ],
-          "next": "独立复核完成后记录交付状态。"
+          "title": "自动回归与实机对照"
         },
         {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "独立验收评论及合并结果",
+              "ref": 9
+            }
+          ],
           "id": "architecture-delivery",
-          "title": "独立复核与合并",
-          "status": "in_progress",
-          "summary": "代码和实机验证已完成，独立工作区正在复核。",
+          "next": "运行环境升级仍单列，不能用合并替代部署验收。",
+          "status": "done",
+          "summary": "PR #9 已合并至 main。非作者在独立工作区复核精确 head，全仓检查再次通过，结论 PASS+NOTES。实机证据由主代理执行，独立审查未重复操作。",
+          "title": "独立复核与合并"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/architecture.md",
-              "note": "更新后的责任边界与失败处理"
+              "note": "实现、安装和部署分别验收",
+              "ref": "docs/code-quality.md"
             }
           ],
-          "next": "复核通过后合并并刷新事实快照。"
-        },
-        {
           "id": "architecture-runtime",
-          "title": "本轮修复的运行环境升级",
+          "next": "升级日常包、重新加载扩展及部署增强器时分别重验。",
           "status": "unverified",
           "summary": "本轮使用隔离包与真实 Chrome DOM 验证。日常应用、已加载扩展及云端增强器尚未更新到本轮源码，不把源码通过记作部署通过。",
-          "evidence": [
-            {
-              "kind": "file",
-              "ref": "docs/code-quality.md",
-              "note": "实现、安装和部署分别验收"
-            }
-          ],
-          "next": "升级日常包、重新加载扩展及部署增强器时分别重验。"
+          "title": "本轮修复的运行环境升级"
         }
-      ]
+      ],
+      "title": "架构与代码标准核验"
     }
   ],
   "title": "Coding Rewind 开发进度",
@@ -411,7 +419,8 @@
       5,
       6,
       7,
-      8
+      8,
+      9
     ]
   }
 }

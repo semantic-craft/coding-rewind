@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T03:28:40.258726Z</p>
-<p>Main: <code>main: 98c29a5b288cc39ad3f86a7dd53d5b84a7730068</code></p>
+<p>Observed: 2026-11-13T03:53:42.161669Z</p>
+<p>Main: <code>main: bbce860947ae31b767231f6c5ae74341408eb113</code></p>
 <section id="implemented"><h2>已经实现与合并</h2>
 <article id="m0-m1"><h3>M0/M1 · 需求、单一 Memos 架构与统一门禁</h3><span class="badge">done</span><p>需求、来源、原文边界、离线队列和统一检查入口已纳入主分支。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 架构与线级契约</a></li>
@@ -66,10 +66,10 @@
 </ul><p>Next: 后续变更继续执行相同标准。</p></article>
 <article id="architecture-verification"><h3>自动回归与实机对照</h3><span class="badge">done</span><p>失败基线后，Swift 48、扩展 24、增强器 10 项通过，全仓门禁通过。隔离原生菜单请求正确保存归档意图；Chrome 真实 DOM 对照保留代码空行。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 明确实测边界</a></li>
-</ul><p>Next: 独立复核完成后记录交付状态。</p></article>
-<article id="architecture-delivery"><h3>独立复核与合并</h3><span class="badge">in_progress</span><p>代码和实机验证已完成，独立工作区正在复核。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 更新后的责任边界与失败处理</a></li>
-</ul><p>Next: 复核通过后合并并刷新事实快照。</p></article>
+</ul><p>Next: 回归已进入统一门禁；修改对应路径时重跑。</p></article>
+<article id="architecture-delivery"><h3>独立复核与合并</h3><span class="badge">done</span><p>PR #9 已合并至 main。非作者在独立工作区复核精确 head，全仓检查再次通过，结论 PASS+NOTES。实机证据由主代理执行，独立审查未重复操作。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/9">pull 9: 独立验收评论及合并结果</a></li>
+</ul><p>Next: 运行环境升级仍单列，不能用合并替代部署验收。</p></article>
 <article id="architecture-runtime"><h3>本轮修复的运行环境升级</h3><span class="badge">unverified</span><p>本轮使用隔离包与真实 Chrome DOM 验证。日常应用、已加载扩展及云端增强器尚未更新到本轮源码，不把源码通过记作部署通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 实现、安装和部署分别验收</a></li>
 </ul><p>Next: 升级日常包、重新加载扩展及部署增强器时分别重验。</p></article>
