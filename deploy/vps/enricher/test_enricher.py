@@ -298,8 +298,9 @@ class EnricherUnitTests(unittest.TestCase):
             ]
             self.assertEqual(svc.reconcile_once(), 1)
             self.assertEqual(len(state.ai_calls), 1)
-            sent_prompt = state.ai_calls[0]["messages"][1]["content"]
-            self.assertTrue(sent_prompt.endswith(f"\n\nCaptured Chat Context:\n{context}\n\nSelected Excerpt:\n{excerpt}"))
+            sent_prompt = json.loads(state.ai_calls[0]["messages"][1]["content"])
+            self.assertEqual(sent_prompt["selected_excerpt"], excerpt)
+            self.assertEqual(sent_prompt["captured_chat_context"], context)
             tags, metadata, stored_excerpt = state.memos["rw-ctx-1"]["content"].split("\n\n", 2)
             self.assertEqual(tags, "#rewind/ready #source/chatgpt")
             self.assertIn(f"> **Context:** {summary}", metadata.splitlines())
@@ -318,6 +319,9 @@ class EnricherUnitTests(unittest.TestCase):
             now_box[0] = t0 + 16.0
             self.assertEqual(svc.reconcile_once(), 1)
             self.assertEqual(len(state.ai_calls), 2)
+            sent_prompt = json.loads(state.ai_calls[1]["messages"][1]["content"])
+            self.assertEqual(sent_prompt["selected_excerpt"], "SELECT 1;")
+            self.assertIsNone(sent_prompt["captured_chat_context"])
             self.assertTrue(state.memos["rw-ctx-timeout"]["content"].endswith("\n\nSELECT 1;"))
         finally:
             srv.shutdown()
