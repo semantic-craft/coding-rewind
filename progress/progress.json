@@ -3,7 +3,12 @@
     "default_branch": "main",
     "issues": [],
     "main": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
-    "open_pulls": [],
+    "open_pulls": [
+      {
+        "head": "26b57bcfafcce6600bf0decd0c6d6e9e3b142a1c",
+        "number": 12
+      }
+    ],
     "pulls": [
       {
         "base": "1d36ca0205616cb6fc4ed1a9b379f0d297137e37",
@@ -92,6 +97,14 @@
         "merged": true,
         "number": 11,
         "state": "closed"
+      },
+      {
+        "base": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
+        "head": "26b57bcfafcce6600bf0decd0c6d6e9e3b142a1c",
+        "merge_commit": "e3504c5d54b27f0c76551b1e8dde18c78c1923ba",
+        "merged": false,
+        "number": 12,
+        "state": "open"
       }
     ],
     "releases": []
@@ -101,7 +114,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T05:52:30.096882Z",
+  "observed_at": "2026-11-13T05:54:24.130871Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -171,6 +184,20 @@
           "status": "blocked",
           "summary": "用户确认 Chrome 和 Antigravity 仍用于另一项验收，明确先做代码与云端。本轮未操作、重启或升级两应用。",
           "title": "新版本实际应用验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "源码、回归和收尾验收记录",
+              "ref": 12
+            }
+          ],
+          "id": "closeout-delivery",
+          "next": "应用让出后完成实机路径，再合并并升级日常客户端。",
+          "status": "in_progress",
+          "summary": "PR #12 已提交并推送，独立源码复核通过，全仓检查和签名包构建通过。云端增强器已部署；桌面和扩展未安装本轮改动。",
+          "title": "本轮源码交付"
         }
       ],
       "title": "当前收尾与待实机验收"
@@ -530,7 +557,8 @@
       8,
       9,
       10,
-      11
+      11,
+      12
     ]
   }
 }
