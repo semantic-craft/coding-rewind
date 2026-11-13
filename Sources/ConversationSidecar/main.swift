@@ -23,7 +23,7 @@ do {
     var nextRecovery = Date().addingTimeInterval(3600)
     while true {
         guard executableIdentity(at: executable) == identity else { exit(0) }
-        try worker.processPending { SidecarAgentAPI.invoke(prompt: $0, environment: environment) }
+        try worker.processPending { SidecarAgentAPI.invoke(prompt: $0.prompt, environment: environment) }
         if Date() >= nextRecovery {
             try store.recover()
             nextRecovery = Date().addingTimeInterval(3600)

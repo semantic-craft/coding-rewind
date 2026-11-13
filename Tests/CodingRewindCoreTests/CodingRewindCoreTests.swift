@@ -1241,25 +1241,112 @@ struct CodingRewindCoreTests {
         let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
         #expect(coordinator.checkedCardIDs == ["memo"])
         coordinator.markSynthesizedOnLaunch = true
-        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .failed(state: .unknown))
+        #expect(await coordinator.launchChecked(in: .antigravity, waitSeconds: 0) == .failed(state: .unknown))
         coordinator.endUnconfirmedConversation()
         #expect(try store.current()?.markSynthesized == false)
         #expect(try store.current()?.requestId == current.requestId)
         #expect(try store.pendingRequests().count == 1)
         try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
         try store.removeRequest(current.requestId)
-        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .failed(state: .unknown))
+        #expect(await coordinator.launchChecked(in: .antigravity, waitSeconds: 0) == .failed(state: .unknown))
         #expect(coordinator.canEndUnconfirmedConversation)
         coordinator.endUnconfirmedConversation()
         #expect(try store.current() == nil)
         #expect(coordinator.checkedCardIDs.isEmpty)
-        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == nil)
+        #expect(await coordinator.launchChecked(in: .antigravity, waitSeconds: 0) == nil)
         #expect(try store.pendingRequests().isEmpty)
     }
 
-    @Test("A confirmed conversation archives only successfully patched cards and retries archiving without another conversation")
+    @Test("Changing the selected host cannot replace an existing request or its archive intent", arguments: ConversationHost.allCases)
     @MainActor
-    func conversationArchiveFailureAndRetry() async throws {
+    func persistedConversationWins(host: ConversationHost) async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let store = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: host)
+        let current = try store.submit(prompt: "original prompt", cardIDs: ["original-card"], markSynthesized: true)
+        try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
+        try store.removeRequest(current.requestId)
+        let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")), codexDelivery: { _ in
+            Issue.record("An unknown request must never be dispatched again")
+            return (.unknown, nil)
+        })
+        let other: ConversationHost = host == .codex ? .antigravity : .codex
+        coordinator.conversationHost = other
+        coordinator.markSynthesizedOnLaunch = false
+        coordinator.checkedCardIDs = ["changed-card"]
+        #expect(await coordinator.launchChecked(in: other, waitSeconds: 0) == .failed(state: .unknown))
+        #expect(coordinator.effectiveConversationHost == host)
+        #expect(try store.current() == current)
+        let otherStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: other)
+        #expect(try otherStore.current() == nil)
+        #expect(try store.pendingRequests().isEmpty)
+        let restored = try AppCoordinator(paths: paths, environment: [:], capturer: coordinator.capturer)
+        #expect(restored.conversationHost == other)
+        #expect(restored.effectiveConversationHost == host)
+        #expect(restored.canEndUnconfirmedConversation)
+    }
+
+    @Test("A failed Codex navigation retries the confirmed thread without sending again")
+    @MainActor
+    func confirmedCodexNavigationRetry() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let store = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
+        let current = try store.submit(prompt: "already sent", cardIDs: ["memo"], markSynthesized: false)
+        let threadID = UUID().uuidString
+        let reference = ConversationReference(host: .codex, id: threadID)
+        try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .succeeded, conversationId: threadID))
+        try store.removeRequest(current.requestId)
+        var opened: [ConversationReference] = []
+        var coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")), codexDelivery: { _ in
+            Issue.record("Opening a confirmed thread must not send another message")
+            return (.unknown, nil)
+        })
+        coordinator.onOpenConversation = { opened.append($0); return false }
+        #expect(await coordinator.launchChecked(waitSeconds: 0) == .succeeded(reference))
+        #expect(coordinator.isErrorBanner)
+        #expect(try store.current()?.requestId == current.requestId)
+        coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: coordinator.capturer)
+        coordinator.onOpenConversation = { opened.append($0); return true }
+        coordinator.reopenConfirmedConversation()
+        #expect(!coordinator.isErrorBanner)
+        #expect(coordinator.activeConversationHost == nil)
+        #expect(opened == [reference, reference])
+        #expect(try store.current() == nil)
+    }
+
+    @Test("Codex delivery receives the complete shared prompt and unknown results retain every card")
+    @MainActor
+    func codexSubmissionAndUnknown() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let card = try #require(MemosWireFormat.parseMemo(id: "memo", rawContent: "#rewind/ready #source/chatgpt\n\n> Title: 测试\n> Context: 上下文\n> Source: [出处](https://chatgpt.com/c/example)\n\n汉字 e\u{301}\n```swift\nlet x = 1\n\nprint(x)\n```", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
+        let deliveries = CodexDeliveryRecorder()
+        let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")), codexDelivery: { prompt in
+            deliveries.record(prompt.prompt)
+            return (.unknown, nil)
+        })
+        coordinator.conversationHost = .codex
+        coordinator.checkedCardIDs = [card.id]
+        coordinator.markSynthesizedOnLaunch = true
+        #expect(await coordinator.launchChecked(waitSeconds: 0) == .failed(state: .unknown))
+        coordinator.conversationHost = .antigravity
+        #expect(await coordinator.launchChecked(waitSeconds: 0) == .failed(state: .unknown))
+        #expect(deliveries.prompts == [ConversationPrompt.buildPrompt(for: [card])])
+        #expect(coordinator.cards == [card])
+        #expect(coordinator.checkedCardIDs == [card.id])
+        #expect(try coordinator.codexHandoff.current()?.archiveCardIDs == [card.id])
+        #expect(try coordinator.handoff.current() == nil)
+        #expect(coordinator.confirmedConversation == nil)
+    }
+
+    @Test("A confirmed conversation archives only successfully patched cards and retries archiving without another conversation", arguments: ConversationHost.allCases)
+    @MainActor
+    func conversationArchiveFailureAndRetry(host: ConversationHost) async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let suiteID = UUID().uuidString.lowercased()
@@ -1269,42 +1356,52 @@ struct CodingRewindCoreTests {
         let card = try #require(MemosWireFormat.parseMemo(id: "memo", rawContent: "#rewind/ready #source/macos\n\noriginal", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))))
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
         var coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        let store = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: host)
+        coordinator.onOpenConversation = { _ in true }
         coordinator.checkedCardIDs = [card.id]
-        let current = try coordinator.handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: [card]), cardIDs: [card.id], markSynthesized: true)
+        let current = try store.submit(prompt: ConversationPrompt.buildPrompt(for: [card]), cardIDs: [card.id], markSynthesized: true)
         let conversationID = UUID().uuidString
-        try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .succeeded, conversationId: conversationID))
-        try coordinator.handoff.removeRequest(current.requestId)
-        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .succeeded(conversationId: conversationID))
+        try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .succeeded, conversationId: conversationID))
+        try store.removeRequest(current.requestId)
+        #expect(await coordinator.launchChecked(in: host, waitSeconds: 0) == .succeeded(ConversationReference(host: host, id: conversationID)))
         #expect(coordinator.isErrorBanner)
         #expect(coordinator.checkedCardIDs == [card.id])
         #expect(coordinator.cards == [card])
-        #expect(try coordinator.handoff.current()?.requestId == current.requestId)
-        #expect(try coordinator.handoff.pendingRequests().isEmpty)
+        #expect(try store.current()?.requestId == current.requestId)
+        #expect(try store.pendingRequests().isEmpty)
         MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (200, Data()) }
-        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .succeeded(conversationId: conversationID))
+        #expect(await coordinator.launchChecked(in: host, waitSeconds: 0) == .succeeded(ConversationReference(host: host, id: conversationID)))
         #expect(coordinator.checkedCardIDs.isEmpty)
         #expect(coordinator.cards.isEmpty)
-        #expect(try coordinator.handoff.current() == nil)
-        #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == nil)
-        #expect(try coordinator.handoff.pendingRequests().isEmpty)
+        #expect(try store.current() == nil)
+        #expect(await coordinator.launchChecked(in: host, waitSeconds: 0) == nil)
+        #expect(try store.pendingRequests().isEmpty)
         try coordinator.hotCache.saveCards([card])
         coordinator = try AppCoordinator(paths: paths, environment: coordinator.environment, memosClient: coordinator.memosClient, capturer: coordinator.capturer)
+        coordinator.onOpenConversation = { _ in true }
         coordinator.checkedCardIDs = [card.id, "missing-old-card"]
-        let partial = try coordinator.handoff.submit(prompt: "another confirmed conversation", cardIDs: [card.id, "missing-old-card"], markSynthesized: true)
-        try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: partial.requestId, state: .succeeded, conversationId: conversationID))
-        try coordinator.handoff.removeRequest(partial.requestId)
-        _ = await coordinator.launchCheckedInAntigravity(waitSeconds: 0)
+        let partial = try store.submit(prompt: "another confirmed conversation", cardIDs: [card.id, "missing-old-card"], markSynthesized: true)
+        try store.saveReceipt(ConversationReceipt(requestId: partial.requestId, state: .succeeded, conversationId: conversationID))
+        try store.removeRequest(partial.requestId)
+        _ = await coordinator.launchChecked(in: host, waitSeconds: 0)
         #expect(coordinator.isErrorBanner)
         #expect(coordinator.canEndUnarchivedConversation)
-        #expect(try coordinator.handoff.current()?.archiveCardIDs == ["missing-old-card"])
+        #expect(try store.current()?.archiveCardIDs == ["missing-old-card"])
         #expect(coordinator.checkedCardIDs == ["missing-old-card"])
-        _ = await coordinator.launchCheckedInAntigravity(waitSeconds: 0)
-        #expect(try coordinator.handoff.current()?.archiveCardIDs == ["missing-old-card"])
+        _ = await coordinator.launchChecked(in: host, waitSeconds: 0)
+        #expect(try store.current()?.archiveCardIDs == ["missing-old-card"])
         #expect(coordinator.isErrorBanner)
         coordinator.endUnarchivedConversation()
-        #expect(try coordinator.handoff.current() == nil)
+        #expect(try store.current() == nil)
         #expect(coordinator.checkedCardIDs.isEmpty)
-        #expect(try coordinator.handoff.pendingRequests().isEmpty)
+        #expect(try store.pendingRequests().isEmpty)
     }
 
+}
+
+private final class CodexDeliveryRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+    var prompts: [String] { lock.withLock { values } }
+    func record(_ prompt: String) { lock.withLock { values.append(prompt) } }
 }

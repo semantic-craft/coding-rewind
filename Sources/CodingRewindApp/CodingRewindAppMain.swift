@@ -62,7 +62,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             let capturer = MacOSAccessibilitySelectionCapturer { [weak self] in
                 self?.lastExternalApplication
             }
-            let coord = try AppCoordinator(paths: paths, environment: environment, capturer: capturer)
+            let coord = try AppCoordinator(paths: paths, environment: environment, capturer: capturer, codexDelivery: CodexAppIntegration.delivery(environment: environment))
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
             }
@@ -70,6 +70,12 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: CapturedSelection.antigravityBundleIdentifier) {
                     NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
                 }
+            }
+            coord.onOpenConversation = { reference in
+                guard reference.host == .codex,
+                      let threadID = UUID(uuidString: reference.id),
+                      let url = URL(string: "codex://threads/\(threadID.uuidString.lowercased())") else { return false }
+                return NSWorkspace.shared.open(url)
             }
             self.coordinator = coord
 
@@ -167,13 +173,15 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 self.statusItemController?.refreshIcon()
                 self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
             }
-        case .launchInAntigravity:
+        case .launchConversation, .launchIn:
             guard let coord = coordinator else { return }
             if coord.cards.isEmpty {
                 hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
             }
             Task { @MainActor [weak self] in
-                let outcome = await coord.launchCheckedInAntigravity()
+                let host: ConversationHost?
+                if case .launchIn(let target) = command { host = target } else { host = nil }
+                let outcome = await coord.launchChecked(in: host)
                 guard let self else { return }
                 self.statusItemController?.refreshIcon()
                 if outcome == nil {

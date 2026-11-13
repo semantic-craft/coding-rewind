@@ -3,6 +3,39 @@
 import Darwin
 import Foundation
 
+public enum ConversationHost: String, Codable, CaseIterable, Sendable {
+    case antigravity, codex
+
+    public var displayName: String {
+        switch self {
+        case .antigravity: return "Antigravity"
+        case .codex: return "Codex"
+        }
+    }
+
+    fileprivate var handoffDirectory: String {
+        switch self {
+        case .antigravity: return "handoff"
+        case .codex: return "codex-handoff"
+        }
+    }
+}
+
+public struct ConversationReference: Equatable, Sendable {
+    public let host: ConversationHost
+    public let id: String
+
+    public init(host: ConversationHost, id: String) {
+        self.host = host
+        self.id = id
+    }
+}
+
+public enum ConversationLaunchResult: Equatable, Sendable {
+    case succeeded(ConversationReference)
+    case failed(state: ConversationReceipt.State)
+}
+
 public struct ConversationRequest: Codable, Equatable, Sendable {
     public static let lifetime: TimeInterval = 30
     public let version: Int
@@ -53,8 +86,8 @@ public struct ConversationHandoffStore: Sendable {
     private var currentURL: URL { directory.appendingPathComponent("current.json") }
     public static let maximumPromptBytes = 256 * 1024
 
-    public init(dataDirectoryURL: URL) throws {
-        directory = dataDirectoryURL.standardizedFileURL.appendingPathComponent("handoff", isDirectory: true)
+    public init(dataDirectoryURL: URL, host: ConversationHost = .antigravity) throws {
+        directory = dataDirectoryURL.standardizedFileURL.appendingPathComponent(host.handoffDirectory, isDirectory: true)
         try Self.checkAncestors(dataDirectoryURL.standardizedFileURL)
         for url in [directory, requests, receipts] {
             if mkdir(url.path, 0o700) != 0 && errno != EEXIST { throw Self.failure("create directory") }
@@ -290,7 +323,7 @@ public final class ConversationSidecarWorker {
     }
     deinit { _ = flock(lockFD, LOCK_UN); close(lockFD) }
 
-    public func processPending(now: Date = Date(), invoke: (String) -> (ConversationReceipt.State, String?)) throws {
+    public func processPending(now: Date = Date(), invoke: (ConversationRequest) -> (ConversationReceipt.State, String?)) throws {
         try store.expireUnpublishedCurrent(now: now)
         for request in try store.pendingRequests() {
             if let receipt = try store.receipt(for: request.requestId) {
@@ -303,7 +336,7 @@ public final class ConversationSidecarWorker {
                 continue
             }
             try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: .dispatching, updatedAt: now))
-            let (state, conversationID) = invoke(request.prompt)
+            let (state, conversationID) = invoke(request)
             let finalState: ConversationReceipt.State = state == .dispatching ? .unknown : state
             try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: finalState, conversationId: conversationID))
             try store.removeRequest(request.requestId)

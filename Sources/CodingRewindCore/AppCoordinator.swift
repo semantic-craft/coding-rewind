@@ -50,6 +50,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     public let pluginSummary: String
     public let isAccessibilityTrusted: Bool
     public let recentCards: [RecentCardItem]
+    public let conversationHost: ConversationHost
 
     public init(
         isHUDVisible: Bool,
@@ -60,7 +61,8 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         isPluginReady: Bool,
         pluginSummary: String,
         isAccessibilityTrusted: Bool,
-        recentCards: [RecentCardItem]
+        recentCards: [RecentCardItem],
+        conversationHost: ConversationHost = .antigravity
     ) {
         self.isHUDVisible = isHUDVisible
         self.hotCardCount = hotCardCount
@@ -71,6 +73,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         self.pluginSummary = pluginSummary
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.recentCards = recentCards
+        self.conversationHost = conversationHost
     }
 
     public var headerTitle: String {
@@ -96,7 +99,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     }
 
     public var launchTitle: String {
-        checkedCardCount > 0 ? "在 Antigravity 开聊（已选 \(checkedCardCount) 张）" : "在 Antigravity 开聊"
+        checkedCardCount > 0 ? "在 \(conversationHost.displayName) 开聊（已选 \(checkedCardCount) 张）" : "在 \(conversationHost.displayName) 开聊"
     }
 }
 
@@ -109,6 +112,19 @@ public final class AppCoordinator {
     public let outbox: OfflineOutbox
     public let hotCache: HotCache
     public let handoff: ConversationHandoffStore
+    public let codexHandoff: ConversationHandoffStore
+    private let codexDelivery: (@Sendable (ConversationRequest) -> (ConversationReceipt.State, String?))?
+    public var conversationHost: ConversationHost = .antigravity {
+        didSet {
+            do { try AtomicFile.writeData(JSONEncoder().encode(conversationHost), to: conversationHostURL) }
+            catch { setBanner(error.localizedDescription, isError: true) }
+        }
+    }
+    private var conversationHostURL: URL { paths.dataDirectoryURL.appendingPathComponent("conversation-host.json") }
+    public private(set) var activeConversationHost: ConversationHost?
+    public private(set) var confirmedConversation: ConversationReference?
+    public var effectiveConversationHost: ConversationHost { activeConversationHost ?? conversationHost }
+    public var conversationActionTitle: String { "在 \(effectiveConversationHost.displayName) 开聊" }
     public private(set) var isLaunchingConversation = false
     public private(set) var canEndUnconfirmedConversation = false
     public private(set) var canEndUnarchivedConversation = false
@@ -134,13 +150,15 @@ public final class AppCoordinator {
 
     public var onOpenURL: (@MainActor (URL) -> Void)?
     public var onOpenAntigravityApp: (@MainActor () -> Void)?
+    public var onOpenConversation: (@MainActor (ConversationReference) -> Bool)?
 
     public init(
         paths: StoragePaths,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         memosClient: MemosClient = MemosClient(),
         capturer: any SelectionCapturing,
-        antigravityContext: AntigravityCaptureContext = AntigravityCaptureContext()
+        antigravityContext: AntigravityCaptureContext = AntigravityCaptureContext(),
+        codexDelivery: (@Sendable (ConversationRequest) -> (ConversationReceipt.State, String?))? = nil
     ) throws {
         self.paths = paths
         self.environment = environment
@@ -148,13 +166,22 @@ public final class AppCoordinator {
         self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
         self.handoff = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL)
+        self.codexHandoff = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
+        self.codexDelivery = codexDelivery
         self.antigravityContext = antigravityContext
         self.capturer = capturer
         self.cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
         self.focusedCardID = self.cards.first?.id
-        if let current = try handoff.current() {
+        if FileManager.default.fileExists(atPath: conversationHostURL.path) {
+            conversationHost = try JSONDecoder().decode(ConversationHost.self, from: Data(contentsOf: conversationHostURL))
+        }
+        if let (host, store, current) = try activeConversation() {
+            activeConversationHost = host
             checkedCardIDs = Set(current.cardIDs)
-            let receipt = try handoff.receipt(for: current.requestId)
+            let receipt = try store.receipt(for: current.requestId)
+            if receipt?.state == .succeeded, let id = receipt?.conversationId {
+                confirmedConversation = ConversationReference(host: host, id: id)
+            }
             canEndUnconfirmedConversation = receipt?.state == .unknown
             canEndUnarchivedConversation = receipt?.state == .succeeded && current.markSynthesized && !current.archiveCardIDs.isEmpty
             bannerMessage = "上次接聊请求尚待确认，点击开聊查询结果，不会重复发送"
@@ -260,7 +287,8 @@ public final class AppCoordinator {
             isPluginReady: isPluginReady,
             pluginSummary: pluginSummary,
             isAccessibilityTrusted: isAccessibilityTrusted,
-            recentCards: recent
+            recentCards: recent,
+            conversationHost: effectiveConversationHost
         )
     }
 
@@ -389,7 +417,7 @@ public final class AppCoordinator {
     }
 
     @discardableResult
-    public func launchCheckedInAntigravity(waitSeconds: TimeInterval = 40) async -> AntigravityLauncher.LaunchOutcome? {
+    public func launchChecked(in requestedHost: ConversationHost? = nil, waitSeconds: TimeInterval = 40) async -> ConversationLaunchResult? {
         guard !isLaunchingConversation else { return nil }
         isLaunchingConversation = true
         canEndUnconfirmedConversation = false
@@ -397,28 +425,48 @@ public final class AppCoordinator {
         defer { isLaunchingConversation = false }
         do {
             let current: CurrentConversation
-            if let existing = try handoff.current() {
+            let host: ConversationHost
+            let store: ConversationHandoffStore
+            if let (existingHost, existingStore, existing) = try activeConversation() {
+                host = existingHost
+                store = existingStore
                 current = existing
             } else {
+                host = requestedHost ?? conversationHost
+                store = handoffStore(for: host)
                 let selected = cards.filter { checkedCardIDs.contains($0.id) }
                 guard !selected.isEmpty else {
                     setBanner("请先捕获或勾选至少一条卡片", isError: true)
                     return nil
                 }
-                guard case .installed = AntigravityIntegration.verify(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL) else {
+                if host == .antigravity, case .needsInstallOrRepair = AntigravityIntegration.verify(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL) {
                     setBanner("请先安装或修复 Antigravity 插件，再点击开聊", isError: true)
                     return nil
                 }
-                current = try handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesizedOnLaunch)
+                guard host != .codex || codexDelivery != nil else {
+                    setBanner("请先安装 Codex，再点击开聊。卡片保留", isError: true)
+                    return nil
+                }
+                current = try store.submit(prompt: ConversationPrompt.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesizedOnLaunch)
             }
-            onOpenAntigravityApp?()
-            setBanner("正在等待 Antigravity 创建新会话并发送上下文…", isError: false)
+            activeConversationHost = host
+            if host == .antigravity { onOpenAntigravityApp?() }
+            setBanner("正在等待 \(host.displayName) 创建新会话并发送上下文…", isError: false)
+            if host == .codex, let codexDelivery {
+                try await Task.detached {
+                    let worker = try ConversationSidecarWorker(store: store)
+                    try worker.processPending(invoke: codexDelivery)
+                }.value
+            }
             let deadline = Date().addingTimeInterval(max(0, waitSeconds))
             repeat {
-                if let receipt = try handoff.receipt(for: current.requestId), receipt.state != .dispatching {
+                if let receipt = try store.receipt(for: current.requestId), receipt.state != .dispatching {
                     switch receipt.state {
                     case .succeeded:
                         guard let conversationID = receipt.conversationId else { throw RewindError.ioError("接聊回执缺少会话编号") }
+                        let reference = ConversationReference(host: host, id: conversationID)
+                        confirmedConversation = reference
+                        let opened = host != .codex || onOpenConversation?(reference) == true
                         if current.markSynthesized && !current.archiveCardIDs.isEmpty {
                             canEndUnarchivedConversation = true
                             let remainingIDs = Set(current.archiveCardIDs)
@@ -426,14 +474,14 @@ public final class AppCoordinator {
                             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
                                 setBanner("新会话已发送，归档未完成：Memos 未连接。卡片仍保留，可再次点击重试归档", isError: true)
-                                return .succeeded(conversationId: conversationID)
+                                return .succeeded(reference)
                             }
                             var failed = selected.count != remainingIDs.count
                             for card in selected {
                                 if card.isOfflinePending { failed = true; continue }
                                 do {
                                     try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
-                                    try handoff.recordArchivedCard(card.id, requestId: current.requestId)
+                                    try store.recordArchivedCard(card.id, requestId: current.requestId)
                                     checkedCardIDs.remove(card.id)
                                     updateLocalCards { $0.removeAll { $0.id == card.id } }
                                 } catch { failed = true }
@@ -441,21 +489,25 @@ public final class AppCoordinator {
                             try hotCache.saveCards(cards)
                             if failed {
                                 setBanner("新会话已发送，部分卡片归档失败或已不在热池，未归档卡片保留。再次点击仅重试归档", isError: true)
-                                return .succeeded(conversationId: conversationID)
+                                return .succeeded(reference)
                             }
                         }
                         canEndUnarchivedConversation = false
                         checkedCardIDs.subtract(current.cardIDs)
-                        try handoff.clearCurrent(requestId: current.requestId)
-                        setBanner("已在 Antigravity 新会话发送上下文（共 \(current.cardIDs.count) 张卡片）", isError: false)
-                        return .succeeded(conversationId: conversationID)
+                        if opened {
+                            try store.clearCurrent(requestId: current.requestId)
+                            activeConversationHost = nil
+                        }
+                        setBanner(opened ? "已在 \(host.displayName) 新会话发送上下文（共 \(current.cardIDs.count) 张卡片）" : "已发送到 Codex，打开会话失败。可点击重新打开，不会重复发送", isError: !opened)
+                        return .succeeded(reference)
                     case .rejected, .expired:
-                        try handoff.clearCurrent(requestId: current.requestId)
-                        setBanner(receipt.state == .expired ? "接聊请求已过期，未发送。卡片保留，请确认 Antigravity 已启动后重试" : "Antigravity 尚未提供接聊入口，未发送。请安装插件并重新启动 Antigravity 后重试", isError: true)
+                        try store.clearCurrent(requestId: current.requestId)
+                        activeConversationHost = nil
+                        setBanner(receipt.state == .expired ? "接聊请求已过期，未发送。卡片保留，请确认 \(host.displayName) 已启动后重试" : "\(host.displayName) 尚未提供接聊入口，未发送。请检查安装后重试", isError: true)
                         return .failed(state: receipt.state)
                     case .unknown:
                         canEndUnconfirmedConversation = true
-                        setBanner("接聊结果无法确认，已停止自动重发。请到 Antigravity 检查新会话，卡片未归档", isError: true)
+                        setBanner("接聊结果无法确认，已停止自动重发。请到 \(host.displayName) 检查新会话，卡片未归档", isError: true)
                         return .failed(state: .unknown)
                     case .dispatching: break
                     }
@@ -474,10 +526,11 @@ public final class AppCoordinator {
     public func endUnconfirmedConversation() {
         guard !isLaunchingConversation else { return }
         do {
-            guard let current = try handoff.current(),
-                  try handoff.receipt(for: current.requestId)?.state == .unknown else { return }
+            guard let (_, store, current) = try activeConversation(),
+                  try store.receipt(for: current.requestId)?.state == .unknown else { return }
             checkedCardIDs.subtract(current.cardIDs)
-            try handoff.clearCurrent(requestId: current.requestId)
+            try store.clearCurrent(requestId: current.requestId)
+            activeConversationHost = nil
             canEndUnconfirmedConversation = false
             setBanner("已结束本次未确认请求。重新勾选卡片后可发起新会话", isError: false)
         } catch { setBanner(error.localizedDescription, isError: true) }
@@ -486,13 +539,42 @@ public final class AppCoordinator {
     public func endUnarchivedConversation() {
         guard !isLaunchingConversation else { return }
         do {
-            guard let current = try handoff.current(), current.markSynthesized,
-                  try handoff.receipt(for: current.requestId)?.state == .succeeded else { return }
+            guard let (_, store, current) = try activeConversation(), current.markSynthesized,
+                  try store.receipt(for: current.requestId)?.state == .succeeded else { return }
             checkedCardIDs.subtract(current.cardIDs)
-            try handoff.clearCurrent(requestId: current.requestId)
+            try store.clearCurrent(requestId: current.requestId)
+            activeConversationHost = nil
             canEndUnarchivedConversation = false
             setBanner("已结束本次接聊，未归档卡片已保留。重新勾选后可再开聊", isError: false)
         } catch { setBanner(error.localizedDescription, isError: true) }
+    }
+
+    public func reopenConfirmedConversation() {
+        guard let reference = confirmedConversation else { return }
+        guard onOpenConversation?(reference) == true else {
+            setBanner("已发送，打开会话失败。可再次重试打开", isError: true)
+            return
+        }
+        do {
+            if let (host, store, current) = try activeConversation(), host == reference.host,
+               (!current.markSynthesized || current.archiveCardIDs.isEmpty),
+               try store.receipt(for: current.requestId)?.conversationId == reference.id {
+                try store.clearCurrent(requestId: current.requestId)
+                activeConversationHost = nil
+            }
+            setBanner("已打开已发送的 \(reference.host.displayName) 会话", isError: false)
+        } catch { setBanner(error.localizedDescription, isError: true) }
+    }
+
+    private func handoffStore(for host: ConversationHost) -> ConversationHandoffStore {
+        host == .antigravity ? handoff : codexHandoff
+    }
+
+    private func activeConversation() throws -> (ConversationHost, ConversationHandoffStore, CurrentConversation)? {
+        try ConversationHost.allCases.compactMap { host in
+            let store = handoffStore(for: host)
+            return try store.current().map { (host, store, $0) }
+        }.min { $0.2.expiresAt < $1.2.expiresAt }
     }
 
     public func markCardSynthesized(_ card: RewindCard) async {

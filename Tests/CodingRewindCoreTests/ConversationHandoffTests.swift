@@ -14,11 +14,11 @@ struct ConversationHandoffTests {
         return url
     }
 
-    @Test("A duplicate submission and worker pass dispatch the original prompt exactly once")
-    func duplicateAndPrivacy() throws {
+    @Test("A duplicate submission and worker pass dispatch the original prompt exactly once", arguments: ConversationHost.allCases)
+    func duplicateAndPrivacy(host: ConversationHost) throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = try ConversationHandoffStore(dataDirectoryURL: root)
+        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: host)
         let prompt = "汉字 e\u{301}\n`literal` $(touch never) \"quote\""
         let current = try store.submit(prompt: prompt, cardIDs: ["memo"], markSynthesized: true)
         #expect(try store.submit(prompt: "different", cardIDs: ["other"], markSynthesized: false) == current)
@@ -28,7 +28,7 @@ struct ConversationHandoffTests {
         var count = 0
         let conversationID = UUID().uuidString
         try worker.processPending { received in
-            #expect(received == prompt)
+            #expect(received.prompt == prompt)
             #expect((try? store.receipt(for: current.requestId))?.state == .dispatching)
             count += 1
             return (.succeeded, conversationID)
@@ -46,11 +46,11 @@ struct ConversationHandoffTests {
         #expect(directoryAttributes[.posixPermissions] as? Int == 0o700)
     }
 
-    @Test("Restart converts dispatching to unknown and never resends")
-    func crashRecovery() throws {
+    @Test("Restart converts dispatching to unknown and never resends", arguments: ConversationHost.allCases)
+    func crashRecovery(host: ConversationHost) throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = try ConversationHandoffStore(dataDirectoryURL: root)
+        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: host)
         let current = try store.submit(prompt: "sensitive", cardIDs: ["memo"], markSynthesized: false)
         try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .dispatching))
         let worker = try ConversationSidecarWorker(store: store)
@@ -58,6 +58,24 @@ struct ConversationHandoffTests {
         #expect(try store.receipt(for: current.requestId)?.state == .unknown)
         #expect(try store.pendingRequests().isEmpty)
         #expect(try store.current()?.requestId == current.requestId)
+    }
+
+    @Test("The legacy Antigravity worker cannot consume Codex requests")
+    func hostIsolation() throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacy = try ConversationHandoffStore(dataDirectoryURL: root)
+        let codex = try ConversationHandoffStore(dataDirectoryURL: root, host: .codex)
+        let current = try codex.submit(prompt: "Codex only", cardIDs: ["memo"], markSynthesized: false)
+        let worker = try ConversationSidecarWorker(store: legacy)
+        try worker.processPending { _ in
+            Issue.record("Legacy worker must not claim Codex work")
+            return (.unknown, nil)
+        }
+        #expect(legacy.directory.lastPathComponent == "handoff")
+        #expect(try legacy.pendingRequests().isEmpty)
+        #expect(try codex.pendingRequests().map(\.requestId) == [current.requestId])
+        #expect(try codex.receipt(for: current.requestId) == nil)
     }
 
     @Test("Expired requests and old receipts discard prompts without dispatch")

@@ -246,18 +246,33 @@ public struct QuickPeekHUDRootView: View {
                 .font(.system(size: 11))
             }
             if coordinator.canEndUnconfirmedConversation {
-                Button("已核对 Antigravity，结束本次请求") {
+                Button("已核对 \(coordinator.effectiveConversationHost.displayName)，结束本次请求") {
                     coordinator.endUnconfirmedConversation()
                 }
                 .font(.system(size: 11))
             }
+            if coordinator.confirmedConversation?.host == .codex {
+                Button("打开已发送的 Codex 会话") { coordinator.reopenConfirmedConversation() }
+                    .font(.system(size: 11))
+            }
             Divider()
+            HStack {
+                Picker("接聊应用", selection: $coordinator.conversationHost) {
+                    ForEach(ConversationHost.allCases, id: \.self) { host in
+                        Text(host.displayName).tag(host)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityLabel("接聊应用")
+                .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
+            }
             HStack(spacing: 8) {
                 Text("已选 \(coordinator.checkedCardIDs.count) 张").font(.system(size: 11, weight: .medium))
                 Toggle("开聊后归档", isOn: $coordinator.markSynthesizedOnLaunch).toggleStyle(.checkbox).font(.system(size: 11))
                 Spacer()
-                Button(coordinator.isLaunchingConversation ? "正在接聊…" : "在 Antigravity 开聊 ⌘↵") {
-                    Task { await coordinator.launchCheckedInAntigravity() }
+                Button(coordinator.isLaunchingConversation ? "正在接聊…" : "\(coordinator.conversationActionTitle) ⌘↵") {
+                    Task { await coordinator.launchChecked() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
