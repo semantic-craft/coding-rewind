@@ -380,7 +380,6 @@ function* nonemptyTextNodes(node) {
 
 function selectedLineBreakModes(range, fragment) {
   const modes = new WeakMap();
-  if (typeof range.intersectsNode !== "function") return modes;
   const source = [...nonemptyTextNodes(range.commonAncestorContainer)].filter((node) => {
     if (!range.intersectsNode(node)) return false;
     const start = node === range.startContainer ? range.startOffset : 0;
@@ -1219,7 +1218,13 @@ export function parseHtmlDocument(html, { url = "" } = {}) {
 
   doc.createRangeFromNode = (targetNode) => ({
     startContainer: targetNode,
+    startOffset: 0,
+    endContainer: targetNode,
+    endOffset: targetNode.nodeType === TEXT_NODE ? targetNode.nodeValue.length : targetNode.childNodes.length,
     commonAncestorContainer: targetNode,
+    intersectsNode(node) {
+      return targetNode.contains(node);
+    },
     cloneContents() {
       const frag = new MiniNode(DOCUMENT_FRAGMENT_NODE, "#document-fragment");
       for (const child of targetNode.childNodes || []) {
