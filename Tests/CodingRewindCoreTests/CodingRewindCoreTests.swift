@@ -837,88 +837,234 @@ struct CodingRewindCoreTests {
         )
     }
 
-    @Test("AntigravityHookRunner parses camelCase lastUserInput + 4 recent turns from transcript.jsonl into active_turn.json")
-    func hookRunnerExtractsLastUserInputAndFourTurns() throws {
+    @Test("An Antigravity selection without verified ownership never borrows another conversation")
+    @MainActor
+    func unverifiedAntigravitySelectionDoesNotBorrowContext() async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
-
-        let dataDir = dir.appendingPathComponent("Data")
-        let transcriptURL = dir.appendingPathComponent("transcript.jsonl")
-        let transcriptLines = [
-            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"content\":\"Turn 1 question\"}",
-            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"Turn 1 answer\"}",
-            "{\"type\":\"USER_INPUT\",\"source\":\"SYSTEM\",\"content\":\"<SYSTEM_MESSAGE>ignored system wake</SYSTEM_MESSAGE>\"}",
-            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"content\":\"Turn 2 question\"}",
-            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"\"}",
-            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"Turn 2 answer\"}",
-            "{\"type\":\"USER_INPUT\",\"source\":\"USER_EXPLICIT\",\"content\":\"Turn 3 latest question\"}",
-            "{\"type\":\"PLANNER_RESPONSE\",\"source\":\"MODEL\",\"content\":\"Turn 3 latest answer\"}"
-        ].joined(separator: "\n") + "\n"
-        try transcriptLines.write(to: transcriptURL, atomically: true, encoding: .utf8)
-
-        let store = try ActiveTurnStore(dataDirectoryURL: dataDir)
-        let stdinPayload = try JSONSerialization.data(withJSONObject: [
-            "conversationId": "conv-2x-test",
-            "lastUserInput": "Explicit stdin lastUserInput",
-            "workspacePaths": [dir.appendingPathComponent("coding-rewind").path],
-            "transcriptPath": transcriptURL.path,
-            "hookEventName": "Stop"
-        ])
-
-        var capturedOut = Data()
-        let code = AntigravityHookRunner.run(
-            stdin: stdinPayload,
-            environment: [:],
-            activeTurnStore: store,
-            stdout: { capturedOut.append($0) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let selection = CapturedSelection(
+            text: "Reply from conversation A",
+            bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+            appName: "Antigravity",
+            documentURL: "http://127.0.0.1:49807/c/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
         )
-        #expect(code == 0)
-        #expect(String(decoding: capturedOut, as: UTF8.self) == "{}\n")
-        #expect(FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("active_turn.json").path))
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: StubCapturer(selection: selection))
+        try AtomicFile.writeUTF8(
+            """
+            {"conversationId":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","lastUserInput":"Question from conversation B","observedAt":"\(Date().ISO8601Format())","recentTurns":[]}
+            """,
+            to: dir.appendingPathComponent("active_turn.json")
+        )
 
-        let recorded = try #require(store.latestTurn(forFrontmostBundleID: CapturedSelection.antigravityBundleIdentifier))
-        #expect(recorded.conversationId == "conv-2x-test")
-        #expect(recorded.sessionTitle == "coding-rewind")
-        #expect(recorded.lastUserInput == "Explicit stdin lastUserInput")
-        #expect(recorded.hookEventName == "Stop")
-        #expect(recorded.recentTurns == [
-            ConversationTurn(role: "User", text: "Turn 2 question"),
-            ConversationTurn(role: "Assistant", text: "Turn 2 answer"),
-            ConversationTurn(role: "User", text: "Turn 3 latest question"),
-            ConversationTurn(role: "Assistant", text: "Turn 3 latest answer")
-        ])
+        await coordinator.captureSelection()
+
+        let entry = try #require(coordinator.outbox.loadEntries().first)
+        #expect(entry.commentContent == nil)
+        let card = try #require(coordinator.cards.first)
+        #expect(card.sourceURL == nil)
+        #expect(card.verbatimText == selection.text)
     }
 
-    @Test("AntigravityIntegration writes official 2.x plugin.json, flat hooks.json, and copies binaries outside .build")
-    func officialPluginAndHookInstallerSchema() throws {
+    @Test("The context comment preserves all messages in four user-led rounds")
+    func contextCommentPreservesFourRounds() {
+        let messages = (1...4).flatMap { round in
+            [
+                ConversationTurn(role: "User", text: "Question \(round)"),
+                ConversationTurn(role: "Assistant", text: "Answer \(round)"),
+                ConversationTurn(role: "Assistant", text: "Follow-up \(round)")
+            ]
+        }
+        let comment = CaptureContext(sessionTitle: "Antigravity", prompt: "Question 4", recentTurns: messages)
+            .formattedCommentMarkdown()
+        let expected = messages.map { "\($0.role): \($0.text)" }.joined(separator: "\n")
+        #expect(comment.hasSuffix(expected))
+    }
+
+    @Test("Verified Antigravity capture anchors to the selected message and keeps four user-led rounds")
+    @MainActor
+    func verifiedAntigravityCaptureUsesSelectedConversation() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        let url = try #require(URL(string: "http://127.0.0.1:49807/c/\(id)?project=fixture"))
+        let conversation = try #require(AntigravityConversationID(webAreaURL: url))
+        let otherID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        let selectionText = "selected code:\r\n  return value"
+        let longAnswer = String(repeating: "x", count: 810) + "\nselected code:\n  return value"
+        let messages: [(String, String)] = [
+            ("USER_INPUT", "Question 1"),
+            ("PLANNER_RESPONSE", "Answer 1"),
+            ("USER_INPUT", "Question 2"),
+            ("PLANNER_RESPONSE", "Answer 2"),
+            ("USER_INPUT", "Question 3"),
+            ("PLANNER_RESPONSE", "Answer 3a"),
+            ("MODEL_OUTPUT", "Answer 3b"),
+            ("USER_INPUT", "Question 4"),
+            ("PLANNER_RESPONSE", "Answer 4"),
+            ("USER_INPUT", "Question 5"),
+            ("PLANNER_RESPONSE", "Answer 5a"),
+            ("PLANNER_RESPONSE", longAnswer),
+            ("PLANNER_RESPONSE", "Later answer block"),
+            ("USER_INPUT", "Later question")
+        ]
+        let toolOnly: [String: Any] = ["type": "PLANNER_RESPONSE", "tool_calls": [["name": "tool"]]]
+        let systemInput: [String: Any] = ["type": "USER_INPUT", "source": "SYSTEM", "content": "System text"]
+        let records = messages.map { type, text in
+            ["type": type, "source": type == "USER_INPUT" ? "USER_EXPLICIT" : "MODEL", "content": text]
+        } + [toolOnly, systemInput]
+        try writeTranscript(records, conversationID: id, home: dir)
+        try writeTranscript([
+            ["type": "USER_INPUT", "content": "Question from conversation B"],
+            ["type": "PLANNER_RESPONSE", "content": selectionText]
+        ], conversationID: otherID, home: dir)
+
+        let selection = CapturedSelection(
+            text: selectionText, bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+            appName: "Antigravity", windowTitle: "Conversation A", antigravityConversationID: conversation
+        )
+        let coordinator = try AppCoordinator(
+            paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"],
+            capturer: StubCapturer(selection: selection), antigravityContext: AntigravityCaptureContext(homeDirectory: dir)
+        )
+        await coordinator.captureSelection()
+
+        let entry = try #require(coordinator.outbox.loadEntries().first)
+        let comment = try #require(entry.commentContent)
+        #expect(entry.memoContent.hasSuffix(selectionText))
+        #expect(entry.memoContent.contains("#rewind/has-ctx"))
+        #expect(coordinator.cards.first?.sourceURL == "conversation://\(id)")
+        #expect(comment == """
+        <!-- rewind-context-v1 -->
+        Session Title: Conversation A
+        Prompt: Question 5
+
+        ### Recent Turns
+        User: Question 2
+        Assistant: Answer 2
+        User: Question 3
+        Assistant: Answer 3a
+        Assistant: Answer 3b
+        User: Question 4
+        Assistant: Answer 4
+        User: Question 5
+        Assistant: Answer 5a
+        Assistant: \(String(repeating: "x", count: 800))…
+        """)
+    }
+
+    @Test("User selection has no prompt and repeated or unmatched text has no context")
+    func nativeCaptureAnchorBoundaries() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        let url = try #require(URL(string: "http://127.0.0.1:49807/c/\(id)"))
+        let conversation = try #require(AntigravityConversationID(webAreaURL: url))
+        try writeTranscript([
+            ["type": "USER_INPUT", "content": "First question"],
+            ["type": "PLANNER_RESPONSE", "content": "Repeated answer"],
+            ["type": "USER_INPUT", "content": "Selected question"],
+            ["type": "PLANNER_RESPONSE", "content": "Repeated answer"],
+            ["type": "PLANNER_RESPONSE", "content": "One  two", "truncated_fields": ["content"]]
+        ], conversationID: id, home: dir)
+        let resolver = AntigravityCaptureContext(homeDirectory: dir)
+        let selectedUser = try #require(await resolver.resolve(conversationID: conversation, selectedText: "Selected question", sessionTitle: "Fixture"))
+        #expect(selectedUser.prompt.isEmpty)
+        #expect(selectedUser.recentTurns.map(\.text) == ["First question", "Repeated answer", "Selected question"])
+        let truncated = try #require(await resolver.resolve(conversationID: conversation, selectedText: "One  two", sessionTitle: "Fixture"))
+        #expect(truncated.recentTurns.last?.text == "One  two…")
+        #expect(await resolver.resolve(conversationID: conversation, selectedText: "Repeated answer", sessionTitle: "Fixture") == nil)
+        #expect(await resolver.resolve(conversationID: conversation, selectedText: "One two", sessionTitle: "Fixture") == nil)
+    }
+
+    @Test("Verified conversation backlink survives an unmatched selection")
+    @MainActor
+    func unmatchedAntigravitySelectionKeepsBacklink() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        let url = try #require(URL(string: "http://127.0.0.1:49807/c/\(id)"))
+        let conversation = try #require(AntigravityConversationID(webAreaURL: url))
+        try writeTranscript([
+            ["type": "USER_INPUT", "content": "A logged question"],
+            ["type": "PLANNER_RESPONSE", "content": "A logged reply"]
+        ], conversationID: id, home: dir)
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let selection = CapturedSelection(
+            text: "Selected rendered text", bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+            appName: "Antigravity", antigravityConversationID: conversation
+        )
+        let coordinator = try AppCoordinator(
+            paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"],
+            capturer: StubCapturer(selection: selection), antigravityContext: AntigravityCaptureContext(homeDirectory: dir)
+        )
+        await coordinator.captureSelection()
+
+        let entry = try #require(coordinator.outbox.loadEntries().first)
+        #expect(entry.commentContent == nil)
+        #expect(!entry.memoContent.contains("#rewind/has-ctx"))
+        let card = try #require(coordinator.cards.first)
+        #expect(card.sourceURL == "conversation://\(id)")
+        #expect(card.verbatimText == selection.text)
+    }
+
+    private func writeTranscript(_ records: [[String: Any]], conversationID: String, home: URL) throws {
+        let file = home.appendingPathComponent(".gemini/antigravity/brain/\(conversationID)/.system_generated/logs/transcript.jsonl")
+        let lines = try records.map { record in
+            String(decoding: try JSONSerialization.data(withJSONObject: record), as: UTF8.self)
+        }
+        try AtomicFile.writeUTF8(lines.joined(separator: "\n") + "\n", to: file)
+    }
+
+    @Test("Plugin repair retires generated capture hooks and preserves unrelated hooks and local data")
+    func officialPluginInstallerRetiresCaptureHooks() throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let fakeBuildDir = dir.appendingPathComponent(".build/debug", isDirectory: true)
         try FileManager.default.createDirectory(at: fakeBuildDir, withIntermediateDirectories: true)
-        let fakeHookSrc = fakeBuildDir.appendingPathComponent("coding-rewind-hook")
+        let fakeSidecarSrc = fakeBuildDir.appendingPathComponent("coding-rewind-sidecar")
         let fakeBridgeSrc = dir.appendingPathComponent("memos-mcp-bridge.sh")
-        try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeHookSrc, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeSidecarSrc, permissions: 0o755)
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: fakeBridgeSrc, permissions: 0o755)
 
         let dataDir = dir.appendingPathComponent("Application Support/CodingRewind", isDirectory: true)
         let configDir = dir.appendingPathComponent("gemini-config", isDirectory: true)
 
+        let hooksURL = configDir.appendingPathComponent("plugins/coding-rewind/hooks.json")
+        let installedLegacyHook = dataDir.appendingPathComponent("bin/coding-rewind-hook")
+        let oldSnapshot = dataDir.appendingPathComponent("active_turn.json")
+        try AtomicFile.writeUTF8("old user snapshot", to: oldSnapshot)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: installedLegacyHook, permissions: 0o755)
+        let obsolete: [String: Any] = [
+            "type": "command",
+            "command": "/usr/bin/env 'CODING_REWIND_DATA_DIR=\(dataDir.path)' '\(installedLegacyHook.path)'",
+            "timeout": 5
+        ]
+        let unrelated = ["type": "command", "command": "echo unrelated"]
+        let previous: [String: Any] = [
+            "coding-rewind": ["PostInvocation": [obsolete, unrelated], "Stop": [obsolete]],
+            "other-plugin": ["Stop": [unrelated]]
+        ]
+        try AtomicFile.writeData(JSONSerialization.data(withJSONObject: previous), to: hooksURL)
         let pluginDir = try AntigravityIntegration.installOrRepair(
             dataDirectoryURL: dataDir,
             configDirectoryURL: configDir,
-            sourceHookBinaryURL: fakeHookSrc,
             sourceMCPBridgeURL: fakeBridgeSrc,
-            sourceSidecarBinaryURL: fakeHookSrc
+            sourceSidecarBinaryURL: fakeSidecarSrc
         )
 
         let status = AntigravityIntegration.verify(dataDirectoryURL: dataDir, configDirectoryURL: configDir)
-        guard case .installed(_, let installedHookURL) = status else {
+        guard case .installed = status else {
             Issue.record("Expected .installed, got \(status)")
             return
         }
-        #expect(!installedHookURL.path.contains("/.build/"))
-        #expect(FileManager.default.isExecutableFile(atPath: installedHookURL.path))
+        let installedSidecar = AntigravityIntegration.stableSidecarBinaryURL(in: dataDir)
+        #expect(!installedSidecar.path.contains("/.build/"))
+        #expect(FileManager.default.isExecutableFile(atPath: installedSidecar.path))
+        #expect(FileManager.default.isExecutableFile(atPath: installedLegacyHook.path))
+        #expect(try String(contentsOf: oldSnapshot, encoding: .utf8) == "old user snapshot")
         #expect(FileManager.default.isExecutableFile(atPath: AntigravityIntegration.stableMCPBridgeURL(in: dataDir).path))
 
         let pluginJSON = try #require(
@@ -933,18 +1079,8 @@ struct CodingRewindCoreTests {
         let hooksJSON = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: pluginDir.appendingPathComponent("hooks.json"))) as? [String: Any]
         )
-        let group = try #require(hooksJSON["coding-rewind"] as? [String: Any])
-        for event in ["PostInvocation", "Stop"] {
-            let flatArray = try #require(group[event] as? [[String: Any]])
-            #expect(flatArray.count == 1)
-            #expect(flatArray[0]["hooks"] == nil)
-            #expect(flatArray[0]["matcher"] == nil)
-            #expect(flatArray[0]["type"] as? String == "command")
-            #expect(flatArray[0]["timeout"] as? Int == 5)
-            let cmd = try #require(flatArray[0]["command"] as? String)
-            #expect(!cmd.contains(".build"))
-            #expect(cmd.hasPrefix("/usr/bin/env ") && cmd.hasSuffix("'"))
-        }
+        #expect(hooksJSON["coding-rewind"] as? [String: [[String: String]]] == ["PostInvocation": [unrelated]])
+        #expect(hooksJSON["other-plugin"] as? [String: [[String: String]]] == ["Stop": [unrelated]])
     }
 
     @Test("MenuStatusSnapshot models connection host+port, outbox badge, recent card truncation, and focusAndCheckCard")
@@ -1008,9 +1144,9 @@ struct CodingRewindCoreTests {
         )
 
         try paths.saveMemosURLString("http://localhost:5230")
-        let fakeHook = dir.appendingPathComponent("coding-rewind-hook")
-        try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeHook, permissions: 0o755)
-        coord.installOrRepairPlugin(sourceHookURL: fakeHook, sourceBridgeURL: nil, sourceSidecarURL: fakeHook)
+        let fakeSidecar = dir.appendingPathComponent("coding-rewind-sidecar")
+        try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeSidecar, permissions: 0o755)
+        coord.installOrRepairPlugin(sourceBridgeURL: nil, sourceSidecarURL: fakeSidecar)
 
         let now = Date()
         coord.checkedCardIDs.removeAll()
@@ -1059,7 +1195,7 @@ struct CodingRewindCoreTests {
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: source, permissions: 0o755)
         let data = dir.appendingPathComponent("Data", isDirectory: true)
         let config = dir.appendingPathComponent("Config", isDirectory: true)
-        let plugin = try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config, sourceHookBinaryURL: source, sourceSidecarBinaryURL: source)
+        let plugin = try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config, sourceSidecarBinaryURL: source)
         let configURL = config.appendingPathComponent("config.json")
         var root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
         let sidecars = try #require(root["sidecars"] as? [String: Any])

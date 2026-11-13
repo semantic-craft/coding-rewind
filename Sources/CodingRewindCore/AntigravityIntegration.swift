@@ -9,14 +9,8 @@ public enum AntigravityIntegration {
     public static let pluginVersion = "0.2.0"
 
     public enum Status: Equatable, Sendable {
-        case installed(pluginDirectoryURL: URL, hookBinaryURL: URL)
+        case installed(pluginDirectoryURL: URL)
         case needsInstallOrRepair(reasons: [String])
-    }
-
-    public static func stableHookBinaryURL(in dataDirectoryURL: URL) -> URL {
-        dataDirectoryURL.standardizedFileURL
-            .appendingPathComponent("bin", isDirectory: true)
-            .appendingPathComponent("coding-rewind-hook", isDirectory: false)
     }
 
     public static func stableSidecarBinaryURL(in dataDirectoryURL: URL) -> URL {
@@ -29,19 +23,10 @@ public enum AntigravityIntegration {
             .appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
     }
 
-    public static func hookCommandString(for executableURL: URL, dataDirectoryURL: URL) -> String {
-        func quoted(_ value: String) -> String {
-            "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
-        }
-        let dataEnvironment = "CODING_REWIND_DATA_DIR=\(dataDirectoryURL.standardizedFileURL.path)"
-        return "/usr/bin/env \(quoted(dataEnvironment)) \(quoted(executableURL.standardizedFileURL.path))"
-    }
-
     @discardableResult
     public static func installOrRepair(
         dataDirectoryURL: URL,
         configDirectoryURL: URL,
-        sourceHookBinaryURL: URL? = nil,
         sourceMCPBridgeURL: URL? = nil,
         sourceSidecarBinaryURL: URL? = nil
     ) throws -> URL {
@@ -50,19 +35,6 @@ public enum AntigravityIntegration {
         let resolvedConfig = configDirectoryURL.standardizedFileURL
         let binDir = resolvedData.appendingPathComponent("bin", isDirectory: true)
         try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
-
-        let destHook = stableHookBinaryURL(in: resolvedData)
-        guard !destHook.path.contains("/.build/") else {
-            throw RewindError.ioError("Refusing to install hook inside transient .build/ path")
-        }
-
-        if let srcHook = sourceHookBinaryURL?.standardizedFileURL,
-           srcHook != destHook,
-           fm.fileExists(atPath: srcHook.path) {
-            let binData = try Data(contentsOf: srcHook)
-            try AtomicFile.writeData(binData, to: destHook, permissions: 0o755)
-            _ = chmod(destHook.path, 0o755)
-        }
 
         if let srcBridge = sourceMCPBridgeURL?.standardizedFileURL,
            fm.fileExists(atPath: srcBridge.path) {
@@ -75,6 +47,9 @@ public enum AntigravityIntegration {
         }
 
         let destSidecar = stableSidecarBinaryURL(in: resolvedData)
+        guard !destSidecar.path.contains("/.build/") else {
+            throw RewindError.ioError("Refusing to install sidecar inside transient .build/ path")
+        }
         if let source = sourceSidecarBinaryURL?.standardizedFileURL, source != destSidecar,
            fm.isExecutableFile(atPath: source.path) {
             try AtomicFile.writeData(Data(contentsOf: source), to: destSidecar, permissions: 0o755)
@@ -116,27 +91,6 @@ public enum AntigravityIntegration {
         try AtomicFile.writeData(
             pluginData,
             to: pluginDir.appendingPathComponent("plugin.json", isDirectory: false),
-            permissions: 0o644
-        )
-
-        let handler: [String: Any] = [
-            "type": "command",
-            "command": hookCommandString(for: destHook, dataDirectoryURL: resolvedData),
-            "timeout": 5
-        ]
-        let hooksPayload: [String: Any] = [
-            pluginName: [
-                "PostInvocation": [handler],
-                "Stop": [handler]
-            ]
-        ]
-        let hooksData = try JSONSerialization.data(
-            withJSONObject: hooksPayload,
-            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        )
-        try AtomicFile.writeData(
-            hooksData,
-            to: pluginDir.appendingPathComponent("hooks.json", isDirectory: false),
             permissions: 0o644
         )
 
@@ -189,7 +143,44 @@ public enum AntigravityIntegration {
         sidecars["coding-rewind/launcher"] = launcher
         config["sidecars"] = sidecars
         try AtomicFile.writeData(JSONSerialization.data(withJSONObject: config, options: [.prettyPrinted, .sortedKeys]), to: configURL)
+        let hooksURL = pluginDir.appendingPathComponent("hooks.json")
+        if let migrated = hooksWithoutLegacyCapture(at: hooksURL, dataDirectory: resolvedData) {
+            try AtomicFile.writeData(
+                JSONSerialization.data(withJSONObject: migrated, options: [.prettyPrinted, .sortedKeys]),
+                to: hooksURL,
+                permissions: 0o644
+            )
+        }
         return pluginDir
+    }
+
+    private static func hooksWithoutLegacyCapture(at url: URL, dataDirectory: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: url),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var group = root[pluginName] as? [String: Any] else { return nil }
+
+        func quoted(_ value: String) -> String {
+            "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+        }
+        let environment = quoted("CODING_REWIND_DATA_DIR=\(dataDirectory.path)")
+        let executable = quoted(dataDirectory.appendingPathComponent("bin/coding-rewind-hook").path)
+        let command = "/usr/bin/env \(environment) \(executable)"
+        var changed = false
+        for event in ["PostInvocation", "Stop"] {
+            guard let handlers = group[event] as? [[String: Any]] else { continue }
+            let remaining = handlers.filter {
+                $0["command"] as? String != command
+                    || $0["type"] as? String != "command"
+                    || $0["timeout"] as? Int != 5
+                    || $0.count != 3
+            }
+            guard remaining.count < handlers.count else { continue }
+            group[event] = remaining.isEmpty ? nil : remaining
+            changed = true
+        }
+        guard changed else { return nil }
+        root[pluginName] = group.isEmpty ? nil : group
+        return root
     }
 
     public static func verify(
@@ -203,8 +194,6 @@ public enum AntigravityIntegration {
         let pluginJSONURL = pluginDir.appendingPathComponent("plugin.json", isDirectory: false)
         let hooksJSONURL = pluginDir.appendingPathComponent("hooks.json", isDirectory: false)
         let skillURL = pluginDir.appendingPathComponent("skills/rewind/SKILL.md", isDirectory: false)
-        let expectedHookURL = stableHookBinaryURL(in: resolvedData)
-        let expectedCmd = hookCommandString(for: expectedHookURL, dataDirectoryURL: resolvedData)
 
         var reasons: [String] = []
         let allowedPluginKeys: Set<String> = ["name", "version", "description", "suggestedPrompts"]
@@ -228,30 +217,8 @@ public enum AntigravityIntegration {
             reasons.append("plugin.json missing or invalid")
         }
 
-        if let hData = try? Data(contentsOf: hooksJSONURL),
-           let hRoot = try? JSONSerialization.jsonObject(with: hData) as? [String: Any],
-           let group = hRoot[pluginName] as? [String: Any] {
-            for event in ["PostInvocation", "Stop"] {
-                if let list = group[event] as? [[String: Any]], let first = list.first {
-                    if first["hooks"] != nil || first["matcher"] != nil {
-                        reasons.append("hooks.json \(event) must be a flat handler array")
-                    }
-                    if first["type"] as? String != "command" {
-                        reasons.append("hooks.json \(event) missing type=command")
-                    }
-                    if (first["timeout"] as? Int) != 5 {
-                        reasons.append("hooks.json \(event) timeout must be 5")
-                    }
-                    let cmd = first["command"] as? String ?? ""
-                    if cmd != expectedCmd || cmd.contains("/.build/") {
-                        reasons.append("hooks.json \(event) command mismatch")
-                    }
-                } else {
-                    reasons.append("hooks.json missing \(event)")
-                }
-            }
-        } else {
-            reasons.append("hooks.json missing or invalid")
+        if hooksWithoutLegacyCapture(at: hooksJSONURL, dataDirectory: resolvedData) != nil {
+            reasons.append("仍配置了旧的对话快照 Hook")
         }
 
         if let skillText = try? String(contentsOf: skillURL, encoding: .utf8) {
@@ -284,7 +251,7 @@ public enum AntigravityIntegration {
         }
 
         return reasons.isEmpty
-            ? .installed(pluginDirectoryURL: pluginDir, hookBinaryURL: expectedHookURL)
+            ? .installed(pluginDirectoryURL: pluginDir)
             : .needsInstallOrRepair(reasons: reasons)
     }
 }

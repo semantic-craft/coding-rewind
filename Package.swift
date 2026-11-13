@@ -15,10 +15,6 @@ let package = Package(
             targets: ["CodingRewindCore"]
         ),
         .executable(
-            name: "coding-rewind-hook",
-            targets: ["AntigravityBridge"]
-        ),
-        .executable(
             name: "CodingRewindApp",
             targets: ["CodingRewindApp"]
         )
@@ -28,10 +24,6 @@ let package = Package(
         .executableTarget(name: "ConversationSidecar", dependencies: ["CodingRewindCore"]),
         .target(
             name: "CodingRewindCore"
-        ),
-        .executableTarget(
-            name: "AntigravityBridge",
-            dependencies: ["CodingRewindCore"]
         ),
         .executableTarget(
             name: "CodingRewindApp",
@@ -53,7 +45,6 @@ let package = Package(
             name: "CodingRewindCLITests",
             dependencies: [
                 "CodingRewindCore",
-                "AntigravityBridge",
                 "ConversationSidecar"
             ]
         )

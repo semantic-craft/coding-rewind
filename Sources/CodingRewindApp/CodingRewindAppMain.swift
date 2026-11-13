@@ -206,7 +206,6 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
         ]
         coord.installOrRepairPlugin(
-            sourceHookURL: dirs.map { $0.appendingPathComponent("coding-rewind-hook") }.first { fm.isExecutableFile(atPath: $0.path) },
             sourceBridgeURL: dirs.map { $0.appendingPathComponent("memos-mcp-bridge.sh") }.first { fm.fileExists(atPath: $0.path) },
             sourceSidecarURL: dirs.map { $0.appendingPathComponent("coding-rewind-sidecar") }.first { fm.isExecutableFile(atPath: $0.path) }
         )
