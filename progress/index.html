@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T17:34:33.292863Z</p>
-<p>Main: <code>main: b8cb392de674db8c3807cca08dcac4f49267f7c4</code></p>
+<p>Observed: 2026-11-13T17:42:45.551506Z</p>
+<p>Main: <code>main: fbf77ae25f7a900c31e1b05fb4ae8eec56284f06</code></p>
 <section id="native-chat-apps"><h2>ChatGPT 与 Gemini App 剪藏</h2>
 <article id="native-chat-implementation"><h3>来源、私有回链与消息上下文</h3><span class="badge">done</span><p>两应用复用桌面快捷键、Memos私密正文与上下文评论。ChatGPT代码行与Gemini代码附件保留缩进和空行，纯解析器最多取四个用户轮。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/NativeChatCapture.swift">file Sources/CodingRewindApp/NativeChatCapture.swift: 实际应用适配与会话复核</a></li>
@@ -19,9 +19,9 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/commit/6fcdbaa">commit 6fcdbaa: 原生主入口绑定用途说明，开发凭据在内存中加载；全仓检查与7项凭据回归通过</a></li>
 <li>note 2026-11-14 日常安装实测: 本机 .scratch/native-app-clipping/installed-acceptance.json、verify-installed.py 与两端服务端正文和评论回读；真实自定义快捷键，不经QA写入代理</li>
 </ul><p>Next: </p></article>
-<article id="native-chat-source-delivery"><h3>源码提交与推送</h3><span class="badge">done</span><p>原生剪藏、凭据启动修复、回归与日常实机验收已提交并推送。PR #13以尚未合并的 #12为基线；当前未合并，日常应用已安装并验收通过。</p><ul>
+<article id="native-chat-source-delivery"><h3>源码提交与推送</h3><span class="badge">done</span><p>PR #12与#13已依次合并至main，最终合并提交fbf77ae。合并树与已验收的bf56e9c完全一致，日常安装二进制SHA-256仍与验收构建相同。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/13">pull 13: 本轮原生剪藏改动</a></li>
-</ul><p>Next: PR #13保留在尚未合并的父PR #12之上；父PR的Antigravity接聊验收不包含在本轮通过结论中。</p></article>
+</ul><p>Next: </p></article>
 </section>
 <section id="context-recovery-closeout"><h2>当前收尾与待实机验收</h2>
 <article id="closeout-context"><h3>上下文契约与会话归属</h3><span class="badge">in_progress</span><p>网页与桌面统一截止所选消息的最多四个用户轮，原生按已确认会话读取官方日志，退役最新快照。选区竞态和旧 Hook 升级遗漏已修复。Swift 48、扩展34、增强器10及全仓门禁通过，签名包已构建但未安装。</p><ul>
@@ -33,12 +33,12 @@
 <article id="closeout-summary"><h3>摘要误述修复与云端部署</h3><span class="badge">done</span><p>弃用仍误判的首版候选，最终以结构化输入区分选区和上下文，只归纳主题。两轮六次真实模型输出及独立复核通过；云端增强器已部署，两个真实入库样本原文与评论一致。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 部署源码哈希、真实模型与服务验证</a></li>
 </ul><p>Next: 生成内容仍需按实际样本审查，不把有限样本通过视为普遍准确保证。</p></article>
-<article id="closeout-runtime"><h3>新版本实际应用验收</h3><span class="badge">blocked</span><p>用户确认 Chrome 和 Antigravity 仍用于另一项验收，明确先做代码与云端。本轮未操作、重启或升级两应用。</p><ul>
+<article id="closeout-runtime"><h3>新版本实际应用验收</h3><span class="badge">unverified</span><p>Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位与旧Hook升级实机路径尚缺证据，转入#14跟踪。ChatGPT与Gemini原生剪藏已另行通过日常安装版验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 人工保留的应用操作边界</a></li>
-</ul><p>Next: 让出应用后验新上下文、实际双端离线恢复、多卡⌘Return及/rewind引用成文；删除仅限对应轮测试数据。</p></article>
-<article id="closeout-delivery"><h3>本轮源码交付</h3><span class="badge">in_progress</span><p>PR #12 已提交并推送，独立源码复核通过，全仓检查和签名包构建通过。云端增强器已部署；桌面和扩展未安装本轮改动。</p><ul>
+</ul><p>Next: 完成#14列出的独立实机验收。</p></article>
+<article id="closeout-delivery"><h3>本轮源码交付</h3><span class="badge">done</span><p>PR #12已合并至main；非作者独立工作区复验全仓检查、签名包、网页缺陷前后对照通过，结论PASS+NOTES。桌面源码已随PR #13安装，云端增强器已部署；扩展与Antigravity剩余实机路径见#14。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/12">pull 12: 源码、回归和收尾验收记录</a></li>
-</ul><p>Next: 应用让出后完成实机路径，再合并并升级日常客户端。</p></article>
+</ul><p>Next: </p></article>
 </section>
 <section id="implemented"><h2>已经实现与合并</h2>
 <article id="m0-m1"><h3>M0/M1 · 需求、单一 Memos 架构与统一门禁</h3><span class="badge">done</span><p>需求、来源、原文边界、离线队列和统一检查入口已纳入主分支。</p><ul>
@@ -117,7 +117,5 @@
 </ul><p>Next: 后续网页 DOM 或快捷键行为变化时，重跑对应真实入口与行为回归。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/pull/12">#12</a> <code>15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f</code></li>
-<li><a href="https://github.com/semantic-craft/coding-rewind/pull/13">#13</a> <code>9c2f4782bacedee68235b0baf0af15b6677bcf6f</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
