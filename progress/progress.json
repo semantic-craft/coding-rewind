@@ -273,9 +273,9 @@
             }
           ],
           "id": "capture-permission",
-          "next": "Chrome 自动化快捷键未取得成功记录；系统剪贴板二进制内容未逐项核验。",
+          "next": "本轮夹具已通过；成功复制回退分支及任意延迟提供数据的剪贴板类型未单独覆盖。",
           "status": "done",
-          "summary": "用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。 2026-11-13 用户实际按 ⌃⌥⇧⌘K 后确认浮窗出现新卡片，全局快捷键路径通过用户实机验收。 Chrome 原生窗口的三行选区经 HUD 保存，服务端正文逐字读回一致。",
+          "summary": "TextEdit 与 Chrome 的真实选区捕获已通过；Chrome 两次由用户按全局快捷键触发，并读回各自新记录。两条剪贴板 item、七种实际格式表示在成功 AX 捕获和空选区回退前后逐字节一致，测试后用户原剪贴板恢复一致。",
           "title": "桌面跨应用选区"
         },
         {
@@ -310,14 +310,14 @@
           "evidence": [
             {
               "kind": "file",
-              "note": "剩余范围",
-              "ref": "docs/milestones.md"
+              "ref": "docs/acceptance-2026-11-13.md",
+              "note": "仅本轮新建数据的导出、级联删除及缓存实测"
             }
           ],
           "id": "export-and-mcp",
-          "next": "按对应里程碑分别补验。",
-          "status": "unverified",
-          "summary": "本轮没有执行真实导出和删除；Antigravity MCP 已另项验收通过。",
+          "next": "本项验证结构化数据导出；原生网页全账户批量导出未单独覆盖。",
+          "status": "done",
+          "summary": "本轮私密测试数据经 MCP 导出为结构化 JSON并重新读取核对。删除本轮主记录后，其上下文评论也返回 404；两条 Chrome 测试卡片删除后，桌面刷新清除对应热缓存。",
           "title": "导出与删除"
         },
         {
@@ -329,7 +329,7 @@
             }
           ],
           "id": "remaining-delivery",
-          "next": "Chrome HUD 与 Antigravity MCP 已补验；保留 Chrome 快捷键、剪贴板二进制及导出删除边界。",
+          "next": "本轮重点验收已补齐；覆盖范围与未单测分支见验收记录。",
           "status": "done",
           "summary": "PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。",
           "title": "补验修复交付"
