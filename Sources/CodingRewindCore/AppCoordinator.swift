@@ -557,6 +557,12 @@ public final class AppCoordinator {
     private func buildProvenance(
         from selection: CapturedSelection
     ) async -> (platform: String, title: String, url: String?, context: CaptureContext?) {
+        if let native = selection.nativeChat {
+            let context = native.snapshot.flatMap {
+                NativeConversationContext.resolve(selectedText: native.renderedSelection ?? selection.text, snapshot: $0, sessionTitle: native.title)
+            }
+            return (native.host.rawValue, native.title, native.backlink?.absoluteString, context)
+        }
         if selection.bundleIdentifier == CapturedSelection.antigravityBundleIdentifier {
             let windowTitle = selection.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
             let title = windowTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Antigravity"

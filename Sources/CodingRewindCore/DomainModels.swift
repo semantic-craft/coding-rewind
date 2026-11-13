@@ -318,6 +318,7 @@ public struct CapturedSelection: Equatable, Sendable {
     public let windowTitle: String?
     public let documentURL: String?
     public let antigravityConversationID: AntigravityConversationID?
+    public let nativeChat: NativeChatCapture?
     public let capturedAt: Date
 
     public init(
@@ -327,6 +328,7 @@ public struct CapturedSelection: Equatable, Sendable {
         windowTitle: String? = nil,
         documentURL: String? = nil,
         antigravityConversationID: AntigravityConversationID? = nil,
+        nativeChat: NativeChatCapture? = nil,
         capturedAt: Date = Date()
     ) {
         self.text = text
@@ -335,6 +337,7 @@ public struct CapturedSelection: Equatable, Sendable {
         self.windowTitle = windowTitle
         self.documentURL = documentURL
         self.antigravityConversationID = antigravityConversationID
+        self.nativeChat = nativeChat
         self.capturedAt = capturedAt
     }
 }
