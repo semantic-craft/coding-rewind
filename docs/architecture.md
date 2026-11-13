@@ -19,7 +19,7 @@
 ```text
 [桌面端 Antigravity App 2.x / macOS 应用]          [网页端 ChatGPT / Claude / Gemini]
   ⌃⌥S 辅助功能取选区或备份剪贴板模拟 ⌘C             Manifest V3 扩展提取选中 Markdown
-  + coding-rewind-hook 记录最新提问与前 4 轮         + 提取会话标题、前序提问与最近 4 轮对话
+  + 按选区会话编号读取对应 transcript         + 提取会话标题、前序提问与最近 4 轮对话
                   │                                                  │
                   └────────────────────────┬─────────────────────────┘
                                            ▼
@@ -56,7 +56,7 @@
 
 位于 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`：
 
-- **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，释放捕获快捷键（默认 `⌃⌥S`）时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时自动合并 `active_turn.json` 上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
+- **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，释放捕获快捷键（默认 `⌃⌥S`）时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时，从选区所属 AXWebArea 的本机会话 URL 确认编号，再由 Core 读取对应 transcript；不能定位消息时不附带猜测的上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
 - **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待分析` 与 `AI 已定锚` 状态徽标。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获与浮窗两个动作；`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
 - **一键创建宿主对话**，勾选卡片按下 `⌘Return`，组装包含脉络抬头、原始选段及出处链接的 Markdown 提示词。桌面端写入私有交接请求，Antigravity 管理的 `coding-rewind/launcher` sidecar 在宿主环境中以参数数组调用 `agentapi new-conversation`。桌面端异步等待会话编号回执，不读取其他进程环境，不使用剪贴板回退。“开聊后归档”由 `AppCoordinator` 唯一持有，HUD、菜单与快捷键共用同一个动作；首次请求保存该意图，恢复请求沿用已保存值。只有确认创建成功后才允许归档。
@@ -71,12 +71,12 @@
 - **纯函数提取层 `extractors.mjs`**，参照 MIT 项目 `revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、行内代码、列表与链接的 Markdown，同时提取清洗后的会话标题、紧邻前序用户提问以及截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
 - **后台直连投递 `background.js` 与 `memos_payload.mjs`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`，支持右键菜单与 `Alt+Shift+S` 快捷键触发，由后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` REST 接口；断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试，页面右上角以 Shadow DOM 展示 2.2 秒轻提示。只有队列写入成功才反馈已暂存；本地存储拒绝会显示保存失败。
 
-### 4. Antigravity 2.x 官方插件、钩子与钥匙串桥接
+### 4. Antigravity 2.x 官方插件与钥匙串桥接
 
-位于 `Sources/AntigravityBridge/`、`Sources/CodingRewindCore/AntigravityIntegration.swift` 与 `scripts/memos-mcp-bridge.sh`：
+位于 `Sources/ConversationSidecar/`、`Sources/CodingRewindCore/AntigravityIntegration.swift` 与 `scripts/memos-mcp-bridge.sh`：
 
-- **非阻塞会话钩子 `coding-rewind-hook`**，挂载 `PostInvocation` 与 `Stop` 事件，解析官方 `lastUserInput`、`conversationId`、`workspacePaths` 与 `transcriptPath`，从 `transcript.jsonl` 提取最近 4 轮 `USER_INPUT` 与 `PLANNER_RESPONSE` 正文后原子写入 `<dataDir>/active_turn.json` 并立即以退出码 0 返回。
-- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器先将 `coding-rewind-hook`、`coding-rewind-sidecar` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，生成的 hook 命令显式携带安装时解析的数据目录，安装与校验共用同一命令生成器，不依赖宿主继承应用环境；再向 `~/.gemini/config/plugins/coding-rewind/` 写入仅含官方支持字段的 `plugin.json`、扁平处理器数组格式的 `hooks.json` 以及引导调用 `memo_*` 工具的 `skills/rewind/SKILL.md`。
+- **按选区定位上下文 `AntigravityCaptureContext.swift`**，只读取已确认编号对应的 `~/.gemini/antigravity/brain/<conversationId>/.system_generated/logs/transcript.jsonl`，在完整记录中查找唯一匹配消息。上下文截止所选消息，最多含该用户轮及前三轮。重复或无法匹配时保留原文与已确认会话链接，省略提问和上下文，不读取其他会话。旧的全局最新 Hook 快照不再参与捕获。
+- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器将 `coding-rewind-sidecar` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，向 `~/.gemini/config/plugins/coding-rewind/` 写入 `plugin.json`、sidecar 配置和引导调用 `memo_*` 工具的 `skills/rewind/SKILL.md`。升级只撤下本插件生成的旧 Hook 处理器，保留其他处理器与已有用户数据。
 - **零明文令牌 MCP 桥接**，`scripts/memos-mcp-bridge.sh` 运行时从环境变量或 macOS Keychain 读取令牌，执行 `npx -y mcp-remote "${MEMOS_URL%/}/mcp"`，兼容 `~/.config/agent-mcp/servers.json` 与 `mcp-sync`，避免任何 JSON 配置文件落盘明文凭据。
 
 ### 接聊请求与回执

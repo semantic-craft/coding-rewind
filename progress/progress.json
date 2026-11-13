@@ -2,7 +2,7 @@
   "facts": {
     "default_branch": "main",
     "issues": [],
-    "main": "e31688876436e7738fd4de99a859541294edb07b",
+    "main": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
     "open_pulls": [],
     "pulls": [
       {
@@ -101,7 +101,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T05:27:29.245147Z",
+  "observed_at": "2026-11-13T05:52:30.096882Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -113,6 +113,68 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "context-recovery-closeout",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "本轮实现与实机边界分开记录",
+              "ref": "docs/acceptance-2026-11-13.md"
+            }
+          ],
+          "id": "closeout-context",
+          "next": "应用让出后安装与重载，验证 A/B 会话切换和实际选区归属。",
+          "status": "in_progress",
+          "summary": "网页与桌面统一截止所选消息的最多四个用户轮，原生按已确认会话读取官方日志，退役最新快照。选区竞态和旧 Hook 升级遗漏已修复。Swift 48、扩展34、增强器10及全仓门禁通过，签名包已构建但未安装。",
+          "title": "上下文契约与会话归属"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "网页文件适配器、原生Core及实际服务读回范围",
+              "ref": "docs/acceptance-2026-11-13.md"
+            }
+          ],
+          "id": "closeout-offline-protocol",
+          "next": "尚需已安装应用和 Chrome storage 生命周期实测，协议验证不能代替该项。",
+          "status": "done",
+          "summary": "生产队列经过真实 HTTP503、独立进程重启和真实 Memos 重放，两端各同步一项，二次同步零写入，原文、私密评论和ID匹配。原生待同步缓存跨重启保持。",
+          "title": "双端队列真实服务恢复"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "部署源码哈希、真实模型与服务验证",
+              "ref": "docs/acceptance-2026-11-13.md"
+            }
+          ],
+          "id": "closeout-summary",
+          "next": "生成内容仍需按实际样本审查，不把有限样本通过视为普遍准确保证。",
+          "status": "done",
+          "summary": "弃用仍误判的首版候选，最终以结构化输入区分选区和上下文，只归纳主题。两轮六次真实模型输出及独立复核通过；云端增强器已部署，两个真实入库样本原文与评论一致。",
+          "title": "摘要误述修复与云端部署"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "人工保留的应用操作边界",
+              "ref": "docs/acceptance-2026-11-13.md"
+            }
+          ],
+          "id": "closeout-runtime",
+          "next": "让出应用后验新上下文、实际双端离线恢复、多卡⌘Return及/rewind引用成文；删除仅限对应轮测试数据。",
+          "status": "blocked",
+          "summary": "用户确认 Chrome 和 Antigravity 仍用于另一项验收，明确先做代码与云端。本轮未操作、重启或升级两应用。",
+          "title": "新版本实际应用验收"
+        }
+      ],
+      "title": "当前收尾与待实机验收"
+    },
     {
       "id": "implemented",
       "items": [
@@ -146,7 +208,7 @@
           "id": "web-capture",
           "next": "Gemini 实机通过；Claude 按用户要求不纳入本轮。",
           "status": "done",
-          "summary": "扩展包含 ChatGPT、Claude、Gemini 适配；ChatGPT 的真实选区与端到端保存已有实机证据。其余站点单列待验。",
+          "summary": "扩展包含 ChatGPT、Claude、Gemini 适配；ChatGPT 与 Gemini 的真实选区和端到端保存已有实机证据。新四轮上下文实现的实际重载验收单列。",
           "title": "M2 · 网页选段剪藏"
         },
         {
@@ -193,7 +255,7 @@
           "id": "handoff",
           "next": "用户在 Antigravity 选择新会话继续。",
           "status": "done",
-          "summary": "官方 sidecar 创建会话并发送完整卡片上下文。已安装 HUD 的真实创建、重启和幂等验收已完成。自动选中新会话正文仍无已核实接口。",
+          "summary": "官方 sidecar 创建会话并发送完整卡片上下文。已安装 HUD 的单卡真实创建、重启和幂等验收已完成。自动选中新会话正文仍无已核实接口。",
           "title": "M4 · Antigravity 一键接聊"
         }
       ],
@@ -420,7 +482,7 @@
             }
           ],
           "id": "architecture-runtime",
-          "next": "跨页和交错并发沿用回归；第三方站点及物理全局热键未全量重验。",
+          "next": "此前版本的 ChatGPT、Gemini 和物理快捷键后续已复验。本轮新上下文尚未安装或重新加载，状态见收尾条目。",
           "status": "done",
           "summary": "日常签名包和固定 Hook/sidecar 已升级，重启、真实联网同步及菜单接聊后归档通过。Chrome 已重载并完成 HTTP/file 真实剪藏；云端仅更新增强器，正文保真且 Memos 未重启。仅清理本轮四条记录，原有14条正常主记录完整返回值未变。",
           "title": "本轮修复的运行环境升级"

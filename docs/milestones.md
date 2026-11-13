@@ -35,9 +35,11 @@
 **可执行验收**
 
 1. 桌面端按下 `⌃⌥S` 时优先经 `kAXSelectedTextAttribute` 读取选区，回退模拟 `⌘C` 时校验 `changeCount` 递增并在 `defer` 完整恢复全部 `NSPasteboardItem`，无选区时不误存旧剪贴板。
-2. `coding-rewind-hook` 在 `PostInvocation` 与 `Stop` 事件中从标准输入提取 `lastUserInput`、`conversationId` 与 `transcript.jsonl` 最近 4 轮问答，原子更新 `active_turn.json` 且退出码为 0。
+2. Antigravity 捕获按选区所属聊天页面确认会话编号，只读取该会话的官方 transcript。切换 A、B 会话后，从 A 选旧回复仍使用 A 对应提问，最多附带截止所选消息的四个用户轮，不含后续提问。无法唯一定位时保留原文与已确认出处，省略上下文。
 3. 浏览器扩展 `extensions/web-clipper` 从 ChatGPT、Claude、Gemini 页面提取选区 Markdown、清洗后的会话标题、前序提问与最近 4 轮对话，由后台直连 `POST /api/memos?memoId=<clientClipId>` 与评论接口，右上角显示 2.2 秒轻提示且不抢焦点、不弹协议确认框。
 4. 目标不可达时，桌面端写入 `outbox.jsonl`、网页端写入 `chrome.storage.local` 离线队列，恢复连接后通过相同 `memoId` 幂等冲刷且不产生重复记录。
+
+本轮实机验收仅覆盖 ChatGPT 与 Gemini，Claude 按用户要求排除。
 
 ## M3　云端 AI 脉络定锚、72 小时浮窗回顾与数据可控
 
@@ -61,7 +63,7 @@
 **可执行验收**
 
 1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端经官方 sidecar 调用 `agentapi new-conversation`，传入含脉络抬头、原文与回链的提示词，并以成功回执和真实桌面会话共同验收。
-2. 插件安装器将辅助二进制拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，`hooks.json` 中 `PostInvocation` 与 `Stop` 为扁平处理器数组。
+2. 插件安装器将辅助二进制拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，sidecar 使用官方配置；升级移除本插件生成的旧快照 Hook，保留不属于该处理器的配置。
 3. `scripts/memos-mcp-bridge.sh` 在 `CODING_REWIND_QA=1` 下严格隔离至 `com.codingrewind.memos.qa` 钥匙串服务，不落盘明文令牌即可将 `Memos` 原生 `/mcp` 接入 Antigravity 供 `/rewind` 检索与成文引用。
 4. 运行 `./scripts/check` 与 `./scripts/build-app-bundle.sh` 全部退出码为 0。
 

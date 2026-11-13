@@ -24,7 +24,7 @@
 
 - **单一事实源后端 `deploy/vps/`**，直接运行官方固定版本 `neosmemo/memos:26.11.0` 容器承接 `/api/memos` REST 存储与原生 Streamable HTTP `/mcp` 服务，旁挂约百行纯 Python 3 标准库编写的幂等语境增强器 `rewind-enricher`，结合前文 4 轮对话生成标题、会话主题、脉络摘要与关键词引用头，100% 保留用户选中原文不改动。
 - **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，默认使用 `⌃⌥S` 捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。`⌘Return` 将勾选卡片交给 Antigravity，接聊方式见下文。
-- **Antigravity 2.x 官方插件与钩子 `Sources/AntigravityBridge/` 与 `scripts/memos-mcp-bridge.sh`**，非阻塞 `PostInvocation` 与 `Stop` 钩子记录最新提问及最近 4 轮对话上下文，钥匙串桥接脚本在不落盘明文令牌的前提下将原生 `/mcp` 暴露给 Antigravity 的 `/rewind` 技能与 `Knowledge Work` 写作界面。
+- **Antigravity 2.x 上下文与官方插件**，桌面捕获从选区所属聊天页面确认会话编号，只读取该会话的官方 transcript，定位所选消息与对应提问；钥匙串桥接脚本在不落盘明文令牌的前提下将原生 `/mcp` 暴露给 Antigravity 的 `/rewind` 技能与 `Knowledge Work` 写作界面。
 - **网页端薄剪藏扩展 `extensions/web-clipper/`**，Manifest V3 无依赖扩展，吸收 MIT 项目 `mem0ai/mem0-chrome-extension`、`revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter` 经验，在 ChatGPT、Claude 与 Gemini 页面提取选区 Markdown 与前序 4 轮对话后后台直连 Memos API，右上角展示 2.2 秒轻提示，不弹自定义协议确认框也不抢焦点。
 
 ## 在 Antigravity 接聊
