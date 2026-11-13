@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T17:38:17Z"
       }
     ],
-    "main": "fbf77ae25f7a900c31e1b05fb4ae8eec56284f06",
+    "main": "806e056737bae98ac222a0159d904ece548c27f9",
     "open_pulls": [],
     "pulls": [
       {
@@ -115,6 +115,14 @@
         "merged": true,
         "number": 13,
         "state": "closed"
+      },
+      {
+        "base": "fbf77ae25f7a900c31e1b05fb4ae8eec56284f06",
+        "head": "f8aafbb4d82e31fe5b34b6cf4f6fb39dc63af61f",
+        "merge_commit": "806e056737bae98ac222a0159d904ece548c27f9",
+        "merged": true,
+        "number": 15,
+        "state": "closed"
       }
     ],
     "releases": []
@@ -124,7 +132,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T17:42:45.551506Z",
+  "observed_at": "2026-11-13T18:15:15.377257Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -136,6 +144,87 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "codex-delivery",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "Codex接聊实现、独立复核与合并",
+              "ref": 15
+            }
+          ],
+          "id": "codex-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "浮窗和菜单可选择Antigravity或Codex，⌘Return发送勾选剪藏及已有上下文。共享提示词、持久化请求和归档流程，宿主队列分开保存。Codex经官方app-server排队并由App唤醒，真实首轮的请求编号、轮次和原文匹配后才确认成功；未知结果不重发。",
+          "title": "统一接聊与可靠回执"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "独立验收评论与交付说明",
+              "ref": 15
+            },
+            {
+              "kind": "note",
+              "note": "本地 .scratch/ship-codex/qa-acceptance.json 与两次首轮读回；第二轮回复截图 s000002ab",
+              "ref": "2026-11-14 本机实测"
+            }
+          ],
+          "id": "codex-verification",
+          "next": "",
+          "status": "done",
+          "summary": "非作者在精确提交f8aafbb独立运行全仓检查通过，结论PASS+NOTES。最终QA包从真实HUD按钮及⌘Return发起两次接聊，588与606字节提示词逐字匹配且各有唯一请求消息。归档503后重启应用与服务，再次操作只重试归档，最终200且未重复创建会话。同一Codex会话第二轮输入与回复已实测通过。",
+          "title": "独立检查与真实界面验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "本地 .scratch/ship-codex/installed-acceptance.json、daily-readback-final.json 与release-build.json；最终首轮状态completed，617字节原文与唯一请求消息匹配",
+              "ref": "2026-11-14 日常安装实测"
+            }
+          ],
+          "id": "codex-installed",
+          "next": "",
+          "status": "done",
+          "summary": "日常安装包与release包逐字一致且签名校验通过，二进制SHA-256为a40d87756a508e74fff5cd8b245f5e8132bd5059e8938798168bf14a0ada1de4。其源码f8aafbb与PR #15合并树806e056一致；QA与release去签名后的可执行文件逐字一致。正常配置下实际⌘Return发送既有合成剪藏，真实首轮617字节原文及唯一clientId匹配，首轮最终完成且成功回执后请求清除。",
+          "title": "日常包安装与Codex首轮读回"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "设置窗口实测辅助功能未授权；系统授权须本人确认",
+              "ref": "2026-11-14 当前安装检查"
+            }
+          ],
+          "id": "codex-install-permission",
+          "next": "用户完成系统授权后读回权限，再验证当前安装包的快捷键捕获。",
+          "status": "blocked",
+          "summary": "更新后的日常程序设置页显示辅助功能未授权，快捷键捕获其他应用选区因此受阻。已向用户请求为当前固定安装路径授权；Codex接聊成功不能替代剪藏捕获回归。Antigravity插件经设置页修复后已显示2.x就绪。",
+          "title": "当前安装包的捕获权限与回归"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "Codex接聊实现、独立复核与合并",
+              "ref": 15
+            }
+          ],
+          "id": "codex-merged",
+          "next": "",
+          "status": "done",
+          "summary": "PR #12、#13与#15已合并，PR #15合并提交为806e056。当前安装对应f8aafbb的同一源码树。系统授权与当前包捕获回归仍单列，尚未宣布全部安装验收完成。",
+          "title": "PR 合并与源码交付"
+        }
+      ],
+      "title": "Codex 对等接聊与当前安装"
+    },
     {
       "id": "native-chat-apps",
       "items": [
@@ -196,10 +285,10 @@
             }
           ],
           "id": "native-chat-installed",
-          "next": "",
+          "next": "新增Codex后的当前安装包与权限状态见上方交付条目。",
           "status": "done",
-          "summary": "日常安装版已通过1Password、辅助功能和Chrome自动化授权。ChatGPT与Gemini实际⌃⌥⇧⌘K均直接写入Memos，服务端ready回读确认来源、私有会话链接、选区Markdown、代码缩进与空行、前序提问及唯一私密上下文评论完全匹配。已安装二进制与验收构建逐字一致。Gemini回链覆盖默认Chrome。",
-          "title": "日常安装版直连验收"
+          "summary": "PR #13 安装包已通过1Password、辅助功能和Chrome自动化授权。ChatGPT与Gemini实际⌃⌥⇧⌘K均直接写入Memos，服务端ready回读确认来源、私有会话链接、选区Markdown、代码缩进与空行、前序提问及唯一私密上下文评论完全匹配。该验收构建与当时安装二进制逐字一致；Gemini回链覆盖默认Chrome。",
+          "title": "PR #13 安装包的直连验收"
         },
         {
           "evidence": [
@@ -212,7 +301,7 @@
           "id": "native-chat-source-delivery",
           "next": "",
           "status": "done",
-          "summary": "PR #12与#13已依次合并至main，最终合并提交fbf77ae。合并树与已验收的bf56e9c完全一致，日常安装二进制SHA-256仍与验收构建相同。",
+          "summary": "PR #12与#13已依次合并至main。PR #13合并树fbf77ae与当时已验收的bf56e9c完全一致。当前源码包含后续已合并的Codex接聊，安装状态单列。",
           "title": "源码提交与推送"
         }
       ],
@@ -230,9 +319,9 @@
             }
           ],
           "id": "closeout-context",
-          "next": "应用让出后安装与重载，验证 A/B 会话切换和实际选区归属。",
+          "next": "按#14验证Antigravity A/B会话切换、实际选区归属与Chrome扩展重载。",
           "status": "in_progress",
-          "summary": "网页与桌面统一截止所选消息的最多四个用户轮，原生按已确认会话读取官方日志，退役最新快照。选区竞态和旧 Hook 升级遗漏已修复。Swift 48、扩展34、增强器10及全仓门禁通过，签名包已构建但未安装。",
+          "summary": "网页与桌面统一截止所选消息的最多四个用户轮，原生按已确认会话读取官方日志，退役最新快照。选区竞态和旧Hook升级遗漏已修复，代码已合并并随当前桌面包安装。设置页修复插件后显示Antigravity 2.x已就绪；当前AX会话定位与Chrome扩展重载仍需#14实机验证。",
           "title": "上下文契约与会话归属"
         },
         {
@@ -274,7 +363,7 @@
           "id": "closeout-runtime",
           "next": "完成#14列出的独立实机验收。",
           "status": "unverified",
-          "summary": "Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位与旧Hook升级实机路径尚缺证据，转入#14跟踪。ChatGPT与Gemini原生剪藏已另行通过日常安装版验收。",
+          "summary": "Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位的实机路径仍由#14跟踪。当前设置页修复插件后已显示就绪，但不据此判定全部宿主行为通过。ChatGPT与Gemini在PR #13安装包已通过原生剪藏验收；更新包的授权与回归状态另列。",
           "title": "新版本实际应用验收"
         },
         {
@@ -444,7 +533,7 @@
             }
           ],
           "id": "current-verification",
-          "next": "辅助功能授权已生效，补验结果见下方。",
+          "next": "此条为此前桌面入口验收；当前安装包辅助功能状态见上方交付条目。",
           "status": "done",
           "summary": "最终全仓门禁通过；隔离设置的切换、持久化、URL 校验与离线反馈通过。日常交付包签名与二进制哈希核对通过，Dock、菜单栏、设置、窗口重开及应用重启已实测。",
           "title": "本轮自动验证与实机验收"
@@ -601,7 +690,7 @@
             }
           ],
           "id": "architecture-runtime",
-          "next": "此前版本的 ChatGPT、Gemini 和物理快捷键后续已复验。本轮新上下文尚未安装或重新加载，状态见收尾条目。",
+          "next": "当前源码已随Codex交付包安装；旧Hook修复后的设置页已显示就绪，剩余运行验收见#14与当前交付条目。",
           "status": "done",
           "summary": "日常签名包和固定 Hook/sidecar 已升级，重启、真实联网同步及菜单接聊后归档通过。Chrome 已重载并完成 HTTP/file 真实剪藏；云端仅更新增强器，正文保真且 Memos 未重启。仅清理本轮四条记录，原有14条正常主记录完整返回值未变。",
           "title": "本轮修复的运行环境升级"
@@ -653,7 +742,8 @@
       10,
       11,
       12,
-      13
+      13,
+      15
     ]
   }
 }
