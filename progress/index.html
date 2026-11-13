@@ -44,18 +44,18 @@
 </ul><p>Next: 按代码质量标准继续补验下列未覆盖项。</p></article>
 </section>
 <section id="unverified"><h2>本轮补验与剩余边界</h2>
-<article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>TextEdit 与 Chrome 的真实选区捕获已通过；Chrome 两次由用户按全局快捷键触发，并读回各自新记录。两条剪贴板 item、七种实际格式表示在成功 AX 捕获和空选区回退前后逐字节一致，测试后用户原剪贴板恢复一致。</p><ul>
+<article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>TextEdit 与 Chrome 真实选区、Chrome 用户全局快捷键已通过服务读回。新增受控来源证明 AX 无值时模拟复制成功，原文与实际选区一致。成功 AX、空选区和成功复制回退均核对两条剪贴板 item、七种格式原始字节，用户原剪贴板恢复一致。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 明确区分桌面按钮、热键与剪贴板覆盖范围</a></li>
-</ul><p>Next: 本轮夹具已通过；成功复制回退分支及任意延迟提供数据的剪贴板类型未单独覆盖。</p></article>
+</ul><p>Next: 成功复制回退已通过受控 AppKit 来源验收；任意第三方应用及延迟提供数据的剪贴板类型未作全面覆盖。</p></article>
 <article id="other-websites"><h3>Gemini 真实页面</h3><span class="badge">done</span><p>真实页面发现并修复 pre-wrap 换行丢失；重新加载扩展后，保存、AI 处理与上下文评论保留三行、加粗和代码。Claude 按用户要求退出本轮验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 真实 DOM 形状的换行回归</a></li>
 </ul><p>Next: 后续修改转换器时重跑回归和真实选区检查。</p></article>
 <article id="mcp"><h3>Codex 与 Antigravity 宿主 MCP 调用</h3><span class="badge">done</span><p>实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。 Antigravity 新会话也实际完成这三项调用，并展开工具参数与返回值核对。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 当前宿主实际 MCP 读回</a></li>
 </ul><p>Next: 宿主或 MCP 接线变更后重新进行会话内读回验收。</p></article>
-<article id="export-and-mcp"><h3>导出与删除</h3><span class="badge">done</span><p>本轮私密测试数据经 MCP 导出为结构化 JSON并重新读取核对。删除本轮主记录后，其上下文评论也返回 404；两条 Chrome 测试卡片删除后，桌面刷新清除对应热缓存。</p><ul>
+<article id="export-and-mcp"><h3>导出与删除</h3><span class="badge">done</span><p>原生网页下载 ZIP 与服务端快照逐条核对通过，25 条记录含 11 条评论，正文原始字节与主要元数据一致。此前本轮测试数据的 MCP 导出、主记录与评论级联删除及桌面缓存刷新也已通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 仅本轮新建数据的导出、级联删除及缓存实测</a></li>
-</ul><p>Next: 本项验证结构化数据导出；原生网页全账户批量导出未单独覆盖。</p></article>
+</ul><p>Next: 原生网页全账户导出已补验；当前账户无附件，附件文件导出未覆盖。</p></article>
 <article id="remaining-delivery"><h3>补验修复交付</h3><span class="badge">done</span><p>PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/8">pull 8: Gemini 换行保真修复与补验记录</a></li>
 </ul><p>Next: 本轮重点验收已补齐；覆盖范围与未单测分支见验收记录。</p></article>
