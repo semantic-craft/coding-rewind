@@ -70,9 +70,9 @@
 <article id="architecture-delivery"><h3>独立复核与合并</h3><span class="badge">done</span><p>PR #9 已合并至 main。非作者在独立工作区复核精确 head，全仓检查再次通过，结论 PASS+NOTES。实机证据由主代理执行，独立审查未重复操作。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/9">pull 9: 独立验收评论及合并结果</a></li>
 </ul><p>Next: 运行环境升级仍单列，不能用合并替代部署验收。</p></article>
-<article id="architecture-runtime"><h3>本轮修复的运行环境升级</h3><span class="badge">unverified</span><p>本轮使用隔离包与真实 Chrome DOM 验证。日常应用、已加载扩展及云端增强器尚未更新到本轮源码，不把源码通过记作部署通过。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 实现、安装和部署分别验收</a></li>
-</ul><p>Next: 升级日常包、重新加载扩展及部署增强器时分别重验。</p></article>
+<article id="architecture-runtime"><h3>本轮修复的运行环境升级</h3><span class="badge">done</span><p>日常签名包和固定 Hook/sidecar 已升级，重启、真实联网同步及菜单接聊后归档通过。Chrome 已重载并完成 HTTP/file 真实剪藏；云端仅更新增强器，正文保真且 Memos 未重启。仅清理本轮四条记录，原有14条正常主记录完整返回值未变。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 实际安装、重载、部署、读回及清理证据</a></li>
+</ul><p>Next: 跨页和交错并发沿用回归；第三方站点及物理全局热键未全量重验。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>

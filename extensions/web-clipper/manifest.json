@@ -71,7 +71,8 @@
       ],
       "matches": [
         "https://*/*",
-        "http://*/*"
+        "http://*/*",
+        "file:///*"
       ],
       "use_dynamic_url": true
     }
