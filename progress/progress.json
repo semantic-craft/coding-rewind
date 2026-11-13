@@ -7,6 +7,10 @@
       {
         "head": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
         "number": 12
+      },
+      {
+        "head": "c9ffd1438c3976a3224f699881717f02e7104fdf",
+        "number": 13
       }
     ],
     "pulls": [
@@ -105,6 +109,14 @@
         "merged": false,
         "number": 12,
         "state": "open"
+      },
+      {
+        "base": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
+        "head": "c9ffd1438c3976a3224f699881717f02e7104fdf",
+        "merge_commit": "b35ca9f8cfd7af29c7988da229d4d08d88d9417d",
+        "merged": false,
+        "number": 13,
+        "state": "open"
       }
     ],
     "releases": []
@@ -114,7 +126,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T16:36:32.331674Z",
+  "observed_at": "2026-11-13T16:44:51.065214Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -128,66 +140,80 @@
   "sections": [
     {
       "id": "native-chat-apps",
-      "title": "ChatGPT 与 Gemini App 剪藏",
       "items": [
         {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "实际应用适配与会话复核",
+              "ref": "Sources/CodingRewindApp/NativeChatCapture.swift"
+            },
+            {
+              "kind": "file",
+              "note": "选区归属和轮次截断",
+              "ref": "Sources/CodingRewindCore/NativeConversationContext.swift"
+            }
+          ],
           "id": "native-chat-implementation",
-          "title": "来源、私有回链与消息上下文",
+          "next": "",
           "status": "done",
           "summary": "两应用复用桌面快捷键、Memos私密正文与上下文评论。ChatGPT代码行与Gemini代码附件保留缩进和空行，纯解析器最多取四个用户轮。",
+          "title": "来源、私有回链与消息上下文"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindApp/NativeChatCapture.swift",
-              "note": "实际应用适配与会话复核"
+              "note": "实测HTML、代码行和附件回归",
+              "ref": "Tests/CodingRewindAppTests/NativeChatCaptureTests.swift"
             },
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindCore/NativeConversationContext.swift",
-              "note": "选区归属和轮次截断"
+              "note": "四轮、缺口、重复选区和入队行为",
+              "ref": "Tests/CodingRewindCoreTests/NativeConversationContextTests.swift"
+            },
+            {
+              "kind": "note",
+              "note": "本地证据 .scratch/native-app-clipping/acceptance.json 与对应pending、ready、comments回读",
+              "ref": "2026-11-14 本机实测"
             }
           ],
-          "next": ""
-        },
-        {
           "id": "native-chat-device-acceptance",
-          "title": "隔离构建的真实快捷键与 Memos 回读",
+          "next": "",
           "status": "done",
           "summary": "ChatGPT 26.1106.51428、Gemini 1.144.4.1467 实际选区与⌃⌥S保存通过。A/B链接与提问各自匹配；粗体、代码、缩进、空行及私密评论从pending到ready保持；Gemini三轮上下文、空选区不入库、离线跨重启重放及两端剪贴板恢复通过。全仓check与独立复核通过。",
-          "evidence": [
-            {
-              "kind": "file",
-              "ref": "Tests/CodingRewindAppTests/NativeChatCaptureTests.swift",
-              "note": "实测HTML、代码行和附件回归"
-            },
-            {
-              "kind": "file",
-              "ref": "Tests/CodingRewindCoreTests/NativeConversationContextTests.swift",
-              "note": "四轮、缺口、重复选区和入队行为"
-            },
-            {
-              "kind": "note",
-              "ref": "2026-11-14 本机实测",
-              "note": "本地证据 .scratch/native-app-clipping/acceptance.json 与对应pending、ready、comments回读"
-            }
-          ],
-          "next": ""
+          "title": "隔离构建的真实快捷键与 Memos 回读"
         },
         {
-          "id": "native-chat-installed",
-          "title": "日常安装版直连验收",
-          "status": "in_progress",
-          "summary": "已安装至 ~/Applications/CodingRewind.app，签名校验通过，保留已有1Password启动器。首次启动正在等待1Password要求的Touch ID本人授权，尚未宣告日常安装版直连验收通过。",
           "evidence": [
             {
               "kind": "note",
-              "ref": "2026-11-14 安装",
-              "note": "安装前版本保留在本轮本地验收目录；授权窗口明确请求CodingRewind CLI访问"
+              "note": "安装前版本保留在本轮本地验收目录；授权窗口明确请求CodingRewind CLI访问",
+              "ref": "2026-11-14 安装"
             }
           ],
-          "next": "完成Touch ID后用安装版再次热键剪藏并回读真实Memos。"
+          "id": "native-chat-installed",
+          "next": "完成Touch ID后用安装版再次热键剪藏并回读真实Memos。",
+          "status": "in_progress",
+          "summary": "已安装至 ~/Applications/CodingRewind.app，签名校验通过，保留已有1Password启动器。首次启动要求Touch ID本人授权；等待超时后进程退出，日常安装版直连验收尚未通过。",
+          "title": "日常安装版直连验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "本轮原生剪藏改动",
+              "ref": 13
+            }
+          ],
+          "id": "native-chat-source-delivery",
+          "next": "日常安装版完成凭据授权与直连复验后更新状态；保留父PR的既有验收边界。",
+          "status": "done",
+          "summary": "原生剪藏实现、实测回归与文档已提交并推送。PR #13 以尚未合并的 #12 为基线，当前未合并。",
+          "title": "源码提交与推送"
         }
-      ]
+      ],
+      "title": "ChatGPT 与 Gemini App 剪藏"
     },
     {
       "id": "context-recovery-closeout",
@@ -621,7 +647,8 @@
       9,
       10,
       11,
-      12
+      12,
+      13
     ]
   }
 }
