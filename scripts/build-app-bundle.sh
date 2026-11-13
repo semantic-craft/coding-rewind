@@ -17,7 +17,7 @@ if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     esac
     OP_EXECUTABLE="${CODING_REWIND_OP_BIN:-$(command -v op || true)}"
     if [[ "${OP_EXECUTABLE}" != /* || ! -x "${OP_EXECUTABLE}" ]]; then
-        echo "Error: an executable absolute op path is required for the developer launcher" >&2
+        echo "Error: an executable absolute op path is required for developer credentials" >&2
         exit 1
     fi
 fi
@@ -72,8 +72,6 @@ install -m 0644 "${REPO_ROOT}/Vendor/KeyboardShortcuts/license" "${RESOURCES_DIR
 
 install -m 0755 "${BIN_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp"
 if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
-    mv "${MACOS_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp-native"
-    install -m 0755 "${REPO_ROOT}/scripts/memos-op-launcher.sh" "${MACOS_DIR}/CodingRewindApp"
     LAUNCHER_CONFIG="${RESOURCES_DIR}/DeveloperCredentials.plist"
     /usr/bin/plutil -create xml1 "${LAUNCHER_CONFIG}"
     /usr/bin/plutil -insert token_reference -string "${MEMOS_TOKEN_REFERENCE}" "${LAUNCHER_CONFIG}"
@@ -127,5 +125,9 @@ fi
 
 codesign --force --deep --sign - "${APP_BUNDLE}"
 codesign --verify --deep --strict "${APP_BUNDLE}"
+if [[ "$(/usr/bin/file -b "${MACOS_DIR}/CodingRewindApp")" != Mach-O* ]]; then
+    echo "Error: the app bundle executable must be the native Mach-O application" >&2
+    exit 1
+fi
 
 echo "Built and verified app bundle at ${APP_BUNDLE}"

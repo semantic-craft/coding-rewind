@@ -31,17 +31,38 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        let configurationURL = Bundle.main.url(forResource: "DeveloperCredentials", withExtension: "plist")
+        let environment = ProcessInfo.processInfo.environment
+        Task { [weak self] in
+            do {
+                let resolved = try await Task.detached {
+                    try DeveloperCredentialsBootstrap.resolveEnvironment(
+                        configurationURL: configurationURL, environment: environment
+                    )
+                }.value
+                self?.start(environment: resolved)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Coding Rewind 未能启动"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+                NSApplication.shared.terminate(nil)
+            }
+        }
+    }
+
+    private func start(environment: [String: String]) {
         do {
-            let paths = try StoragePaths.resolve()
+            let paths = try StoragePaths.resolve(environment: environment)
             let appearance = AppAppearancePreferences(defaults: AppShortcuts.preferences(
-                environment: ProcessInfo.processInfo.environment, dataDirectory: paths.dataDirectoryURL
+                environment: environment, dataDirectory: paths.dataDirectoryURL
             ))
             self.appearance = appearance
             appearance.apply()
             let capturer = MacOSAccessibilitySelectionCapturer { [weak self] in
                 self?.lastExternalApplication
             }
-            let coord = try AppCoordinator(paths: paths, capturer: capturer)
+            let coord = try AppCoordinator(paths: paths, environment: environment, capturer: capturer)
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
             }

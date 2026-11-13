@@ -76,7 +76,7 @@ public struct SettingsFormView: View {
             }
             Section("菜单栏") {
                 Text("菜单栏图标提供速览、捕获选段与设置入口。")
-                Text("找不到图标时，请在系统设置的“菜单栏”中允许 CodingRewind。开发启动器显示为 CodingRewindApp-native，也需要开启。")
+                Text("找不到图标时，请在系统设置的“菜单栏”中允许 CodingRewind。")
                     .font(.callout).foregroundStyle(.secondary)
                 Button("打开系统菜单栏设置…") {
                     if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
