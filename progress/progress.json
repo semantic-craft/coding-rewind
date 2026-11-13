@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "404d3add3225d2acac021185d0d246911b359c47",
+    "main": "304ad0e8b2c21a81fba331a4aed444330ced0833",
     "open_pulls": [],
     "pulls": [
       {
@@ -123,15 +123,31 @@
         "merged": true,
         "number": 15,
         "state": "closed"
+      },
+      {
+        "base": "404d3add3225d2acac021185d0d246911b359c47",
+        "head": "193975fbfa8db73ebe1f32dac2d5efbca9a97a67",
+        "merge_commit": "304ad0e8b2c21a81fba331a4aed444330ced0833",
+        "merged": true,
+        "number": 17,
+        "state": "closed"
       }
     ],
-    "releases": []
+    "releases": [
+      {
+        "draft": false,
+        "id": 444857926,
+        "prerelease": true,
+        "published_at": "2026-11-13T23:53:51Z",
+        "tag": "v0.3.0-rc.1"
+      }
+    ]
   },
   "inputs": [
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-13T23:47:53.836450Z",
+  "observed_at": "2026-11-13T23:54:40.409618Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -145,28 +161,52 @@
   "sections": [
     {
       "id": "release-030",
-      "title": "0.3.0 候选发布",
       "items": [
         {
-          "id": "release-030-preparation",
-          "title": "候选版准备",
-          "status": "in_progress",
-          "summary": "用户选择 v0.3.0-rc.1。全仓检查通过，release 配置的 arm64 应用包已构建并通过 ad-hoc 签名校验；公开包不含个人凭据配置，未经过 Apple 公证。仓库已为 PUBLIC。",
           "evidence": [
             {
-              "kind": "file",
-              "ref": "scripts/build-app-bundle.sh",
-              "note": "release 构建与应用版本。"
+              "kind": "pull",
+              "note": "非作者在精确 head 独立验证 PASS+NOTES。自动 Codex Review 因额度限制未运行。",
+              "ref": 17
+            },
+            {
+              "kind": "release",
+              "note": "应用与扩展已上传，远端附件 digest 与本地 SHA-256 一致。",
+              "ref": "v0.3.0-rc.1"
             },
             {
               "kind": "issue",
-              "ref": 14,
-              "note": "剩余实机验收保留，不视为全部完成。"
+              "note": "剩余实机覆盖仍未完成。",
+              "ref": 14
             }
           ],
-          "next": "独立审查、合并并发布候选附件。"
+          "id": "release-030-preparation",
+          "next": "继续 issue #14 的实机验收；本轮没有替换日常安装或验证真实凭据升级。",
+          "status": "done",
+          "summary": "v0.3.0-rc.1 已公开发布应用包、网页扩展和 SHA-256 文件。PR #17 已合并；主工作区与非作者独立工作区的全仓检查通过，解压附件的签名、版本、架构、许可证和字节核对通过。公开包不含个人开发凭据配置，使用 ad-hoc 签名，尚未 Apple 公证。",
+          "title": "候选版已公开发布"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "历史文档清理与当前约束迁移。",
+              "ref": 17
+            },
+            {
+              "kind": "note",
+              "note": "TCC 重置回执与系统设置辅助功能列表读回，不等同于全面读取 TCC 数据库。",
+              "ref": "2026-11-14 本机清理"
+            }
+          ],
+          "id": "release-030-cleanup",
+          "next": "",
+          "status": "done",
+          "summary": "撤销 7 个旧应用的 LaunchServices 注册，删除共 22 个旧应用副本及 12 个旧测试二进制，清理本仓与依赖构建缓存。3 个测试 bundle ID 的 tccutil reset 均成功，最终 LaunchServices 只保留日常安装。保留 Memos 隧道、个人数据与其他任务的工作区。历史验收流水已删除，回归测试保留。",
+          "title": "旧测试注册与构建清理"
         }
-      ]
+      ],
+      "title": "0.3.0 候选发布"
     },
     {
       "id": "codex-delivery",
@@ -767,7 +807,8 @@
       11,
       12,
       13,
-      15
+      15,
+      17
     ]
   }
 }

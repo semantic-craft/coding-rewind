@@ -3,13 +3,18 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T23:47:53.836450Z</p>
-<p>Main: <code>main: 404d3add3225d2acac021185d0d246911b359c47</code></p>
+<p>Observed: 2026-11-13T23:54:40.409618Z</p>
+<p>Main: <code>main: 304ad0e8b2c21a81fba331a4aed444330ced0833</code></p>
 <section id="release-030"><h2>0.3.0 候选发布</h2>
-<article id="release-030-preparation"><h3>候选版准备</h3><span class="badge">in_progress</span><p>用户选择 v0.3.0-rc.1。全仓检查通过，release 配置的 arm64 应用包已构建并通过 ad-hoc 签名校验；公开包不含个人凭据配置，未经过 Apple 公证。仓库已为 PUBLIC。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/build-app-bundle.sh">file scripts/build-app-bundle.sh: release 构建与应用版本。</a></li>
-<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 剩余实机验收保留，不视为全部完成。</a></li>
-</ul><p>Next: 独立审查、合并并发布候选附件。</p></article>
+<article id="release-030-preparation"><h3>候选版已公开发布</h3><span class="badge">done</span><p>v0.3.0-rc.1 已公开发布应用包、网页扩展和 SHA-256 文件。PR #17 已合并；主工作区与非作者独立工作区的全仓检查通过，解压附件的签名、版本、架构、许可证和字节核对通过。公开包不含个人开发凭据配置，使用 ad-hoc 签名，尚未 Apple 公证。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/17">pull 17: 非作者在精确 head 独立验证 PASS+NOTES。自动 Codex Review 因额度限制未运行。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.1">release v0.3.0-rc.1: 应用与扩展已上传，远端附件 digest 与本地 SHA-256 一致。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 剩余实机覆盖仍未完成。</a></li>
+</ul><p>Next: 继续 issue #14 的实机验收；本轮没有替换日常安装或验证真实凭据升级。</p></article>
+<article id="release-030-cleanup"><h3>旧测试注册与构建清理</h3><span class="badge">done</span><p>撤销 7 个旧应用的 LaunchServices 注册，删除共 22 个旧应用副本及 12 个旧测试二进制，清理本仓与依赖构建缓存。3 个测试 bundle ID 的 tccutil reset 均成功，最终 LaunchServices 只保留日常安装。保留 Memos 隧道、个人数据与其他任务的工作区。历史验收流水已删除，回归测试保留。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/17">pull 17: 历史文档清理与当前约束迁移。</a></li>
+<li>note 2026-11-14 本机清理: TCC 重置回执与系统设置辅助功能列表读回，不等同于全面读取 TCC 数据库。</li>
+</ul><p>Next: </p></article>
 </section>
 <section id="codex-delivery"><h2>Codex 对等接聊与当前安装</h2>
 <article id="codex-implementation"><h3>统一接聊与可靠回执</h3><span class="badge">done</span><p>浮窗和菜单可选择Antigravity或Codex，⌘Return发送勾选剪藏及已有上下文。共享提示词、持久化请求和归档流程，宿主队列分开保存。Codex经官方app-server排队并由App唤醒，真实首轮的请求编号、轮次和原文匹配后才确认成功；未知结果不重发。</p><ul>
@@ -142,4 +147,5 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.1">v0.3.0-rc.1</a> 2026-11-13T23:53:51Z (draft: False, prerelease: True)</li>
 </ul></section></html>
