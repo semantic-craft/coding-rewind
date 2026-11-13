@@ -124,6 +124,17 @@
 - 验证点：运行 [scripts/check](scripts/check)，再按 [代码质量标准](docs/code-quality.md) 验证已安装包的图标、设置入口和重启；[verify-app-presence.swift](scripts/verify-app-presence.swift) 只证明激活策略，屏幕图标仍需单独核验。
 - 复发记录：`Seen 1x (2026-11-13)`，用户反馈和隔离应用重启验收检出。
 
+### 网页选区转换必须保留源页面的换行规则
+
+**克隆选区会丢失祖先 CSS，不能把所有文本节点的换行都折叠为空格。**
+
+- 标签：#原文保真 #Gemini #验收
+- 起因与后果：2026-11-13 真实 Gemini 回答的 span 使用 pre-wrap；带加粗、代码的三行选区保存后变为一行，上下文评论也丢失换行。
+- 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 将源文本节点的换行规则映射到克隆节点；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 先失败后通过，真实页面重验见 [验收记录](docs/acceptance-2026-11-13.md)。
+- 正确做法 `Done right`：选区与上下文共用转换规则；同时验证 normal 空白折叠行为没有变化。
+- 验证点：运行 `./scripts/check`，从真实页面保存并比较 pending、ready 和上下文中的原文。
+- 复发记录：`Seen 1x (2026-11-13)`，真实页面剪藏验收检出。
+
 ## 记录模板
 
 复制下列模板新增条目，已有同类条目则更新原条。未知的提交、原因或验收结果明确写待核实。
