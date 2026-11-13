@@ -10,7 +10,8 @@ public enum AppCommand: Equatable, Sendable {
     case presentHUDAndFocus
     case captureSelectionFromMenu
     case captureSelectionHotkey
-    case launchInAntigravity
+    case launchConversation
+    case launchIn(ConversationHost)
     case refreshHotStream
     case openMemosWeb
     case installOrRepairPlugin
@@ -103,13 +104,20 @@ public enum MainMenuBuilder {
         actionsMenu.addItem(captureItem)
         actionsMenu.addItem(
             makeCommandMenuItem(
-                title: "在 Antigravity 开聊",
-                command: .launchInAntigravity,
+                title: "在所选应用开聊",
+                command: .launchConversation,
                 keyEquivalent: "\r",
                 modifiers: [.command],
                 handler: onCommand
             )
         )
+        for host in ConversationHost.allCases {
+            actionsMenu.addItem(makeCommandMenuItem(
+                title: "在 \(host.displayName) 开聊",
+                command: .launchIn(host),
+                handler: onCommand
+            ))
+        }
         actionsMenu.addItem(
             makeCommandMenuItem(
                 title: "立即同步热流",
@@ -398,12 +406,19 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(
             makeCommandMenuItem(
                 title: snapshot.launchTitle,
-                command: .launchInAntigravity,
+                command: .launchConversation,
                 keyEquivalent: "\r",
                 modifiers: [.command],
                 handler: onCommand
             )
         )
+        for host in ConversationHost.allCases {
+            menu.addItem(makeCommandMenuItem(
+                title: "在 \(host.displayName) 开聊",
+                command: .launchIn(host),
+                handler: onCommand
+            ))
+        }
         menu.addItem(
             makeCommandMenuItem(
                 title: "立即同步热流",

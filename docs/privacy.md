@@ -37,11 +37,13 @@ VPS 内部的 `rewind-enricher` 仅读取带 `#rewind/pending` 的新片段及�
 
 ### 4. 一键接聊的短期请求与宿主记录
 
-勾选卡片并点击开聊后，应用将原文、标题、脉络和出处组成提示词，交给 Antigravity 创建新会话并发送。接聊不经过剪贴板。
+勾选卡片并点击开聊后，应用将原文、标题、脉络和出处组成提示词，交给所选的 Antigravity 或 Codex 创建新会话并发送。接聊不经过剪贴板。
 
-`<dataDir>/handoff/` 使用 `0700` 目录与 `0600` 文件。请求正文只用于本次交接，处理完成或过期后清除。回执保存请求编号、状态和成功时的会话编号，不保存提示词。进程中断后，无法确认的请求不会自动重发。
+`<dataDir>/handoff/` 与 `<dataDir>/codex-handoff/` 分别保存两种宿主的请求，使用 `0700` 目录与 `0600` 文件。请求正文只用于本次交接，处理完成或过期后清除。回执保存请求编号、状态和成功时的会话编号，不保存提示词。进程中断后，无法确认的请求不会自动重发。
 
 Antigravity 自己会在 `~/.gemini/antigravity/sidecar_data/<sidecarId>/events/` 记录 `agentapi` 调用，记录可能包含完整提示词。2026-11-12 的无敏感测试确认事件含测试提示词。此记录及已创建会话属于宿主的留存范围，不随 Coding Rewind 请求清理而删除。[官方 sidecar 运行数据说明](https://antigravity.google/docs/sidecars#runtime-data)描述了这些目录。
+
+Codex 接聊通过官方 app-server 的私有标准输入管道传递完整提示词，不把正文放入命令行参数。队列和已发送会话由 Codex 在自己的数据目录中保存，Coding Rewind 清除短期请求不会删除这些宿主记录。Codex 子进程不接收协调器注入的 Memos 凭据，也不继承 `CODING_REWIND_*` 启动变量。模型与审批设置由 Codex 管理。
 
 ## 凭据保护机制
 

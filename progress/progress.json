@@ -1,18 +1,16 @@
 {
   "facts": {
     "default_branch": "main",
-    "issues": [],
-    "main": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
-    "open_pulls": [
+    "issues": [
       {
-        "head": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
-        "number": 12
-      },
-      {
-        "head": "9c2f4782bacedee68235b0baf0af15b6677bcf6f",
-        "number": 13
+        "number": 14,
+        "reason": null,
+        "state": "open",
+        "updated_at": "2026-11-13T17:38:17Z"
       }
     ],
+    "main": "fbf77ae25f7a900c31e1b05fb4ae8eec56284f06",
+    "open_pulls": [],
     "pulls": [
       {
         "base": "1d36ca0205616cb6fc4ed1a9b379f0d297137e37",
@@ -105,18 +103,18 @@
       {
         "base": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
         "head": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
-        "merge_commit": "3f9eb2ca5ffe0e422c5425c8e726d9d7a09ba8ef",
-        "merged": false,
+        "merge_commit": "4892cc471009d5f1b29c44f2c92fbdb7ed0e78f0",
+        "merged": true,
         "number": 12,
-        "state": "open"
+        "state": "closed"
       },
       {
-        "base": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
-        "head": "9c2f4782bacedee68235b0baf0af15b6677bcf6f",
-        "merge_commit": "e2cbbe6e17512ca989ba1521a1c7df4688509c38",
-        "merged": false,
+        "base": "4892cc471009d5f1b29c44f2c92fbdb7ed0e78f0",
+        "head": "bf56e9c942178257b758d4c807d92bd69b10fd34",
+        "merge_commit": "fbf77ae25f7a900c31e1b05fb4ae8eec56284f06",
+        "merged": true,
         "number": 13,
-        "state": "open"
+        "state": "closed"
       }
     ],
     "releases": []
@@ -126,7 +124,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T17:34:33.292863Z",
+  "observed_at": "2026-11-13T17:42:45.551506Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -212,9 +210,9 @@
             }
           ],
           "id": "native-chat-source-delivery",
-          "next": "PR #13保留在尚未合并的父PR #12之上；父PR的Antigravity接聊验收不包含在本轮通过结论中。",
+          "next": "",
           "status": "done",
-          "summary": "原生剪藏、凭据启动修复、回归与日常实机验收已提交并推送。PR #13以尚未合并的 #12为基线；当前未合并，日常应用已安装并验收通过。",
+          "summary": "PR #12与#13已依次合并至main，最终合并提交fbf77ae。合并树与已验收的bf56e9c完全一致，日常安装二进制SHA-256仍与验收构建相同。",
           "title": "源码提交与推送"
         }
       ],
@@ -274,9 +272,9 @@
             }
           ],
           "id": "closeout-runtime",
-          "next": "让出应用后验新上下文、实际双端离线恢复、多卡⌘Return及/rewind引用成文；删除仅限对应轮测试数据。",
-          "status": "blocked",
-          "summary": "用户确认 Chrome 和 Antigravity 仍用于另一项验收，明确先做代码与云端。本轮未操作、重启或升级两应用。",
+          "next": "完成#14列出的独立实机验收。",
+          "status": "unverified",
+          "summary": "Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位与旧Hook升级实机路径尚缺证据，转入#14跟踪。ChatGPT与Gemini原生剪藏已另行通过日常安装版验收。",
           "title": "新版本实际应用验收"
         },
         {
@@ -288,9 +286,9 @@
             }
           ],
           "id": "closeout-delivery",
-          "next": "应用让出后完成实机路径，再合并并升级日常客户端。",
-          "status": "in_progress",
-          "summary": "PR #12 已提交并推送，独立源码复核通过，全仓检查和签名包构建通过。云端增强器已部署；桌面和扩展未安装本轮改动。",
+          "next": "",
+          "status": "done",
+          "summary": "PR #12已合并至main；非作者独立工作区复验全仓检查、签名包、网页缺陷前后对照通过，结论PASS+NOTES。桌面源码已随PR #13安装，云端增强器已部署；扩展与Antigravity剩余实机路径见#14。",
           "title": "本轮源码交付"
         }
       ],
@@ -639,7 +637,9 @@
   ],
   "title": "Coding Rewind 开发进度",
   "tracked": {
-    "issues": [],
+    "issues": [
+      14
+    ],
     "pulls": [
       1,
       2,
