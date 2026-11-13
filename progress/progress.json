@@ -5,8 +5,12 @@
     "main": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
     "open_pulls": [
       {
-        "head": "26b57bcfafcce6600bf0decd0c6d6e9e3b142a1c",
+        "head": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
         "number": 12
+      },
+      {
+        "head": "9c2f4782bacedee68235b0baf0af15b6677bcf6f",
+        "number": 13
       }
     ],
     "pulls": [
@@ -100,10 +104,18 @@
       },
       {
         "base": "b8cb392de674db8c3807cca08dcac4f49267f7c4",
-        "head": "26b57bcfafcce6600bf0decd0c6d6e9e3b142a1c",
-        "merge_commit": "e3504c5d54b27f0c76551b1e8dde18c78c1923ba",
+        "head": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
+        "merge_commit": "3f9eb2ca5ffe0e422c5425c8e726d9d7a09ba8ef",
         "merged": false,
         "number": 12,
+        "state": "open"
+      },
+      {
+        "base": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
+        "head": "9c2f4782bacedee68235b0baf0af15b6677bcf6f",
+        "merge_commit": "e2cbbe6e17512ca989ba1521a1c7df4688509c38",
+        "merged": false,
+        "number": 13,
         "state": "open"
       }
     ],
@@ -114,7 +126,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T05:54:24.130871Z",
+  "observed_at": "2026-11-13T17:34:33.292863Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -126,6 +138,88 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "native-chat-apps",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "实际应用适配与会话复核",
+              "ref": "Sources/CodingRewindApp/NativeChatCapture.swift"
+            },
+            {
+              "kind": "file",
+              "note": "选区归属和轮次截断",
+              "ref": "Sources/CodingRewindCore/NativeConversationContext.swift"
+            }
+          ],
+          "id": "native-chat-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "两应用复用桌面快捷键、Memos私密正文与上下文评论。ChatGPT代码行与Gemini代码附件保留缩进和空行，纯解析器最多取四个用户轮。",
+          "title": "来源、私有回链与消息上下文"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "实测HTML、代码行和附件回归",
+              "ref": "Tests/CodingRewindAppTests/NativeChatCaptureTests.swift"
+            },
+            {
+              "kind": "file",
+              "note": "四轮、缺口、重复选区和入队行为",
+              "ref": "Tests/CodingRewindCoreTests/NativeConversationContextTests.swift"
+            },
+            {
+              "kind": "note",
+              "note": "本地证据 .scratch/native-app-clipping/acceptance.json 与对应pending、ready、comments回读",
+              "ref": "2026-11-14 本机实测"
+            }
+          ],
+          "id": "native-chat-device-acceptance",
+          "next": "",
+          "status": "done",
+          "summary": "ChatGPT 26.1106.51428、Gemini 1.144.4.1467 实际选区与⌃⌥S保存通过。A/B链接与提问各自匹配；粗体、代码、缩进、空行及私密评论从pending到ready保持；Gemini三轮上下文、空选区不入库、离线跨重启重放及两端剪贴板恢复通过。全仓check与独立复核通过。",
+          "title": "隔离构建的真实快捷键与 Memos 回读"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "commit",
+              "note": "原生主入口绑定用途说明，开发凭据在内存中加载；全仓检查与7项凭据回归通过",
+              "ref": "6fcdbaa"
+            },
+            {
+              "kind": "note",
+              "note": "本机 .scratch/native-app-clipping/installed-acceptance.json、verify-installed.py 与两端服务端正文和评论回读；真实自定义快捷键，不经QA写入代理",
+              "ref": "2026-11-14 日常安装实测"
+            }
+          ],
+          "id": "native-chat-installed",
+          "next": "",
+          "status": "done",
+          "summary": "日常安装版已通过1Password、辅助功能和Chrome自动化授权。ChatGPT与Gemini实际⌃⌥⇧⌘K均直接写入Memos，服务端ready回读确认来源、私有会话链接、选区Markdown、代码缩进与空行、前序提问及唯一私密上下文评论完全匹配。已安装二进制与验收构建逐字一致。Gemini回链覆盖默认Chrome。",
+          "title": "日常安装版直连验收"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "本轮原生剪藏改动",
+              "ref": 13
+            }
+          ],
+          "id": "native-chat-source-delivery",
+          "next": "PR #13保留在尚未合并的父PR #12之上；父PR的Antigravity接聊验收不包含在本轮通过结论中。",
+          "status": "done",
+          "summary": "原生剪藏、凭据启动修复、回归与日常实机验收已提交并推送。PR #13以尚未合并的 #12为基线；当前未合并，日常应用已安装并验收通过。",
+          "title": "源码提交与推送"
+        }
+      ],
+      "title": "ChatGPT 与 Gemini App 剪藏"
+    },
     {
       "id": "context-recovery-closeout",
       "items": [
@@ -558,7 +652,8 @@
       9,
       10,
       11,
-      12
+      12,
+      13
     ]
   }
 }

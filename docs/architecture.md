@@ -10,7 +10,7 @@
 
 - **定位与时间窗口**，聚焦未来 1 至 3 天内确定要用到的高质量 AI 对话段落、提示词或思路，默认展示近 72 小时未归档热流卡片，不做全量聊天自动备份。
 - **采集零打断**，在当前主线编码或阅读进行中一键暂存选中文本，不弹出协议确认窗，不抢夺原应用输入焦点，不向当前会话插入保存指令，也不强迫填写标题或标签。
-- **双端统一汇聚**，同时覆盖独立桌面应用 `com.google.antigravity` 与浏览器中的 ChatGPT、Claude、Gemini，四处采集进入同一个 `Memos` 实例。
+- **双端统一汇聚**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面应用与浏览器中的 ChatGPT、Claude、Gemini，采集结果进入同一个 `Memos` 实例。
 - **原文锁死与脉络定锚**，用户选中的原文必须逐字完整保留，不得被摘要替代；前序提问与周围对话轮次作为上下文交由后台增强器提炼结构化抬头，AI 补充信息与原文严格分区展示。
 - **回归主力宿主成文**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x 及其 `Knowledge Work` 界面完成，通过 `agentapi new-conversation` 与原生 `/mcp` 贯通，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
 
@@ -53,6 +53,11 @@
   2. 默认每 5 秒从 `http://memos:5230/api/memos?pageSize=50` 开始，沿 `nextPageToken` 枚举完整候选后再逐条增强。页大小不限制候选总数，漏通知或重启后仍为 pending 的记录会在后续扫描中恢复处理。
 
 ### 2. macOS 原生菜单栏与毛玻璃浮窗
+
+`NativeChatAXCapture` 把当前 ChatGPT 或 Gemini 窗口转换为不可变消息快照。`NativeConversationContext` 只接受唯一选区归属或明确的消息锚点，遇到缺失消息停止回溯。`NativeSelectionMarkdown` 根据真实剪贴板 HTML 恢复格式，ChatGPT 代码编辑器的代码行提供缩进与空行校验。捕获完成后复核窗口和消息序列，发生会话变化时省略上下文。
+
+`NativeChatBacklink` 使用 ChatGPT 的 **Open on chatgpt.com** 或 Gemini 的 **在浏览器中打开**。ChatGPT 从本次新增的内置浏览器页面读取私有会话 URL；Gemini 从默认 Chrome 的新增标签读取。只关闭能够归属于本次操作的标签，不调用公开分享。无法确认链接时不猜会话 ID。
+
 
 位于 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`：
 

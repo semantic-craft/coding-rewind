@@ -3,8 +3,26 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T05:54:24.130871Z</p>
+<p>Observed: 2026-11-13T17:34:33.292863Z</p>
 <p>Main: <code>main: b8cb392de674db8c3807cca08dcac4f49267f7c4</code></p>
+<section id="native-chat-apps"><h2>ChatGPT 与 Gemini App 剪藏</h2>
+<article id="native-chat-implementation"><h3>来源、私有回链与消息上下文</h3><span class="badge">done</span><p>两应用复用桌面快捷键、Memos私密正文与上下文评论。ChatGPT代码行与Gemini代码附件保留缩进和空行，纯解析器最多取四个用户轮。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/NativeChatCapture.swift">file Sources/CodingRewindApp/NativeChatCapture.swift: 实际应用适配与会话复核</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/NativeConversationContext.swift">file Sources/CodingRewindCore/NativeConversationContext.swift: 选区归属和轮次截断</a></li>
+</ul><p>Next: </p></article>
+<article id="native-chat-device-acceptance"><h3>隔离构建的真实快捷键与 Memos 回读</h3><span class="badge">done</span><p>ChatGPT 26.1106.51428、Gemini 1.144.4.1467 实际选区与⌃⌥S保存通过。A/B链接与提问各自匹配；粗体、代码、缩进、空行及私密评论从pending到ready保持；Gemini三轮上下文、空选区不入库、离线跨重启重放及两端剪贴板恢复通过。全仓check与独立复核通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/NativeChatCaptureTests.swift">file Tests/CodingRewindAppTests/NativeChatCaptureTests.swift: 实测HTML、代码行和附件回归</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCoreTests/NativeConversationContextTests.swift">file Tests/CodingRewindCoreTests/NativeConversationContextTests.swift: 四轮、缺口、重复选区和入队行为</a></li>
+<li>note 2026-11-14 本机实测: 本地证据 .scratch/native-app-clipping/acceptance.json 与对应pending、ready、comments回读</li>
+</ul><p>Next: </p></article>
+<article id="native-chat-installed"><h3>日常安装版直连验收</h3><span class="badge">done</span><p>日常安装版已通过1Password、辅助功能和Chrome自动化授权。ChatGPT与Gemini实际⌃⌥⇧⌘K均直接写入Memos，服务端ready回读确认来源、私有会话链接、选区Markdown、代码缩进与空行、前序提问及唯一私密上下文评论完全匹配。已安装二进制与验收构建逐字一致。Gemini回链覆盖默认Chrome。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/6fcdbaa">commit 6fcdbaa: 原生主入口绑定用途说明，开发凭据在内存中加载；全仓检查与7项凭据回归通过</a></li>
+<li>note 2026-11-14 日常安装实测: 本机 .scratch/native-app-clipping/installed-acceptance.json、verify-installed.py 与两端服务端正文和评论回读；真实自定义快捷键，不经QA写入代理</li>
+</ul><p>Next: </p></article>
+<article id="native-chat-source-delivery"><h3>源码提交与推送</h3><span class="badge">done</span><p>原生剪藏、凭据启动修复、回归与日常实机验收已提交并推送。PR #13以尚未合并的 #12为基线；当前未合并，日常应用已安装并验收通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/13">pull 13: 本轮原生剪藏改动</a></li>
+</ul><p>Next: PR #13保留在尚未合并的父PR #12之上；父PR的Antigravity接聊验收不包含在本轮通过结论中。</p></article>
+</section>
 <section id="context-recovery-closeout"><h2>当前收尾与待实机验收</h2>
 <article id="closeout-context"><h3>上下文契约与会话归属</h3><span class="badge">in_progress</span><p>网页与桌面统一截止所选消息的最多四个用户轮，原生按已确认会话读取官方日志，退役最新快照。选区竞态和旧 Hook 升级遗漏已修复。Swift 48、扩展34、增强器10及全仓门禁通过，签名包已构建但未安装。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 本轮实现与实机边界分开记录</a></li>
@@ -99,6 +117,7 @@
 </ul><p>Next: 后续网页 DOM 或快捷键行为变化时，重跑对应真实入口与行为回归。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/pull/12">#12</a> <code>26b57bcfafcce6600bf0decd0c6d6e9e3b142a1c</code></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/12">#12</a> <code>15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f</code></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/13">#13</a> <code>9c2f4782bacedee68235b0baf0af15b6677bcf6f</code></li>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>

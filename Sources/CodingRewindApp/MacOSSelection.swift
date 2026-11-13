@@ -23,6 +23,7 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         return AXIsProcessTrusted()
     }
 
+    @MainActor
     public func captureFrontmostSelection() async throws -> CapturedSelection {
         let provider = fallbackApplicationProvider
         let resolvedTarget: (pid: pid_t, bundleID: String, appName: String)? = await MainActor.run {
@@ -50,10 +51,10 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         if bundleID == CapturedSelection.antigravityBundleIdentifier {
             _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         }
-
         var windowTitle = Self.copyAXWindowString(appElement: appElement, attribute: kAXTitleAttribute as CFString)
         var documentURL = Self.copyAXWindowString(appElement: appElement, attribute: kAXDocumentAttribute as CFString)
         var selectedText: String?
+        var selectedHTML: String?
         var focusedRef: CFTypeRef?
         let focusStatus = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef)
         if focusStatus == .apiDisabled {
@@ -63,6 +64,9 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         let focused = focusStatus == .success ? Self.axElement(focusedRef) : nil
         let chatDocument = bundleID == CapturedSelection.antigravityBundleIdentifier
             ? Self.chatDocument(owning: focused) : nil
+        let nativeObservation = NativeChatAXCapture.observe(
+            app: appElement, bundleIdentifier: bundleID, windowTitle: windowTitle, focused: focused
+        )
         var conversationID: AntigravityConversationID?
         if let focused, let text = Self.axValue(focused, kAXSelectedTextAttribute) as? String,
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -70,11 +74,17 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
             if let chatDocument, chatDocument.matches(Self.focusedChatDocument(in: appElement)) {
                 conversationID = chatDocument.conversationID
             }
+            if nativeObservation != nil {
+                let copied = await Self.copyViaCommandCPreservingPasteboard(targetPID: target.pid, expectedChatURL: nil)
+                selectedText = copied.text
+                selectedHTML = copied.html
+            }
         } else {
             let copied = await Self.copyViaCommandCPreservingPasteboard(
                 targetPID: target.pid, expectedChatURL: chatDocument?.url
             )
             selectedText = copied.text
+            if nativeObservation != nil { selectedHTML = copied.html }
             if copied.sameChatDocument { conversationID = chatDocument?.conversationID }
         }
         guard let finalSelection = selectedText, !finalSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -85,9 +95,29 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
             if let t = tab.title, !t.isEmpty { windowTitle = t }
             if let u = tab.url, !u.isEmpty { documentURL = u }
         }
+        var backlink: URL?
+        if let nativeObservation {
+            backlink = await NativeChatBacklink.capture(
+                host: nativeObservation.host, application: appElement, window: nativeObservation.window
+            )
+        }
+        let nativeChat = nativeObservation?.result(app: appElement, selectedText: finalSelection, backlink: backlink)
+        let boldRanges = nativeChat?.host == .gemini
+            ? NativeSelectionMarkdown.boldRanges(snapshot: nativeChat?.snapshot, selectedText: finalSelection) : []
+        let htmlMarkdown = selectedHTML.flatMap {
+            NativeSelectionMarkdown.convert(html: $0, plainText: finalSelection, boldRanges: boldRanges)
+        }
+        let verbatimText: String
+        if nativeChat?.snapshot != nil,
+           nativeObservation?.isCodeSelection(finalSelection) == true {
+            verbatimText = NativeSelectionMarkdown.codeBlock(finalSelection)
+        } else {
+            verbatimText = htmlMarkdown ?? finalSelection
+        }
         return CapturedSelection(
-            text: finalSelection, bundleIdentifier: bundleID, appName: appName,
-            windowTitle: windowTitle, documentURL: documentURL, antigravityConversationID: conversationID
+            text: verbatimText, bundleIdentifier: bundleID, appName: appName,
+            windowTitle: windowTitle, documentURL: documentURL, antigravityConversationID: conversationID,
+            nativeChat: nativeChat
         )
     }
 
@@ -141,32 +171,21 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
     @MainActor
     private static func copyViaCommandCPreservingPasteboard(
         targetPID: pid_t, expectedChatURL: URL?
-    ) async -> (text: String?, sameChatDocument: Bool) {
-        guard await waitForReleasedModifiers() else { return (nil, false) }
+    ) async -> (text: String?, html: String?, sameChatDocument: Bool) {
+        guard await waitForReleasedModifiers() else { return (nil, nil, false) }
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID,
            let targetApp = NSRunningApplication(processIdentifier: targetPID) {
             _ = targetApp.activate()
             try? await Task.sleep(for: .milliseconds(80))
         }
-        guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else { return (nil, false) }
+        guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else { return (nil, nil, false) }
+        let pasteboardSnapshot = PasteboardSnapshot()
+        defer { pasteboardSnapshot.restoreIfChanged() }
         let pasteboard = NSPasteboard.general
         let initialChangeCount = pasteboard.changeCount
-        let snapshot: [[(NSPasteboard.PasteboardType, Data)]] = (pasteboard.pasteboardItems ?? []).map { item in
-            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
-        }
-        defer {
-            pasteboard.clearContents()
-            let restored: [NSPasteboardItem] = snapshot.compactMap { entries in
-                guard !entries.isEmpty else { return nil }
-                let pbItem = NSPasteboardItem()
-                for (type, data) in entries { pbItem.setData(data, forType: type) }
-                return pbItem
-            }
-            if !restored.isEmpty { pasteboard.writeObjects(restored) }
-        }
         guard let source = CGEventSource(stateID: .combinedSessionState),
               let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return (nil, false) }
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_C), keyDown: false) else { return (nil, nil, false) }
         let appElement = AXUIElementCreateApplication(targetPID)
         let beforeCopy = expectedChatURL == nil ? nil : focusedChatDocument(in: appElement)
         keyDown.flags = .maskCommand
@@ -174,17 +193,44 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         keyDown.post(tap: .cghidEventTap)
         keyUp.post(tap: .cghidEventTap)
         for _ in 0..<20 {
-            do { try await Task.sleep(for: .milliseconds(10)) } catch { return (nil, false) }
+            do { try await Task.sleep(for: .milliseconds(10)) } catch { return (nil, nil, false) }
             if pasteboard.changeCount != initialChangeCount {
                 let text = pasteboard.string(forType: .string)
+                let html = pasteboard.string(forType: .html)
                 guard let beforeCopy, beforeCopy.url == expectedChatURL,
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else {
-                    return (text, false)
+                    return (text, html, false)
                 }
-                return (text, beforeCopy.matches(focusedChatDocument(in: appElement)))
+                return (text, html, beforeCopy.matches(focusedChatDocument(in: appElement)))
             }
         }
-        return (nil, false)
+        return (nil, nil, false)
+    }
+
+    @MainActor
+    private struct PasteboardSnapshot {
+        let changeCount: Int
+        let items: [[(NSPasteboard.PasteboardType, Data)]]
+
+        init() {
+            let pasteboard = NSPasteboard.general
+            changeCount = pasteboard.changeCount
+            items = (pasteboard.pasteboardItems ?? []).map { item in
+                item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+            }
+        }
+
+        func restoreIfChanged() {
+            let pasteboard = NSPasteboard.general
+            guard pasteboard.changeCount != changeCount else { return }
+            pasteboard.clearContents()
+            let restored = items.map { entries in
+                let item = NSPasteboardItem()
+                for (type, data) in entries { item.setData(data, forType: type) }
+                return item
+            }
+            if !restored.isEmpty { pasteboard.writeObjects(restored) }
+        }
     }
 
     @MainActor
