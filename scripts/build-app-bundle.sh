@@ -115,6 +115,8 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Coding Rewind 读取浏览器标签链接，为你选中的聊天片段保存会话出处。</string>
 </dict>
 </plist>
 PLIST
