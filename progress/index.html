@@ -53,9 +53,9 @@
 <article id="mcp"><h3>Codex 与 Antigravity 宿主 MCP 调用</h3><span class="badge">done</span><p>实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。 Antigravity 新会话也实际完成这三项调用，并展开工具参数与返回值核对。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 当前宿主实际 MCP 读回</a></li>
 </ul><p>Next: 宿主或 MCP 接线变更后重新进行会话内读回验收。</p></article>
-<article id="export-and-mcp"><h3>导出与删除</h3><span class="badge">done</span><p>原生网页下载 ZIP 与服务端快照逐条核对通过，25 条记录含 11 条评论，正文原始字节与主要元数据一致。此前本轮测试数据的 MCP 导出、主记录与评论级联删除及桌面缓存刷新也已通过。</p><ul>
+<article id="export-and-mcp"><h3>导出与删除</h3><span class="badge">done</span><p>原生网页全账户导出已通过。新增两种测试附件，ZIP 内原始字节、SHA-256 和元数据一致；只删除本轮主记录，两个附件随之删除且均读回 404。原有 15 条主记录完整返回值未变。此前评论级联删除和桌面缓存刷新也已通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 仅本轮新建数据的导出、级联删除及缓存实测</a></li>
-</ul><p>Next: 原生网页全账户导出已补验；当前账户无附件，附件文件导出未覆盖。</p></article>
+</ul><p>Next: 文本与 PNG 附件导出已补验；后续导出行为变更时重跑原生网页下载与逐字节核对。</p></article>
 <article id="remaining-delivery"><h3>补验修复交付</h3><span class="badge">done</span><p>PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/8">pull 8: Gemini 换行保真修复与补验记录</a></li>
 </ul><p>Next: 本轮重点验收已补齐；覆盖范围与未单测分支见验收记录。</p></article>
