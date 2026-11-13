@@ -93,7 +93,6 @@ public struct StoragePaths: Equatable, Sendable {
     public let antigravityConfigDirectoryURL: URL
 
     public var configFileURL: URL { dataDirectoryURL.appendingPathComponent("config.json", isDirectory: false) }
-    public var activeTurnFileURL: URL { dataDirectoryURL.appendingPathComponent("active_turn.json", isDirectory: false) }
     public var outboxFileURL: URL { dataDirectoryURL.appendingPathComponent("outbox.jsonl", isDirectory: false) }
     public var hotCacheFileURL: URL { dataDirectoryURL.appendingPathComponent("hot_cache.json", isDirectory: false) }
     public var binDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("bin", isDirectory: true) }
@@ -295,7 +294,7 @@ public struct CaptureContext: Codable, Equatable, Hashable, Sendable {
     public init(sessionTitle: String, prompt: String, recentTurns: [ConversationTurn] = []) {
         self.sessionTitle = sessionTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         self.prompt = prompt.replacingOccurrences(of: "\0", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        self.recentTurns = Array(recentTurns.filter { !$0.text.isEmpty }.suffix(4))
+        self.recentTurns = recentTurns.filter { !$0.text.isEmpty }
     }
 
     public var isEmpty: Bool {
@@ -318,6 +317,7 @@ public struct CapturedSelection: Equatable, Sendable {
     public let appName: String
     public let windowTitle: String?
     public let documentURL: String?
+    public let antigravityConversationID: AntigravityConversationID?
     public let capturedAt: Date
 
     public init(
@@ -326,6 +326,7 @@ public struct CapturedSelection: Equatable, Sendable {
         appName: String,
         windowTitle: String? = nil,
         documentURL: String? = nil,
+        antigravityConversationID: AntigravityConversationID? = nil,
         capturedAt: Date = Date()
     ) {
         self.text = text
@@ -333,6 +334,7 @@ public struct CapturedSelection: Equatable, Sendable {
         self.appName = appName
         self.windowTitle = windowTitle
         self.documentURL = documentURL
+        self.antigravityConversationID = antigravityConversationID
         self.capturedAt = capturedAt
     }
 }

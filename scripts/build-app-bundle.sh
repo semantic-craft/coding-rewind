@@ -81,7 +81,6 @@ if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     chmod 0600 "${LAUNCHER_CONFIG}"
 fi
 install -m 0755 "${BIN_DIR}/coding-rewind-sidecar" "${HELPERS_DIR}/coding-rewind-sidecar"
-install -m 0755 "${BIN_DIR}/coding-rewind-hook" "${HELPERS_DIR}/coding-rewind-hook"
 
 if [[ -f "${REPO_ROOT}/scripts/memos-mcp-bridge.sh" ]]; then
     install -m 0755 "${REPO_ROOT}/scripts/memos-mcp-bridge.sh" "${HELPERS_DIR}/memos-mcp-bridge.sh"

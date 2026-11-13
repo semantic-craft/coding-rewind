@@ -37,7 +37,7 @@ struct AppShortcutsTests {
         let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
         let binary = dir.appendingPathComponent("fixture-executable")
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: binary, permissions: 0o755)
-        try AntigravityIntegration.installOrRepair(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL, sourceHookBinaryURL: binary, sourceSidecarBinaryURL: binary)
+        try AntigravityIntegration.installOrRepair(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL, sourceSidecarBinaryURL: binary)
         let card = try #require(MemosWireFormat.parseMemo(id: "selected", rawContent: "#rewind/ready #source/macos\n\nSelected", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))))
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
         let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: UnusedSelectionCapturer())

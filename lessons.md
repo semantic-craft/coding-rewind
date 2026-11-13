@@ -38,11 +38,13 @@
 
 ### Antigravity 插件清单与钩子结构必须严格对齐官方规范
 
+当前状态：最新 Hook 快照不能证明选区归属，该上下文管线已退役，改用 [AntigravityCaptureContext.swift](Sources/CodingRewindCore/AntigravityCaptureContext.swift) 读取已确认会话记录。以下保留早期故障成因，现行安装只清理本插件生成的旧处理器。
+
 **生成 Antigravity 2.x 的 `plugin.json` 与 `hooks.json` 时必须使用官方规定的纯字符串提示词数组与扁平处理器数组，并直接读取标准输入载荷。**
 
 - 标签：#宿主契约 #Antigravity #钩子
 - 起因与后果：v0.1 提交 `194cdc0` 在 [AntigravityIntegration.swift](Sources/CodingRewindCore/AntigravityIntegration.swift) 中将 `PostInvocation` 与 `Stop` 误写成嵌套 `hooks` 对象结构，并将 `plugin.json` 的 `suggestedPrompts` 误写成带 `title` 与 `prompt` 的对象数组，钩子还舍弃 `stdin` 现成的 `lastUserInput` 转而逆向猜日志，导致宿主无法正常加载提示词与钩子。
-- 修复与证据：v0.2 对照 Antigravity 2.x 官方文档将插件内 `hooks.json` 的 `PostInvocation` 与 `Stop` 改为扁平命令处理器数组，将 `suggestedPrompts` 改为 3 条纯字符串数组，并在 [AntigravityHookRunner.swift](Sources/CodingRewindCore/AntigravityHookRunner.swift) 直接提取 `stdin` 的 `lastUserInput`、`conversationId` 及 `transcriptPath` 最近 4 轮对话写入 `active_turn.json`。
+- 修复与证据：v0.2 对照 Antigravity 2.x 官方文档将插件内 `hooks.json` 的 `PostInvocation` 与 `Stop` 改为扁平命令处理器数组，将 `suggestedPrompts` 改为 3 条纯字符串数组，并在当时的 `AntigravityHookRunner.swift` 直接提取 `stdin` 的 `lastUserInput`、`conversationId` 及 `transcriptPath` 最近 4 轮对话写入 `active_turn.json`。
 - 正确做法 `Done right`：宿主扩展配置只写官方文档明确支持的字段与层级，优先读取宿主标准输入提供的结构化字段，并用测试固定 JSON Schema。
 - 验证点：运行 `./scripts/check` 执行 `swift test`，确认 `plugin.json` 的 `suggestedPrompts` 为 `[String]` 且 `hooks.json` 为扁平处理器数组。
 - 复发记录：`Seen 1x (2026-11-11)`，v0.1 提交 `194cdc0` 宿主规范核查检出。

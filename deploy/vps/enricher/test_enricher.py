@@ -257,13 +257,20 @@ class EnricherUnitTests(unittest.TestCase):
         try:
             t0 = 1_762_830_000.0
             created_iso = datetime.fromtimestamp(t0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            excerpt = "验收标识\n第二行：**绿色叶子**与 `alpha = 42`。\n"
+            context = (
+                "Session Title: 剪藏验收\n"
+                "Prompt: 请按指定格式回复三行 Markdown。\n\n"
+                "### Recent Turns\nUser: 请按指定格式回复三行 Markdown。\n"
+                "Assistant: 验收标识\n第二行：**绿色叶子**与 `alpha = 42`。\n第三行：中文原文保持完整。"
+            )
             state.memos["rw-ctx-1"] = {
                 "name": "memos/rw-ctx-1",
                 "createTime": created_iso,
                 "content": (
                     "#rewind/pending #rewind/has-ctx #source/chatgpt\n\n"
-                    "> **Source:** [Race Test](https://chatgpt.com/c/99) · 2026-11-11T03:00:00Z\n\n"
-                    "const ok = true;"
+                    "> **Source:** [剪藏验收](https://chatgpt.com/c/99) · 2026-11-11T03:00:00Z\n\n"
+                    + excerpt
                 ),
             }
             now_box = [t0 + 3.0]
@@ -281,23 +288,23 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertEqual(len(state.ai_calls), 0)
             self.assertIn("#rewind/pending", state.memos["rw-ctx-1"]["content"])
 
-            # 2) Context comment arrives -> enriches immediately & passes context to AI
+            summary = "用户要求三行 Markdown，选区保留了验收标识和行内代码。"
+            state.ai_response["context_summary"] = summary
             state.comments["rw-ctx-1"] = [
                 {
                     "name": "memos/rw-ctx-1-ctx",
-                    "content": (
-                        "<!-- rewind-context-v1 -->\n"
-                        "Session Title: Race Test\n"
-                        "Prompt: How do we prevent race conditions?\n\n"
-                        "### Recent Turns\nUser: How do we prevent race conditions?\nAssistant: Use idempotent state transitions."
-                    ),
+                    "content": "<!-- rewind-context-v1 -->\n" + context,
                 }
             ]
             self.assertEqual(svc.reconcile_once(), 1)
             self.assertEqual(len(state.ai_calls), 1)
-            sent_prompt = state.ai_calls[0]["messages"][1]["content"]
-            self.assertIn("How do we prevent race conditions?", sent_prompt)
-            self.assertTrue(state.memos["rw-ctx-1"]["content"].startswith("#rewind/ready #source/chatgpt\n\n"))
+            sent_prompt = json.loads(state.ai_calls[0]["messages"][1]["content"])
+            self.assertEqual(sent_prompt["selected_excerpt"], excerpt)
+            self.assertEqual(sent_prompt["captured_chat_context"], context)
+            tags, metadata, stored_excerpt = state.memos["rw-ctx-1"]["content"].split("\n\n", 2)
+            self.assertEqual(tags, "#rewind/ready #source/chatgpt")
+            self.assertIn(f"> **Context:** {summary}", metadata.splitlines())
+            self.assertEqual(stored_excerpt, excerpt)
 
             # 3) Second memo with #rewind/has-ctx whose comment NEVER arrives -> proceeds gracefully after 15s
             state.memos["rw-ctx-timeout"] = {
@@ -312,6 +319,9 @@ class EnricherUnitTests(unittest.TestCase):
             now_box[0] = t0 + 16.0
             self.assertEqual(svc.reconcile_once(), 1)
             self.assertEqual(len(state.ai_calls), 2)
+            sent_prompt = json.loads(state.ai_calls[1]["messages"][1]["content"])
+            self.assertEqual(sent_prompt["selected_excerpt"], "SELECT 1;")
+            self.assertIsNone(sent_prompt["captured_chat_context"])
             self.assertTrue(state.memos["rw-ctx-timeout"]["content"].endswith("\n\nSELECT 1;"))
         finally:
             srv.shutdown()

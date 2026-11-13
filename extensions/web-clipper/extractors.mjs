@@ -579,7 +579,7 @@ function hasMarkdownStructure(node) {
   return false;
 }
 
-export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
+export function selectionToMarkdown(selectionOrRange, baseUrl = "", capturedText = null) {
   if (!selectionOrRange) return "";
 
   let range = null;
@@ -599,6 +599,7 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     return selectionOrRange.trim() ? selectionOrRange : "";
   }
 
+  if (capturedText !== null) plainFallback = capturedText;
   if (!range) return plainFallback;
 
   const ancestorPre = findAncestorElement(range.commonAncestorContainer, (el) => getTagName(el) === "pre");
@@ -629,7 +630,7 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     if (plainFallback && !hasMarkdownStructure(fragment)) return plainFallback;
     const md = htmlToMarkdown(fragment, { baseUrl, lineBreakModes: selectedLineBreakModes(range, fragment) });
     if (md) {
-      if (typeof selectionOrRange.getRangeAt === "function") {
+      if (capturedText !== null || typeof selectionOrRange.getRangeAt === "function") {
         const selectedText = [...nonemptyTextNodes(fragment)];
         const leadingWhitespace = findAncestorElement(selectedText[0], isInlineCodeElement)
           ? "" : plainFallback.match(/^\s*/)[0];
@@ -786,57 +787,25 @@ export function extractConversationTurns(doc, platform, baseUrl = "") {
   return turns;
 }
 
-function findSelectionAnchorNode(selection, selectionRange) {
-  if (selectionRange) {
-    return selectionRange.startContainer || selectionRange.commonAncestorContainer || null;
-  }
-  if (selection) {
-    if (selection.anchorNode) return selection.anchorNode;
-    if (typeof selection.getRangeAt === "function" && selection.rangeCount > 0) {
-      const r = selection.getRangeAt(0);
-      return r.startContainer || r.commonAncestorContainer || null;
-    }
-  }
-  return null;
-}
+function contextThroughSelection(messages, range, maxRounds) {
+  if (!range) return null;
+  const selectedIndex = messages.findIndex(({ element }) =>
+    nodeContains(element, range.startContainer) && nodeContains(element, range.endContainer)
+  );
 
-function locateTurnIndexForNode(doc, turns, anchorNode) {
-  if (turns.length === 0) return -1;
-  if (!anchorNode) return turns.length - 1;
-
-  for (let i = 0; i < turns.length; i += 1) {
-    if (nodeContains(turns[i].element, anchorNode)) {
-      return i;
-    }
+  let roundStart = -1;
+  let rounds = 0;
+  let prompt = "";
+  for (let i = selectedIndex; i >= 0 && rounds < maxRounds; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "user") continue;
+    if (rounds === 0 && i !== selectedIndex) prompt = message.text;
+    roundStart = i;
+    rounds += 1;
   }
 
-  if (typeof anchorNode.compareDocumentPosition === "function") {
-    let lastPreceding = -1;
-    for (let i = 0; i < turns.length; i += 1) {
-      const pos = turns[i].element.compareDocumentPosition(anchorNode);
-      if (pos & 16) return i;
-      if (pos & 4) lastPreceding = i;
-    }
-    if (lastPreceding >= 0) return lastPreceding;
-  }
-
-  let foundAnchor = false;
-  let lastSeenTurn = -1;
-  const turnMap = new Map(turns.map((t, idx) => [t.element, idx]));
-  const walk = (n) => {
-    if (!n || foundAnchor) return;
-    if (turnMap.has(n)) lastSeenTurn = turnMap.get(n);
-    if (n === anchorNode) {
-      foundAnchor = true;
-      return;
-    }
-    for (const c of n.childNodes || []) {
-      walk(c);
-      if (foundAnchor) return;
-    }
-  };
-  walk(doc);
-  return lastSeenTurn >= 0 ? lastSeenTurn : turns.length - 1;
+  if (roundStart < 0) return null;
+  return { prompt, messages: messages.slice(roundStart, selectedIndex + 1) };
 }
 
 function truncateCleanly(str, maxChars) {
@@ -875,48 +844,26 @@ export function formatRecentTurns(turnsSlice, maxChars = 4000) {
 
 export function extractClipContext({
   doc,
-  selection = null,
   selectionRange = null,
+  selectedText = null,
   url = "",
-  maxRecentTurns = 4,
+  maxRecentRounds = 4,
   maxRecentChars = 4000
 } = {}) {
   const sourceUrl = String(url || (doc && doc.location && doc.location.href) || "").trim();
   const sourcePlatform = detectPlatform(sourceUrl);
-  const selectedMarkdown = selectionToMarkdown(selection || selectionRange, sourceUrl);
+  const selectedMarkdown = selectionToMarkdown(selectionRange, sourceUrl, selectedText);
   const sessionTitle = extractSessionTitle(doc, sourceUrl, sourcePlatform);
 
-  const turns = extractConversationTurns(doc, sourcePlatform, sourceUrl);
-  const anchorNode = findSelectionAnchorNode(selection, selectionRange);
-  const targetIdx = locateTurnIndexForNode(doc, turns, anchorNode);
-
-  let prompt = "";
-  let recentTurns = "";
-
-  if (targetIdx >= 0 && turns.length > 0) {
-    const selectedContainedInTurn = anchorNode ? nodeContains(turns[targetIdx].element, anchorNode) : true;
-    const searchFrom = selectedContainedInTurn ? targetIdx - 1 : targetIdx;
-    for (let i = searchFrom; i >= 0; i -= 1) {
-      if (turns[i].role === "user") {
-        prompt = truncateCleanly(turns[i].text.trim(), 1500);
-        break;
-      }
-    }
-    if (!prompt && turns[targetIdx].role === "user") {
-      prompt = truncateCleanly(turns[targetIdx].text.trim(), 1500);
-    }
-
-    const startIdx = Math.max(0, targetIdx - (maxRecentTurns - 1));
-    const slice = turns.slice(startIdx, targetIdx + 1);
-    recentTurns = formatRecentTurns(slice, maxRecentChars);
-  }
+  const messages = extractConversationTurns(doc, sourcePlatform, sourceUrl);
+  const context = contextThroughSelection(messages, selectionRange, maxRecentRounds);
 
   return {
     selectedMarkdown,
     sourcePlatform,
     sessionTitle,
-    prompt,
-    recentTurns,
+    prompt: context ? truncateCleanly(context.prompt.trim(), 1500) : "",
+    recentTurns: context ? formatRecentTurns(context.messages, maxRecentChars) : "",
     sourceUrl
   };
 }

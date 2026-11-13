@@ -112,7 +112,7 @@ public final class AppCoordinator {
     public private(set) var isLaunchingConversation = false
     public private(set) var canEndUnconfirmedConversation = false
     public private(set) var canEndUnarchivedConversation = false
-    public let activeTurns: ActiveTurnStore
+    private let antigravityContext: AntigravityCaptureContext
     public var capturer: any SelectionCapturing
 
     public private(set) var isCapturingSelection = false
@@ -139,7 +139,8 @@ public final class AppCoordinator {
         paths: StoragePaths,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         memosClient: MemosClient = MemosClient(),
-        capturer: any SelectionCapturing
+        capturer: any SelectionCapturing,
+        antigravityContext: AntigravityCaptureContext = AntigravityCaptureContext()
     ) throws {
         self.paths = paths
         self.environment = environment
@@ -147,7 +148,7 @@ public final class AppCoordinator {
         self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
         self.handoff = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL)
-        self.activeTurns = try ActiveTurnStore(dataDirectoryURL: paths.dataDirectoryURL)
+        self.antigravityContext = antigravityContext
         self.capturer = capturer
         self.cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
         self.focusedCardID = self.cards.first?.id
@@ -229,7 +230,7 @@ public final class AppCoordinator {
         ) {
         case .installed:
             isPluginReady = true
-            pluginSummary = "Antigravity 2.x 插件与 Hook 已就绪"
+            pluginSummary = "Antigravity 2.x 插件已就绪"
         case .needsInstallOrRepair(let reasons):
             isPluginReady = false
             pluginSummary = "待安装或修复（\(reasons.first ?? "未安装")）"
@@ -290,7 +291,7 @@ public final class AppCoordinator {
         }
         do {
             let selection = try await capturer.captureFrontmostSelection()
-            let (platform, sourceTitle, sourceURL, context) = buildProvenance(from: selection)
+            let (platform, sourceTitle, sourceURL, context) = await buildProvenance(from: selection)
             let hasContext = (context?.isEmpty == false)
             let clientClipId = MemosWireFormat.makeClientClipID(now: selection.capturedAt)
             let rawContent = try MemosWireFormat.formatRawMemoContent(
@@ -525,12 +526,11 @@ public final class AppCoordinator {
         setBanner("已保存 Memos 连接配置", isError: false)
     }
 
-    public func installOrRepairPlugin(sourceHookURL: URL?, sourceBridgeURL: URL?, sourceSidecarURL: URL? = nil) {
+    public func installOrRepairPlugin(sourceBridgeURL: URL?, sourceSidecarURL: URL? = nil) {
         do {
             try AntigravityIntegration.installOrRepair(
                 dataDirectoryURL: paths.dataDirectoryURL,
                 configDirectoryURL: paths.antigravityConfigDirectoryURL,
-                sourceHookBinaryURL: sourceHookURL,
                 sourceMCPBridgeURL: sourceBridgeURL,
                 sourceSidecarBinaryURL: sourceSidecarURL
             )
@@ -548,7 +548,7 @@ public final class AppCoordinator {
             configDirectoryURL: paths.antigravityConfigDirectoryURL
         ) {
         case .installed:
-            pluginStatusText = "Antigravity 2.x 插件与 Hook 已就绪"
+            pluginStatusText = "Antigravity 2.x 插件已就绪"
         case .needsInstallOrRepair(let reasons):
             pluginStatusText = "待安装或修复（\(reasons.first ?? "未安装")）"
         }
@@ -556,17 +556,19 @@ public final class AppCoordinator {
 
     private func buildProvenance(
         from selection: CapturedSelection
-    ) -> (platform: String, title: String, url: String?, context: CaptureContext?) {
+    ) async -> (platform: String, title: String, url: String?, context: CaptureContext?) {
         if selection.bundleIdentifier == CapturedSelection.antigravityBundleIdentifier {
-            if let turn = activeTurns.latestTurn(forFrontmostBundleID: selection.bundleIdentifier) {
-                return (
-                    "antigravity",
-                    turn.sessionTitle,
-                    "conversation://\(turn.conversationId)",
-                    turn.toCaptureContext()
-                )
+            let windowTitle = selection.windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let title = windowTitle.flatMap { $0.isEmpty ? nil : $0 } ?? "Antigravity"
+            guard let conversationID = selection.antigravityConversationID else {
+                return ("antigravity", title, nil, nil)
             }
-            return ("antigravity", selection.windowTitle ?? "Antigravity", nil, nil)
+            let context = await antigravityContext.resolve(
+                conversationID: conversationID,
+                selectedText: selection.text,
+                sessionTitle: title
+            )
+            return ("antigravity", title, conversationID.backlink, context)
         }
         let browserPrefixes = [
             "com.apple.Safari",
