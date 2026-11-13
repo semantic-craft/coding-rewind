@@ -338,15 +338,9 @@ test("selected text excludes ChatGPT copy-excluded footers while preserving Mark
         </div>
       `);
       const range = doc.createRangeFromNode(doc.querySelector("#selection-region"));
-      const selection = {
-        rangeCount: 1,
-        isCollapsed: false,
-        getRangeAt() { return range; },
-        toString() { return selectedText; }
-      };
       assert.match(range.toString(), /Check important information/);
 
-      const ctx = extractClipContext({ doc, selection, selectionRange: range, url: "https://chatgpt.com/c/boundaries" });
+      const ctx = extractClipContext({ doc, selectionRange: range, selectedText, url: "https://chatgpt.com/c/boundaries" });
       assert.equal(ctx.selectedMarkdown, formatted ? "**Keep only the selected sentence.**\n\n" : selectedText);
     });
   }
@@ -424,14 +418,7 @@ test("ChatGPT keeps a selected user message in recent rounds without attaching a
     <div data-message-author-role="assistant">Later answer.</div>
   `, { url: "https://chatgpt.com/c/selected-question" });
   const range = doc.createRangeFromNode(doc.querySelector("#picked"));
-  const selection = {
-    rangeCount: 1,
-    isCollapsed: false,
-    getRangeAt() { return range; },
-    toString() { return range.toString(); }
-  };
-
-  const ctx = extractClipContext({ doc, selection });
+  const ctx = extractClipContext({ doc, selectionRange: range });
   assert.equal(ctx.selectedMarkdown, "Next question?");
   assert.equal(ctx.prompt, "");
   assert.equal(ctx.recentTurns, "User: First question?\n\nAssistant: First answer.\n\nUser: Next question?");
@@ -941,4 +928,25 @@ test("extension and toolbar icons provide each declared PNG size", () => {
     assert.equal(png.readUInt32BE(16), Number(size), `${resource} width`);
     assert.equal(png.readUInt32BE(20), Number(size), `${resource} height`);
   }
+});
+
+test("captured range keeps its excerpt and context after the live selection moves", () => {
+  const doc = parseHtmlDocument(`
+    <div data-message-author-role="user">Question A</div>
+    <div data-message-author-role="assistant" id="a">Answer A</div>
+    <div data-message-author-role="user">Question B</div>
+    <div data-message-author-role="assistant" id="b">Answer B</div>
+  `, { url: "https://chatgpt.com/c/selection-race" });
+  const selectionRange = doc.createRangeFromNode(doc.querySelector("#a"));
+  const changedRange = doc.createRangeFromNode(doc.querySelector("#b"));
+  const selection = {
+    rangeCount: 1,
+    isCollapsed: false,
+    getRangeAt() { return changedRange; },
+    toString() { return changedRange.toString(); }
+  };
+  const clip = extractClipContext({ doc, selectionRange, selectedText: "Answer A", selection });
+  assert.equal(clip.selectedMarkdown, "Answer A");
+  assert.equal(clip.prompt, "Question A");
+  assert.equal(clip.recentTurns, "User: Question A\n\nAssistant: Answer A");
 });

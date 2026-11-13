@@ -1017,8 +1017,8 @@ struct CodingRewindCoreTests {
         try AtomicFile.writeUTF8(lines.joined(separator: "\n") + "\n", to: file)
     }
 
-    @Test("Plugin repair retires generated capture hooks and preserves unrelated hooks and local data")
-    func officialPluginInstallerRetiresCaptureHooks() throws {
+    @Test("Plugin repair retires generated capture hooks and preserves unrelated hooks and local data", arguments: ["environment", "quoted", "bare"])
+    func officialPluginInstallerRetiresCaptureHooks(commandStyle: String) throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -1029,7 +1029,7 @@ struct CodingRewindCoreTests {
         try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeSidecarSrc, permissions: 0o755)
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: fakeBridgeSrc, permissions: 0o755)
 
-        let dataDir = dir.appendingPathComponent("Application Support/CodingRewind", isDirectory: true)
+        let dataDir = dir.appendingPathComponent(commandStyle == "bare" ? "CodingRewind" : "Application Support/CodingRewind", isDirectory: true)
         let configDir = dir.appendingPathComponent("gemini-config", isDirectory: true)
 
         let hooksURL = configDir.appendingPathComponent("plugins/coding-rewind/hooks.json")
@@ -1037,9 +1037,15 @@ struct CodingRewindCoreTests {
         let oldSnapshot = dataDir.appendingPathComponent("active_turn.json")
         try AtomicFile.writeUTF8("old user snapshot", to: oldSnapshot)
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: installedLegacyHook, permissions: 0o755)
+        let command: String
+        switch commandStyle {
+        case "bare": command = installedLegacyHook.path
+        case "quoted": command = "'\(installedLegacyHook.path)'"
+        default: command = "/usr/bin/env 'CODING_REWIND_DATA_DIR=\(dataDir.path)' '\(installedLegacyHook.path)'"
+        }
         let obsolete: [String: Any] = [
             "type": "command",
-            "command": "/usr/bin/env 'CODING_REWIND_DATA_DIR=\(dataDir.path)' '\(installedLegacyHook.path)'",
+            "command": command,
             "timeout": 5
         ]
         let unrelated = ["type": "command", "command": "echo unrelated"]

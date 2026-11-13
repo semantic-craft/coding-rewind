@@ -163,13 +163,17 @@ public enum AntigravityIntegration {
             "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
         }
         let environment = quoted("CODING_REWIND_DATA_DIR=\(dataDirectory.path)")
-        let executable = quoted(dataDirectory.appendingPathComponent("bin/coding-rewind-hook").path)
-        let command = "/usr/bin/env \(environment) \(executable)"
+        let path = dataDirectory.appendingPathComponent("bin/coding-rewind-hook").path
+        let executable = quoted(path)
+        let commands: Set<String> = [
+            "/usr/bin/env \(environment) \(executable)",
+            path.contains(" ") ? executable : path
+        ]
         var changed = false
         for event in ["PostInvocation", "Stop"] {
             guard let handlers = group[event] as? [[String: Any]] else { continue }
             let remaining = handlers.filter {
-                $0["command"] as? String != command
+                !commands.contains($0["command"] as? String ?? "")
                     || $0["type"] as? String != "command"
                     || $0["timeout"] as? Int != 5
                     || $0.count != 3

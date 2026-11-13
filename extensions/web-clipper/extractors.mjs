@@ -579,7 +579,7 @@ function hasMarkdownStructure(node) {
   return false;
 }
 
-export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
+export function selectionToMarkdown(selectionOrRange, baseUrl = "", capturedText = null) {
   if (!selectionOrRange) return "";
 
   let range = null;
@@ -599,6 +599,7 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     return selectionOrRange.trim() ? selectionOrRange : "";
   }
 
+  if (capturedText !== null) plainFallback = capturedText;
   if (!range) return plainFallback;
 
   const ancestorPre = findAncestorElement(range.commonAncestorContainer, (el) => getTagName(el) === "pre");
@@ -629,7 +630,7 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     if (plainFallback && !hasMarkdownStructure(fragment)) return plainFallback;
     const md = htmlToMarkdown(fragment, { baseUrl, lineBreakModes: selectedLineBreakModes(range, fragment) });
     if (md) {
-      if (typeof selectionOrRange.getRangeAt === "function") {
+      if (capturedText !== null || typeof selectionOrRange.getRangeAt === "function") {
         const selectedText = [...nonemptyTextNodes(fragment)];
         const leadingWhitespace = findAncestorElement(selectedText[0], isInlineCodeElement)
           ? "" : plainFallback.match(/^\s*/)[0];
@@ -843,20 +844,19 @@ export function formatRecentTurns(turnsSlice, maxChars = 4000) {
 
 export function extractClipContext({
   doc,
-  selection = null,
   selectionRange = null,
+  selectedText = null,
   url = "",
   maxRecentRounds = 4,
   maxRecentChars = 4000
 } = {}) {
   const sourceUrl = String(url || (doc && doc.location && doc.location.href) || "").trim();
   const sourcePlatform = detectPlatform(sourceUrl);
-  const selectedMarkdown = selectionToMarkdown(selection || selectionRange, sourceUrl);
+  const selectedMarkdown = selectionToMarkdown(selectionRange, sourceUrl, selectedText);
   const sessionTitle = extractSessionTitle(doc, sourceUrl, sourcePlatform);
 
-  const range = selection?.rangeCount > 0 && !selection.isCollapsed ? selection.getRangeAt(0) : selectionRange;
   const messages = extractConversationTurns(doc, sourcePlatform, sourceUrl);
-  const context = contextThroughSelection(messages, range, maxRecentRounds);
+  const context = contextThroughSelection(messages, selectionRange, maxRecentRounds);
 
   return {
     selectedMarkdown,

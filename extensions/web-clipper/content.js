@@ -161,15 +161,14 @@
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
       return null;
     }
+    const range = selection.getRangeAt(0).cloneRange();
     const rawText = selection.toString() || "";
     if (!rawText.trim()) return null;
-
-    const range = selection.getRangeAt(0);
     const { extractClipContext } = await loadExtractors();
     const clip = extractClipContext({
       doc: document,
-      selection,
       selectionRange: range,
+      selectedText: rawText,
       url: location.href
     });
     if (!clip.selectedMarkdown || !clip.selectedMarkdown.trim()) {
