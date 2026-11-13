@@ -15,9 +15,9 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCoreTests/NativeConversationContextTests.swift">file Tests/CodingRewindCoreTests/NativeConversationContextTests.swift: 四轮、缺口、重复选区和入队行为</a></li>
 <li>note 2026-11-14 本机实测: 本地证据 .scratch/native-app-clipping/acceptance.json 与对应pending、ready、comments回读</li>
 </ul><p>Next: </p></article>
-<article id="native-chat-installed"><h3>日常安装版直连验收</h3><span class="badge">in_progress</span><p>日常版⌃⌥⇧⌘K已证实正文与上下文直连入库，但Gemini回链遇到AppleEvents -1743。已将shell凭据启动器替换为原生入口，签名确认绑定用途说明；开发凭据仍从1Password读取且QA隔离。全仓检查通过，最终包已安装，等待本人Touch ID后继续两应用回链实测。</p><ul>
+<article id="native-chat-installed"><h3>日常安装版直连验收</h3><span class="badge">in_progress</span><p>日常版⌃⌥⇧⌘K已证实正文与上下文直连入库。已将shell凭据启动器替换为原生入口，签名绑定用途说明；全仓检查、开发凭据与QA隔离回归通过。最终包已安装，1Password与辅助功能权限已生效；原先AppleEvents -1743已变为正确的CodingRewind控制Chrome授权弹窗，等待本人Allow。首轮弹窗等待超时所得片段缺回链，不能记为完整通过。</p><ul>
 <li>note 2026-11-14 安装: 安装前版本保留在本轮本地验收目录；授权窗口明确请求CodingRewind CLI访问</li>
-</ul><p>Next: 完成当前1Password本人验证后，实测浏览器授权并回读两应用日常版的会话链接、正文和上下文。</p></article>
+</ul><p>Next: 允许当前CodingRewind控制Chrome后，重做Gemini与ChatGPT日常快捷键并从Memos核对私有链接、正文与上下文。</p></article>
 <article id="native-chat-source-delivery"><h3>源码提交与推送</h3><span class="badge">done</span><p>原生剪藏实现、实测回归与文档已提交并推送。PR #13 以尚未合并的 #12 为基线，当前未合并。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/13">pull 13: 本轮原生剪藏改动</a></li>
 </ul><p>Next: 日常安装版完成凭据授权与直连复验后更新状态；保留父PR的既有验收边界。</p></article>
