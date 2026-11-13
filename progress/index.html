@@ -44,9 +44,9 @@
 </ul><p>Next: 按代码质量标准继续补验下列未覆盖项。</p></article>
 </section>
 <section id="unverified"><h2>本轮补验与剩余边界</h2>
-<article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。</p><ul>
+<article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。 2026-11-13 用户实际按 ⌃⌥⇧⌘K 后确认浮窗出现新卡片，全局快捷键路径通过用户实机验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 明确区分桌面按钮、热键与剪贴板覆盖范围</a></li>
-</ul><p>Next: 全局热键和 Chrome 的桌面捕获路径仍未取得成功证据；剪贴板二进制内容未逐项核验。</p></article>
+</ul><p>Next: Chrome 的桌面捕获路径仍未取得成功证据；剪贴板二进制内容未逐项核验。</p></article>
 <article id="other-websites"><h3>Gemini 真实页面</h3><span class="badge">done</span><p>真实页面发现并修复 pre-wrap 换行丢失；重新加载扩展后，保存、AI 处理与上下文评论保留三行、加粗和代码。Claude 按用户要求退出本轮验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 真实 DOM 形状的换行回归</a></li>
 </ul><p>Next: 后续修改转换器时重跑回归和真实选区检查。</p></article>
@@ -58,7 +58,7 @@
 </ul><p>Next: 按对应里程碑分别补验。</p></article>
 <article id="remaining-delivery"><h3>补验修复交付</h3><span class="badge">done</span><p>PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/8">pull 8: Gemini 换行保真修复与补验记录</a></li>
-</ul><p>Next: 保持上列未验边界，收到真实快捷键操作结果后更新。</p></article>
+</ul><p>Next: 全局快捷键已获用户实机确认；继续保留 Chrome 桌面捕获及其他未验边界。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>

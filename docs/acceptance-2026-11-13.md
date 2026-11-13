@@ -10,7 +10,8 @@
 | 系统剪贴板 | 部分通过 | 紧邻无选区捕获前后，系统文本和类型列表相同；没有逐项比较二进制内容 |
 | Gemini 扩展剪藏 | 修复后通过 | 真实回答的 pre-wrap 换行原先丢失；重新加载扩展后，三行、加粗和行内代码在 pending、ready 与上下文评论中一致 |
 | 当前 Codex MCP | 通过 | 实际调用 list/get/comments 读取上述新记录，核对 PRIVATE 和上下文标记 |
-| 全局快捷键、Chrome 桌面捕获 | 未确认 | 自动化尝试未取得成功记录，不以 TextEdit 按钮成功替代 |
+| TextEdit 全局快捷键 | 用户实机确认通过 | 2026-11-13 用户按 ⌃⌥⇧⌘K 后确认浮窗出现新卡片；此条为用户反馈，未对该次新卡片另做服务端读回 |
+| Chrome 桌面捕获 | 未确认 | 自动化尝试未取得成功记录，不以 TextEdit 成功替代 |
 | Antigravity 自然语言 MCP、导出删除 | 未验 | 不以当前宿主 MCP 或 sidecar 回执替代 |
 
 Gemini 回归保留了真实 DOM 的 span/b/code 结构，同时验证 normal 模式仍折叠换行。扩展 22 项测试与全仓 `./scripts/check` 通过。
