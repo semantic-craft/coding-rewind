@@ -2,7 +2,9 @@
 
 本仓库是 **Coding-Rewind** 的产品规范与统一全栈实现，采用 [MIT License](LICENSE)。
 
-当前状态见 [开发进度](progress/index.html)。修复和后续验收遵循 [代码质量标准](docs/code-quality.md)。
+当前候选版为 `v0.3.0-rc.1`。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14，采用 ad-hoc 签名，尚未经过 Developer ID 签名或 Apple 公证。公开包不包含个人 Memos 地址、令牌或 1Password 配置。首次使用需配置自己的 Memos 服务并授予辅助功能权限。
+
+当前版本仍有 Antigravity 会话归属、Chrome 扩展生命周期、多卡接聊和引用成文的实机覆盖待完成，见 [issue #14](https://github.com/semantic-craft/coding-rewind/issues/14)。当前状态见 [开发进度](progress/index.html)。修复和后续验收遵循 [代码质量标准](docs/code-quality.md)。
 
 ## 这是什么
 
@@ -58,11 +60,13 @@ Codex 接聊使用应用自带的官方 CLI，不需要安装 Antigravity 插件
 ./scripts/check
 ```
 
-构建并签名校验原生菜单栏应用包 `.build/CodingRewind.app`：
+使用 release 配置构建并校验 ad-hoc 签名的原生菜单栏应用包 `.build/CodingRewind.app`：
 
 ```bash
 ./scripts/build-app-bundle.sh
 ```
+
+安装或升级时使用 `ditto` 复制应用包，以保留签名元数据。个人开发包可能含 `DeveloperCredentials.plist`，不要作为公开下载附件。
 
 本机开发可显式构建一个使用 1Password CLI 的启动包。构建参数只传非密钥引用，真实引用仅留在本机产物，不提交到仓库：
 

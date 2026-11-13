@@ -132,7 +132,7 @@
 
 - 标签：#原文保真 #Gemini #验收
 - 起因与后果：2026-11-13 真实 Gemini 回答的 span 使用 pre-wrap；带加粗、代码的三行选区保存后变为一行，上下文评论也丢失换行。
-- 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 将源文本节点的换行规则映射到克隆节点；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 先失败后通过，真实页面重验见 [验收记录](docs/acceptance-2026-11-13.md)。
+- 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 将源文本节点的换行规则映射到克隆节点；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 先失败后通过，真实页面重验见 [PR #8](https://github.com/semantic-craft/coding-rewind/pull/8)。
 - 正确做法 `Done right`：选区与上下文共用转换规则；同时验证 normal 空白折叠行为没有变化。代码围栏内不应用普通段落的空行压缩，必须覆盖“段落加完整代码块”的混合选区，而不只测 pre 内选区。
 - 验证点：运行 `./scripts/check`，从真实页面保存并比较 pending、ready 和上下文中的原文。
 - 复发记录：`Seen 2x (2026-11-13)`。先在真实 Gemini 页面检出 pre-wrap 丢换行，后在独立架构审查中复现混合选区的代码空行被全串压缩。两条行为回归均纳入统一检查。
@@ -175,7 +175,7 @@
 **内容脚本可注入不代表它动态导入的扩展资源对来源页面可见。**
 
 - 起因与后果：2026-11-13 日常扩展升级实测，同一混合选区经 HTTP 保真，经 file 协议却退回右键纯文本并丢失代码格式。
-- 修复与证据：[manifest.json](extensions/web-clipper/manifest.json) 为现有 extractors.mjs 追加 file:///* 资源匹配。真实 Chrome 重载前后从相同右键入口保存并读回，修复后代码与空行保持；见[运行验收](docs/acceptance-2026-11-13.md)。
+- 修复与证据：[manifest.json](extensions/web-clipper/manifest.json) 为现有 extractors.mjs 追加 file:///* 资源匹配。真实 Chrome 重载前后从相同右键入口保存并读回，修复后代码与空行保持；见[PR #9](https://github.com/semantic-craft/coding-rewind/pull/9)。
 - 正确做法 `Done right`：模块资源的来源匹配与支持的捕获入口一致；文件访问仍由用户现有开关控制，不扩大 host 权限。
 - 验证点：运行统一检查，开启文件访问的实际扩展重载后保存混合段落及代码选区，比较服务端正文。
 - 复发记录：`Seen 1x (2026-11-13)`，真实运行版本验收检出。
@@ -185,7 +185,7 @@
 **第三方页面使用语义属性表示代码时，转换、结构检测和祖先查找必须共用判定。**
 
 - 起因与后果：ChatGPT 的 inline-code span 在混合选区和局部文字选区中丢失反引号；Gemini 的辅助朗读标题进入上下文形成重复提问。
-- 修复与证据：`extractors.mjs` 共用 `isInlineCodeElement`，精确排除 Gemini 辅助标题；真实页面保存后服务端读回通过，见 [补充验收](docs/acceptance-2026-11-13.md)。
+- 修复与证据：`extractors.mjs` 共用 `isInlineCodeElement`，精确排除 Gemini 辅助标题；真实页面保存后服务端读回通过，见 [PR #11](https://github.com/semantic-craft/coding-rewind/pull/11)。
 - 正确做法 `Done right`：按实际 DOM 语义识别代码，保持代码空白；区分用户正文与辅助标签，不用样式类替代代码语义或泛删标题。
 - 验证点：扩展回归覆盖混合正文、文本节点、外层 span、上下文及普通标题保留；修改后重载真实扩展并读回。
 - 复发记录：`Seen 1x (2026-11-13)`，实际聊天剪藏补验检出。
