@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T05:22:18.980390Z</p>
-<p>Main: <code>main: e302db43c65fb53f1df40345d8adf29d281a22b5</code></p>
+<p>Observed: 2026-11-13T05:27:29.245147Z</p>
+<p>Main: <code>main: e31688876436e7738fd4de99a859541294edb07b</code></p>
 <section id="implemented"><h2>已经实现与合并</h2>
 <article id="m0-m1"><h3>M0/M1 · 需求、单一 Memos 架构与统一门禁</h3><span class="badge">done</span><p>需求、来源、原文边界、离线队列和统一检查入口已纳入主分支。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 架构与线级契约</a></li>
@@ -76,9 +76,10 @@
 </ul><p>Next: 跨页和交错并发沿用回归；第三方站点及物理全局热键未全量重验。</p></article>
 </section>
 <section id="web-hotkey-reacceptance"><h2>网页聊天与快捷键复验</h2>
-<article id="web-hotkey-current"><h3>当前实机补验</h3><span class="badge">in_progress</span><p>ChatGPT 混合与部分代码选区、Gemini 正文与去重上下文均已通过真实扩展重载后的服务端读回。用户实际完成捕获和浮窗切换。仅清理本轮八条记录，原有14条完整返回值未变。</p><ul>
+<article id="web-hotkey-current"><h3>当前实机补验</h3><span class="badge">done</span><p>ChatGPT 混合与部分代码选区、Gemini 正文与去重上下文均已通过真实扩展重载后的服务端读回。用户实际完成捕获和浮窗切换。仅清理本轮八条记录，原有14条完整返回值未变。 扩展30项和全仓门禁通过；非作者独立工作区复核PASS+NOTES，PR #11已合并，已安装扩展与提交运行文件一致。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 接续状态与真实失败边界</a></li>
-</ul><p>Next: 完成精确提交的独立复核与合并。</p></article>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/11">pull 11: 真实剪藏修复、独立复核和合并</a></li>
+</ul><p>Next: 后续网页 DOM 或快捷键行为变化时，重跑对应真实入口与行为回归。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>

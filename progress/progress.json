@@ -2,7 +2,7 @@
   "facts": {
     "default_branch": "main",
     "issues": [],
-    "main": "e302db43c65fb53f1df40345d8adf29d281a22b5",
+    "main": "e31688876436e7738fd4de99a859541294edb07b",
     "open_pulls": [],
     "pulls": [
       {
@@ -84,6 +84,14 @@
         "merged": true,
         "number": 10,
         "state": "closed"
+      },
+      {
+        "base": "e302db43c65fb53f1df40345d8adf29d281a22b5",
+        "head": "72fa0768a505e519bbdef5c249dad2b7e00f36cb",
+        "merge_commit": "e31688876436e7738fd4de99a859541294edb07b",
+        "merged": true,
+        "number": 11,
+        "state": "closed"
       }
     ],
     "releases": []
@@ -93,7 +101,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T05:22:18.980390Z",
+  "observed_at": "2026-11-13T05:27:29.245147Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -429,12 +437,17 @@
               "kind": "file",
               "note": "接续状态与真实失败边界",
               "ref": "docs/acceptance-2026-11-13.md"
+            },
+            {
+              "kind": "pull",
+              "note": "真实剪藏修复、独立复核和合并",
+              "ref": 11
             }
           ],
           "id": "web-hotkey-current",
-          "next": "完成精确提交的独立复核与合并。",
-          "status": "in_progress",
-          "summary": "ChatGPT 混合与部分代码选区、Gemini 正文与去重上下文均已通过真实扩展重载后的服务端读回。用户实际完成捕获和浮窗切换。仅清理本轮八条记录，原有14条完整返回值未变。",
+          "next": "后续网页 DOM 或快捷键行为变化时，重跑对应真实入口与行为回归。",
+          "status": "done",
+          "summary": "ChatGPT 混合与部分代码选区、Gemini 正文与去重上下文均已通过真实扩展重载后的服务端读回。用户实际完成捕获和浮窗切换。仅清理本轮八条记录，原有14条完整返回值未变。 扩展30项和全仓门禁通过；非作者独立工作区复核PASS+NOTES，PR #11已合并，已安装扩展与提交运行文件一致。",
           "title": "当前实机补验"
         }
       ],
@@ -454,7 +467,8 @@
       7,
       8,
       9,
-      10
+      10,
+      11
     ]
   }
 }
