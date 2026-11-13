@@ -272,6 +272,29 @@ struct CodingRewindCoreTests {
         #expect(coordinator.hotCache.loadCards().contains { $0.id == capturedCard.id })
     }
 
+    @Test
+    func hotClipsIncludeLaterPages() async throws {
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let time = MemosWireFormat.formatISO8601UTC(Date())
+        let firstPage = try JSONSerialization.data(withJSONObject: [
+            "memos": (0..<100).map { ["name": "memos/plain-\($0)", "content": "ordinary memo", "createTime": time] },
+            "nextPageToken": "page-two"
+        ])
+        let secondPage = try JSONSerialization.data(withJSONObject: [
+            "memos": [["name": "memos/rewind-on-second-page", "content": "#rewind/ready #source/macos\n\nRecent highlight", "createTime": time]]
+        ])
+        MockMemosURLProtocol.register(suiteID: suiteID) { request, _ in
+            let token = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems?.first { $0.name == "pageToken" }?.value
+            return (200, token == "page-two" ? secondPage : firstPage)
+        }
+        let cards = try await MemosClient(session: makeMockSession()).listHotClips(baseURL: URL(string: "https://\(suiteID).mock.memos.local")!, token: "fixture-token")
+        let requests = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(cards.map(\.id) == ["rewind-on-second-page"])
+        #expect(cards.first?.verbatimText == "Recent highlight")
+        #expect(requests.count == 2)
+    }
+
     private func makeMockSession() -> URLSession {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.protocolClasses = [MockMemosURLProtocol.self]
