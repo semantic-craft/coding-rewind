@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 import base64
 import hashlib
@@ -67,7 +68,15 @@ def _start_mock_upstream(state: MockBackendState, expected_memos_token: str = "m
                 return self._send(401, {"error": "bad memos token"})
             with state.lock:
                 if parsed.path == "/api/memos":
-                    return self._send(200, {"memos": list(state.memos.values())})
+                    query = parse_qs(parsed.query)
+                    memos = list(state.memos.values())
+                    page_size = int(query.get("pageSize", [str(len(memos) or 1)])[0])
+                    offset = int(query.get("pageToken", ["0"])[0])
+                    end = offset + page_size
+                    return self._send(200, {
+                        "memos": memos[offset:end],
+                        "nextPageToken": str(end) if end < len(memos) else "",
+                    })
                 parts = parsed.path.strip("/").split("/")
                 if len(parts) == 4 and parts[:2] == ["api", "memos"] and parts[3] == "comments":
                     memo_id = parts[2]
@@ -112,6 +121,65 @@ def _start_mock_upstream(state: MockBackendState, expected_memos_token: str = "m
 
 
 class EnricherUnitTests(unittest.TestCase):
+    def test_reconcile_enriches_pending_memo_beyond_first_page(self) -> None:
+        state = MockBackendState()
+        for index in range(50):
+            state.memos[f"recent-{index}"] = {
+                "name": f"memos/recent-{index}",
+                "createTime": "2026-11-12T03:00:00Z",
+                "content": "#rewind/ready #source/web\n\nAlready enriched.",
+            }
+        snippet = "An older pending clip must still be enriched."
+        state.memos["older-pending"] = {
+            "name": "memos/older-pending",
+            "createTime": "2026-11-11T03:00:00Z",
+            "content": "#rewind/pending #source/web\n\n" + snippet,
+        }
+        srv, base_url = _start_mock_upstream(state)
+        try:
+            svc = enricher.EnricherService(
+                memos_url=base_url,
+                memos_token="memos-tok",
+                ai_base_url=f"{base_url}/v1",
+                ai_api_key="ai-tok",
+                ai_model="fixture-model",
+            )
+            self.assertEqual(svc.reconcile_once(), 1)
+            self.assertTrue(state.memos["older-pending"]["content"].startswith("#rewind/ready "))
+            self.assertTrue(state.memos["older-pending"]["content"].endswith(snippet))
+            self.assertEqual(len(state.ai_calls), 1)
+            self.assertEqual(svc.reconcile_once(), 0)
+            self.assertEqual(len(state.ai_calls), 1)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
+    def test_reconcile_enumerates_pages_before_processing_and_encodes_token(self) -> None:
+        token = "next=50&cursor= +/#?"
+        pending = {"name": "memos/pending", "content": "#rewind/pending #source/web\n\nClip"}
+        older = {"name": "memos/older", "content": "#rewind/pending #source/web\n\nOlder clip"}
+        events = []
+
+        def request(method, url, auth):
+            self.assertEqual(method, "GET")
+            query = parse_qs(urlparse(url).query)
+            events.append("page")
+            self.assertEqual(query["pageSize"], ["50"])
+            if len(events) == 1:
+                self.assertNotIn("pageToken", query)
+                return {"memos": [pending], "nextPageToken": token}
+            self.assertEqual(query["pageToken"], [token])
+            return {"memos": [pending, older]}
+
+        def process(memo):
+            events.append(memo["name"])
+            return "enriched"
+
+        svc = enricher.EnricherService("http://memos.invalid", "memos-tok", "http://ai.invalid", "ai-tok", "fixture")
+        with patch.object(enricher, "_json_req", side_effect=request), patch.object(svc, "process_memo", side_effect=process):
+            self.assertEqual(svc.reconcile_once(), 2)
+        self.assertEqual(events, ["page", "page", "memos/pending", "memos/older"])
+
     def test_standard_webhooks_hmac_verification(self) -> None:
         raw_key = b"super-secret-signing-bytes-32len"
         prefixed_secret = "whsec" + "_" + base64.b64encode(raw_key).decode("ascii")

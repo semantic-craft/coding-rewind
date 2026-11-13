@@ -87,9 +87,9 @@
 - 标签：#原文保真 #离线队列 #并发
 - 起因与后果：2026-11-12 对 `1d36ca0` 的本机审查发现，全文替换状态标签会改写选区中的同名文字，全文查找归档标签会隐藏正常卡片；网络请求等待期间的新入队条目可能被旧快照覆盖。
 - 修复与证据：首行标签处理与队列提交分别收敛到 [DomainModels.swift](Sources/CodingRewindCore/DomainModels.swift) 和 [MemosClient.swift](Sources/CodingRewindCore/MemosClient.swift)，回归在 [CodingRewindCoreTests.swift](Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift)。
-- 正确做法 `Done right`：原文保持独立于元数据的字节序列；队列同步读改写以文件事务保护，网络等待不持锁，提交时核对最新条目与发送快照。
+- 正确做法 `Done right`：原文保持独立于元数据的字节序列；队列同步读改写以文件事务保护，网络等待不持锁，提交时核对最新条目与发送快照。`AppCoordinator` 的远端刷新也必须检查请求与本地卡片版本，不能用 MainActor 代替跨 await 的提交校验。
 - 验证点：运行 `./scripts/check`，覆盖正文内同名标签、UTF-8 原文、并发入队、同 ID 更新及交错刷新。
-- 复发记录：`Seen 1x (2026-11-12)`，本机质量审查检出。
+- 复发记录：`Seen 2x`。2026-11-12 检出旧快照覆盖队列；2026-11-13 架构审查又复现旧刷新覆盖期间捕获成功或失败的新卡与热缓存，队列本身未丢。协调器回归在同一测试入口固定该交错。
 
 ### 跨应用快捷键占用须用独立进程验证
 
@@ -131,9 +131,42 @@
 - 标签：#原文保真 #Gemini #验收
 - 起因与后果：2026-11-13 真实 Gemini 回答的 span 使用 pre-wrap；带加粗、代码的三行选区保存后变为一行，上下文评论也丢失换行。
 - 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 将源文本节点的换行规则映射到克隆节点；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 先失败后通过，真实页面重验见 [验收记录](docs/acceptance-2026-11-13.md)。
-- 正确做法 `Done right`：选区与上下文共用转换规则；同时验证 normal 空白折叠行为没有变化。
+- 正确做法 `Done right`：选区与上下文共用转换规则；同时验证 normal 空白折叠行为没有变化。代码围栏内不应用普通段落的空行压缩，必须覆盖“段落加完整代码块”的混合选区，而不只测 pre 内选区。
 - 验证点：运行 `./scripts/check`，从真实页面保存并比较 pending、ready 和上下文中的原文。
-- 复发记录：`Seen 1x (2026-11-13)`，真实页面剪藏验收检出。
+- 复发记录：`Seen 2x (2026-11-13)`。先在真实 Gemini 页面检出 pre-wrap 丢换行，后在独立架构审查中复现混合选区的代码空行被全串压缩。两条行为回归均纳入统一检查。
+
+### 页大小不能成为业务结果的隐含上限
+
+**服务返回 nextPageToken 时，客户端须按业务承诺继续读取，不能把第一页当成完整集合。**
+
+- 标签：#分页 #网络边界 #验收
+- 起因与后果：2026-11-13 运行夹具证实，桌面前 100 条普通记录遮住第二页热卡；增强器第一页之外的 pending 也无法被轮询处理。
+- 修复与证据：[MemosClient.swift](Sources/CodingRewindCore/MemosClient.swift) 与 [enricher.py](deploy/vps/enricher/enricher.py) 各自在网络边界消费游标；Swift 和 Python 回归断言第二页的实际结果。
+- 正确做法 `Done right`：桌面后页失败不发布部分热卡；增强器先完成候选枚举再更新，避免自己的 PATCH 干扰翻页。
+- 验证点：运行 `./scripts/check`，第二页热卡可见、第二页 pending 被增强，重复增强仍幂等。
+- 复发记录：`Seen 1x (2026-11-13)`，同轮跨端架构审查检出。
+
+### 入口和进程边界必须传递已确定的状态
+
+**共享动作选项只有一个所有者，安装时确定的目录必须显式传给宿主进程。**
+
+- 标签：#状态所有权 #宿主集成
+- 起因与后果：2026-11-13 隔离 GUI 勾选归档后经菜单开聊，磁盘请求仍为 false；真实安装命令的子进程测试又发现 Hook 写入宿主目录而非应用指定目录。
+- 修复与证据：归档意图移入 [AppCoordinator.swift](Sources/CodingRewindCore/AppCoordinator.swift)；[AntigravityIntegration.swift](Sources/CodingRewindCore/AntigravityIntegration.swift) 的安装与校验共用携带目录的命令生成器。对应 Core 和 CLI 行为回归纳入检查。
+- 正确做法 `Done right`：UI 绑定共同动作状态，恢复已有请求沿用其已保存意图；宿主不靠猜测或继承桌面环境寻找数据。
+- 验证点：从实际菜单读回 handoff 归档意图，并执行生成的 Hook 命令核对 active_turn.json 落点。
+- 复发记录：`Seen 1x (2026-11-13)`，同轮架构审查检出。
+
+### 保存成功提示必须来自已确认的写入
+
+**异常处理不能把本地存储失败改称为已离线暂存。**
+
+- 标签：#真实反馈 #离线队列
+- 起因与后果：2026-11-13 在实际后台消息处理入口注入 storage.set 拒绝，原回执仍为 queued，用户会误以为数据已保存。
+- 修复与证据：[background.js](extensions/web-clipper/background.js) 的公共保存边界返回 error；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 覆盖消息、菜单入口的失败反馈及真实入队正例。
+- 正确做法 `Done right`：只有等待队列持久化成功后才返回 queued；未确认远端或本地写入时明确提示失败。
+- 验证点：运行 `./scripts/check`，存储拒绝不再报告已暂存，离线且存储成功仍正常入队。
+- 复发记录：`Seen 1x (2026-11-13)`，架构审查故障注入复现。
 
 ## 记录模板
 

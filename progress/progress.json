@@ -336,6 +336,68 @@
         }
       ],
       "title": "本轮补验与剩余边界"
+    },
+    {
+      "id": "architecture-quality",
+      "title": "架构与代码标准核验",
+      "items": [
+        {
+          "id": "architecture-fixes",
+          "title": "七处架构缺陷修复",
+          "status": "done",
+          "summary": "统一菜单归档意图，阻止过期刷新覆盖新卡，显式传递 Hook 目录；修复代码空行、存储失败误报和桌面/云端分页遗漏。未增加框架或业务数据库。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/code-quality.md",
+              "note": "逐条标准与核验结论"
+            }
+          ],
+          "next": "后续变更继续执行相同标准。"
+        },
+        {
+          "id": "architecture-verification",
+          "title": "自动回归与实机对照",
+          "status": "done",
+          "summary": "失败基线后，Swift 48、扩展 24、增强器 10 项通过，全仓门禁通过。隔离原生菜单请求正确保存归档意图；Chrome 真实 DOM 对照保留代码空行。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/code-quality.md",
+              "note": "明确实测边界"
+            }
+          ],
+          "next": "独立复核完成后记录交付状态。"
+        },
+        {
+          "id": "architecture-delivery",
+          "title": "独立复核与合并",
+          "status": "in_progress",
+          "summary": "代码和实机验证已完成，独立工作区正在复核。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/architecture.md",
+              "note": "更新后的责任边界与失败处理"
+            }
+          ],
+          "next": "复核通过后合并并刷新事实快照。"
+        },
+        {
+          "id": "architecture-runtime",
+          "title": "本轮修复的运行环境升级",
+          "status": "unverified",
+          "summary": "本轮使用隔离包与真实 Chrome DOM 验证。日常应用、已加载扩展及云端增强器尚未更新到本轮源码，不把源码通过记作部署通过。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/code-quality.md",
+              "note": "实现、安装和部署分别验收"
+            }
+          ],
+          "next": "升级日常包、重新加载扩展及部署增强器时分别重验。"
+        }
+      ]
     }
   ],
   "title": "Coding Rewind 开发进度",

@@ -164,6 +164,119 @@ test("selectionToMarkdown preserves selected code block boundaries", () => {
   assert.equal(selectionToMarkdown(inlineCodeRange), "`   inline value   `");
 });
 
+test("selectionToMarkdown preserves blank lines inside a whole code block selected with prose", () => {
+  const code = "first_call()  \n\n\nsecond_call()\t";
+  const doc = parseHtmlDocument(`<section id="selection"><p>Keep the code spacing.</p><pre><code class="language-python">${code}</code></pre></section>`);
+
+  assert.equal(
+    selectionToMarkdown(doc.createRangeFromNode(doc.querySelector("code"))),
+    `\`\`\`python\n${code}\n\`\`\``
+  );
+  assert.equal(
+    selectionToMarkdown(doc.createRangeFromNode(doc.querySelector("#selection"))),
+    `Keep the code spacing.\n\n\`\`\`python\n${code}\n\`\`\``
+  );
+  assert.equal(htmlToMarkdown("<p>First.</p><p></p><p>Second.</p>"), "First.\n\nSecond.");
+});
+
+test("background save response does not claim an offline clip is queued after storage rejects", async (t) => {
+  const originalChrome = globalThis.chrome;
+  const originalSelf = globalThis.self;
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalSelf === undefined) delete globalThis.self;
+    else globalThis.self = originalSelf;
+    globalThis.fetch = originalFetch;
+  });
+
+  let onMessage;
+  let onContextMenu;
+  let onCommand;
+  let onToast;
+  let storageWrites = 0;
+  let fetchCalls = 0;
+  let rejectWrites = true;
+  let rejectReads = false;
+  const clip = { clipId: "rw-storage-failure", selectedMarkdown: "Keep this unsaved draft.", sourcePlatform: "web" };
+  const tab = { id: 42 };
+  const persistedOutbox = [];
+  const ignoredEvent = { addListener() {} };
+  globalThis.chrome = {
+    runtime: {
+      onInstalled: ignoredEvent,
+      onStartup: ignoredEvent,
+      onMessage: { addListener(listener) { onMessage = listener; } }
+    },
+    contextMenus: { onClicked: { addListener(listener) { onContextMenu = listener; } } },
+    commands: { onCommand: { addListener(listener) { onCommand = listener; } } },
+    tabs: {
+      async query() { return [tab]; },
+      async sendMessage(_tabId, message) {
+        if (message.type === "REWIND_EXTRACT_SELECTION") return { clip };
+        if (message.type === "REWIND_SHOW_TOAST") onToast(message);
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          if (rejectReads) throw new Error("Storage unavailable");
+          return { memosUrl: "https://memos.invalid", memosToken: "", outbox: structuredClone(persistedOutbox) };
+        },
+        async set({ outbox }) {
+          storageWrites += 1;
+          if (rejectWrites) throw new Error("QUOTA_BYTES quota exceeded");
+          persistedOutbox.splice(0, persistedOutbox.length, ...structuredClone(outbox));
+        }
+      }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("Network unavailable");
+  };
+  await import("./background.js?storage-rejection-regression");
+
+  const response = await new Promise((resolve) => {
+    assert.equal(onMessage({
+      type: "REWIND_SAVE_CLIP",
+      clip
+    }, {}, resolve), true);
+  });
+
+  assert.equal(fetchCalls, 1);
+  assert.equal(storageWrites, 1);
+  assert.deepEqual(persistedOutbox, []);
+  assert.equal(response.status, "error", "a failed storage write must not be reported as queued");
+  assert.equal(response.queued, false);
+  assert.match(response.toast, /保存失败/);
+
+  rejectWrites = false;
+  const queued = await new Promise((resolve) => onMessage({ type: "REWIND_SAVE_CLIP", clip }, {}, resolve));
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.queued, true);
+  assert.equal(queued.toast, TOAST_MESSAGES.QUEUED);
+  assert.equal(persistedOutbox.length, 1);
+  assert.equal(persistedOutbox[0].clipId, clip.clipId);
+
+  persistedOutbox.length = 0;
+  rejectWrites = true;
+  const contextMenuToast = new Promise((resolve) => { onToast = resolve; });
+  onContextMenu({ menuItemId: "save-to-coding-rewind" }, tab);
+  assert.equal((await contextMenuToast).status, "error");
+
+  const commandToast = new Promise((resolve) => { onToast = resolve; });
+  await onCommand("save-selection");
+  assert.equal((await commandToast).status, "error");
+
+  rejectReads = true;
+  const readFailure = await new Promise((resolve) => onMessage({ type: "REWIND_SAVE_CLIP", clip }, {}, resolve));
+  assert.equal(readFailure.status, "error");
+  assert.equal(readFailure.queued, false);
+});
+
 test("selected text excludes ChatGPT copy-excluded footers while preserving Markdown and selection boundaries", async (t) => {
   for (const formatted of [false, true]) {
     await t.test(formatted ? "formatted selection" : "plain selection", () => {

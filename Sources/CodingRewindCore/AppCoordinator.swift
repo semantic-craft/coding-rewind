@@ -116,7 +116,14 @@ public final class AppCoordinator {
     public var capturer: any SelectionCapturing
 
     public private(set) var isCapturingSelection = false
-    public var cards: [RewindCard] = []
+    private var latestRefreshRequest = 0
+    private var localCardsRevision = 0
+    public var markSynthesizedOnLaunch = false
+    private struct RefreshTicket {
+        let request: Int
+        let localRevision: Int
+    }
+    public private(set) var cards: [RewindCard] = []
     public var searchText: String = ""
     public var statusFilter: StatusFilter = .all
     public var checkedCardIDs: Set<String> = []
@@ -277,7 +284,10 @@ public final class AppCoordinator {
     public func captureSelection() async {
         guard !isCapturingSelection else { return }
         isCapturingSelection = true
-        defer { isCapturingSelection = false }
+        defer {
+            localCardsRevision += 1
+            isCapturingSelection = false
+        }
         do {
             let selection = try await capturer.captureFrontmostSelection()
             let (platform, sourceTitle, sourceURL, context) = buildProvenance(from: selection)
@@ -306,7 +316,10 @@ public final class AppCoordinator {
                 now: max(Date(), selection.capturedAt),
                 isOfflinePending: true
             ) {
-                upsertLocalCard(localCard)
+                updateLocalCards { cards in
+                    cards.removeAll { $0.id == localCard.id }
+                    cards.insert(localCard, at: 0)
+                }
                 checkedCardIDs.insert(localCard.id)
                 focusedCardID = localCard.id
             }
@@ -314,7 +327,6 @@ public final class AppCoordinator {
             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
                 try outbox.enqueue(entry)
-                try? hotCache.saveCards(cards)
                 setBanner("离线已暂存队列 · 配置 Memos 后自动幂等同步", isError: false)
                 return
             }
@@ -329,16 +341,16 @@ public final class AppCoordinator {
                     token: token,
                     fallbackCreatedAt: selection.capturedAt
                 )
-                cards.removeAll { $0.id == clientClipId || $0.id == saved.id }
-                cards.insert(saved, at: 0)
+                updateLocalCards { cards in
+                    cards.removeAll { $0.id == clientClipId || $0.id == saved.id }
+                    cards.insert(saved, at: 0)
+                }
                 checkedCardIDs.remove(clientClipId)
                 checkedCardIDs.insert(saved.id)
                 focusedCardID = saved.id
-                try? hotCache.saveCards(cards)
                 setBanner("已存入 Rewind 热池 · \(sourceTitle)", isError: false)
             } catch {
                 try outbox.enqueue(entry)
-                try? hotCache.saveCards(cards)
                 setBanner("网络暂不可达，已安全记入离线队列", isError: false)
             }
         } catch {
@@ -347,27 +359,36 @@ public final class AppCoordinator {
     }
 
     public func refresh() async {
+        latestRefreshRequest += 1
+        let ticket = RefreshTicket(request: latestRefreshRequest, localRevision: localCardsRevision)
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
               let token = KeychainTokenStore.resolveToken(environment: environment) else {
-            cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
+            guard canPublishRefresh(ticket) else { return }
+            cards = Self.mergeCards(cached: cards, pendingOutbox: outbox.loadEntries())
             return
         }
         do {
-            let flushResult = try await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
+            _ = try await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
             let remoteCards = try await memosClient.listHotClips(baseURL: baseURL, token: token)
-            cards = Self.mergeCards(cached: remoteCards, pendingOutbox: flushResult.remaining)
-            try? hotCache.saveCards(remoteCards)
+            guard canPublishRefresh(ticket) else { return }
+            cards = Self.mergeCards(cached: remoteCards, pendingOutbox: outbox.loadEntries())
+            try? hotCache.saveCards(cards)
             if focusedCardID == nil {
                 focusedCardID = cards.first?.id
             }
         } catch {
-            cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
+            guard canPublishRefresh(ticket) else { return }
+            cards = Self.mergeCards(cached: cards, pendingOutbox: outbox.loadEntries())
             setBanner("刷新失败，当前展示本地热缓存", isError: true)
         }
     }
 
+    private func canPublishRefresh(_ ticket: RefreshTicket) -> Bool {
+        ticket.request == latestRefreshRequest && ticket.localRevision == localCardsRevision && !isCapturingSelection
+    }
+
     @discardableResult
-    public func launchCheckedInAntigravity(markSynthesized: Bool = false, waitSeconds: TimeInterval = 40) async -> AntigravityLauncher.LaunchOutcome? {
+    public func launchCheckedInAntigravity(waitSeconds: TimeInterval = 40) async -> AntigravityLauncher.LaunchOutcome? {
         guard !isLaunchingConversation else { return nil }
         isLaunchingConversation = true
         canEndUnconfirmedConversation = false
@@ -387,7 +408,7 @@ public final class AppCoordinator {
                     setBanner("请先安装或修复 Antigravity 插件，再点击开聊", isError: true)
                     return nil
                 }
-                current = try handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesized)
+                current = try handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesizedOnLaunch)
             }
             onOpenAntigravityApp?()
             setBanner("正在等待 Antigravity 创建新会话并发送上下文…", isError: false)
@@ -413,7 +434,7 @@ public final class AppCoordinator {
                                     try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
                                     try handoff.recordArchivedCard(card.id, requestId: current.requestId)
                                     checkedCardIDs.remove(card.id)
-                                    cards.removeAll { $0.id == card.id }
+                                    updateLocalCards { $0.removeAll { $0.id == card.id } }
                                 } catch { failed = true }
                             }
                             try hotCache.saveCards(cards)
@@ -483,8 +504,7 @@ public final class AppCoordinator {
         do {
             try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
             checkedCardIDs.remove(card.id)
-            cards.removeAll { $0.id == card.id }
-            try? hotCache.saveCards(cards)
+            updateLocalCards { $0.removeAll { $0.id == card.id } }
         } catch {
             setBanner(error.localizedDescription, isError: true)
         }
@@ -575,9 +595,10 @@ public final class AppCoordinator {
         return title.isEmpty ? nil : title
     }
 
-    private func upsertLocalCard(_ card: RewindCard) {
-        cards.removeAll { $0.id == card.id }
-        cards.insert(card, at: 0)
+    private func updateLocalCards(_ change: (inout [RewindCard]) -> Void) {
+        localCardsRevision += 1
+        change(&cards)
+        try? hotCache.saveCards(cards)
     }
 
     private static func mergeCards(cached: [RewindCard], pendingOutbox: [OutboxEntry]) -> [RewindCard] {

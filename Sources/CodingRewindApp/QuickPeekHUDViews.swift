@@ -147,7 +147,6 @@ public struct QuickPeekHUDRootView: View {
     public let onInstallPlugin: @MainActor () -> Void
     public let onOpenSettings: @MainActor () -> Void
 
-    @State private var markSynthesizedOnLaunch = false
     @FocusState private var isSearchFocused: Bool
 
     public init(
@@ -255,10 +254,10 @@ public struct QuickPeekHUDRootView: View {
             Divider()
             HStack(spacing: 8) {
                 Text("已选 \(coordinator.checkedCardIDs.count) 张").font(.system(size: 11, weight: .medium))
-                Toggle("开聊后归档", isOn: $markSynthesizedOnLaunch).toggleStyle(.checkbox).font(.system(size: 11))
+                Toggle("开聊后归档", isOn: $coordinator.markSynthesizedOnLaunch).toggleStyle(.checkbox).font(.system(size: 11))
                 Spacer()
                 Button(coordinator.isLaunchingConversation ? "正在接聊…" : "在 Antigravity 开聊 ⌘↵") {
-                    Task { await coordinator.launchCheckedInAntigravity(markSynthesized: markSynthesizedOnLaunch) }
+                    Task { await coordinator.launchCheckedInAntigravity() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
