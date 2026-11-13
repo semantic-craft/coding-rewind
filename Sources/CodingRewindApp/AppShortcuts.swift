@@ -36,13 +36,16 @@ public final class AppShortcuts {
         return "dev.codingrewind.qa.shortcuts.\(digest)"
     }
 
-    public static func configurePreferences(environment: [String: String], dataDirectory: URL) {
+    public static func preferences(environment: [String: String], dataDirectory: URL) -> UserDefaults {
         if let suite = preferencesSuite(environment: environment, dataDirectory: dataDirectory) {
             guard let defaults = UserDefaults(suiteName: suite) else { preconditionFailure("Invalid QA preferences suite") }
-            KeyboardShortcuts.configure(userDefaults: defaults)
-        } else {
-            KeyboardShortcuts.configure(userDefaults: .standard)
+            return defaults
         }
+        return .standard
+    }
+
+    public static func configurePreferences(environment: [String: String], dataDirectory: URL) {
+        KeyboardShortcuts.configure(userDefaults: preferences(environment: environment, dataDirectory: dataDirectory))
     }
 
     public init(onCommand: @escaping @MainActor (AppCommand) -> Void) {

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coding Rewind 开发进度</title>
+<style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
+<h1>Coding Rewind 开发进度</h1>
+<p>Observed: 2026-11-13T01:06:00.123767Z</p>
+<p>Main: <code>main: 110d20f135ced869ee88aaeee4a3336ceee3d517</code></p>
+<section id="implemented"><h2>已经实现与合并</h2>
+<article id="m0-m1"><h3>M0/M1 · 需求、单一 Memos 架构与统一门禁</h3><span class="badge">done</span><p>需求、来源、原文边界、离线队列和统一检查入口已纳入主分支。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 架构与线级契约</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/1">pull 1: 原文和并发队列修复已合并</a></li>
+</ul><p>Next: 后续改动按代码质量标准及对应里程碑验收。</p></article>
+<article id="web-capture"><h3>M2 · 网页选段剪藏</h3><span class="badge">done</span><p>扩展包含 ChatGPT、Claude、Gemini 适配；ChatGPT 的真实选区与端到端保存已有实机证据。其余站点单列待验。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/4">pull 4: 真实选区修复与当前 ChatGPT 支持已合并</a></li>
+</ul><p>Next: Claude 与 Gemini 用真实页面补验。</p></article>
+<article id="shortcuts"><h3>M2 · 可配置 Hyper 快捷键</h3><span class="badge">done</span><p>录制、清空、恢复、持久化与独占冲突反馈已实现。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/3">pull 3: 独立进程冲突测试与实机验收已交付</a></li>
+</ul><p>Next: 修改快捷键代码时重跑跨进程测试。</p></article>
+<article id="enrichment"><h3>M3 · AI 定锚与近期卡片</h3><span class="badge">done</span><p>Memos、增强器、72 小时浮窗与本地缓存已实现；之前的已安装应用端到端验收读回了原文和 AI 摘要。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/deploy/vps/enricher/enricher.py">file deploy/vps/enricher/enricher.py: 标准 webhook 与轮询处理</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/5">pull 5: 开发凭据启动器与桌面延续验证</a></li>
+</ul><p>Next: 云端部署变更时重新核对实际容器契约。</p></article>
+<article id="handoff"><h3>M4 · Antigravity 一键接聊</h3><span class="badge">done</span><p>官方 sidecar 创建会话并发送完整卡片上下文。已安装 HUD 的真实创建、重启和幂等验收已完成。自动选中新会话正文仍无已核实接口。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/6">pull 6: 已合并；本机历史验收记录证实真实会话回读</a></li>
+</ul><p>Next: 用户在 Antigravity 选择新会话继续。</p></article>
+</section>
+<section id="current"><h2>本轮桌面入口与设置</h2>
+<article id="menu-system"><h3>菜单栏现场修复</h3><span class="badge">done</span><p>实际运行的 CodingRewindApp-native 被系统菜单栏开关禁用。已开启并读回开关值，屏幕重新出现图标。</p><ul>
+<li>note 本机实测 2026-11-13: 系统开关 false → true；不是图标资源或进程丢失</li>
+</ul><p>Next: 在设置页保留系统菜单栏恢复入口。</p></article>
+<article id="settings-implementation"><h3>Dock 默认可见与原生设置分页</h3><span class="badge">done</span><p>显示偏好集中管理；通用、连接、快捷键、集成与权限四页已实现。环境覆盖字段禁用，地址配置不冒充联网成功。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/SettingsViews.swift">file Sources/CodingRewindApp/SettingsViews.swift: 原生设置页</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/AppAppearancePreferences.swift">file Sources/CodingRewindApp/AppAppearancePreferences.swift: Dock 偏好与系统策略单一所有者</a></li>
+</ul><p>Next: 后续改动继续按同一标准验收。</p></article>
+<article id="quality-standard"><h3>后续代码标准与验收入口</h3><span class="badge">done</span><p>标准已写为可判定规则，覆盖状态所有权、真实反馈、原文保真、凭据隔离、行为测试和交付实测。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: Maccy 与既有 MIT 组件的参考和验收方法</a></li>
+</ul><p>Next: 每次修复使用同一标准，不能用编译或截图代理替代实际行为。</p></article>
+<article id="current-verification"><h3>本轮自动验证与实机验收</h3><span class="badge">done</span><p>最终全仓门禁通过；隔离设置的切换、持久化、URL 校验与离线反馈通过。日常交付包签名与二进制哈希核对通过，Dock、菜单栏、设置、窗口重开及应用重启已实测。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift">file Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift: 显示与重启回归</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/verify-app-presence.swift">file scripts/verify-app-presence.swift: 可重放的激活策略检查</a></li>
+</ul><p>Next: 跨应用选区仍需系统辅助功能授权，见下方边界。</p></article>
+<article id="delivery-state"><h3>提交与合并</h3><span class="badge">in_progress</span><p>已安装日常应用；正在完成独立审查与提交合并。</p><ul>
+<li>note 本机交付验收 2026-11-13: 签名校验、构建与安装二进制一致，重启成功</li>
+</ul><p>Next: 合并后刷新 GitHub 事实。</p></article>
+</section>
+<section id="unverified"><h2>未完成的验收边界</h2>
+<article id="capture-permission"><h3>桌面跨应用选区权限</h3><span class="badge">blocked</span><p>当前日常安装的设置页显示辅助功能未授权。代码与回归存在，不能据此称当前机器的跨应用捕获可用。</p><ul>
+<li>note 本机设置页 2026-11-13: 辅助功能状态未授权</li>
+</ul><p>Next: 用户在系统授权后，从真实宿主选区补验捕获和剪贴板还原。</p></article>
+<article id="other-websites"><h3>Claude 与 Gemini 真实页面</h3><span class="badge">unverified</span><p>存在适配器和自动测试；本轮未找到足以确认两站当前真实 DOM 全链路的实机证据。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/extractors.mjs">file extensions/web-clipper/extractors.mjs: 实现不等同于当前站点验收</a></li>
+</ul><p>Next: 逐站从选区保存到 Memos 回读。</p></article>
+<article id="export-and-mcp"><h3>导出删除与自然语言 MCP 消费</h3><span class="badge">unverified</span><p>Memos 原生能力和插件接线已具备；本轮未重新验证真实导出、删除及宿主自然语言调用。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/milestones.md">file docs/milestones.md: M3/M4 验收项仍按各自证据判断</a></li>
+</ul><p>Next: 针对真实服务补证，避免用 sidecar 成功代替 MCP 验收。</p></article>
+</section>
+<section><h2>Open pull requests</h2><ul>
+</ul><h2>Recent releases</h2><ul>
+</ul></section></html>

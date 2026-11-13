@@ -113,6 +113,17 @@
 - 验证点：运行 `./scripts/check`，由 [ConversationHandoffTests.swift](Tests/CodingRewindCoreTests/ConversationHandoffTests.swift) 覆盖结构化回执、重复提交、崩溃恢复与过期清理；从已安装 HUD 核对新会话、原文、失败不归档、应用重启及 sidecar 原位升级。未知结果不自动重发，成功回执不能冒充前台已切换。
 - 复发记录：`Seen 1x (2026-11-12)`，桌面接聊实机验收检出。
 
+### 菜单栏许可与 Dock 激活策略分别验收
+
+**菜单栏对象存在不代表系统允许显示；Dock 的目标策略已经生效时，重复设置返回 false 不能当成失败。**
+
+- 标签：#macOS原生 #菜单栏 #验收
+- 起因与后果：2026-11-13 实机中，CodingRewind 仍在运行，但系统“菜单栏”的 CodingRewindApp-native 开关关闭；同时应用固定使用 accessory 策略，用户找不到入口。修复后隔离重启又检出，同为 accessory 的重复 setActivationPolicy 返回 false，设置误报失败。
+- 修复与证据：恢复系统开关并读回；[AppAppearancePreferences.swift](Sources/CodingRewindApp/AppAppearancePreferences.swift) 默认显示 Dock，以当前策略判定无需切换的成功情况；设置提供系统菜单栏恢复入口。[AppAppearancePreferencesTests.swift](Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift) 的真实 AppKit 回归在修复前断言失败，修复后通过。
+- 正确做法 `Done right`：先核对正在运行的实际可执行文件在系统菜单栏列表中的许可，再核对 Dock 激活策略。应用不循环覆盖系统选择。设置、启动和持久化共用一个偏好所有者。
+- 验证点：运行 [scripts/check](scripts/check)，再按 [代码质量标准](docs/code-quality.md) 验证已安装包的图标、设置入口和重启；[verify-app-presence.swift](scripts/verify-app-presence.swift) 只证明激活策略，屏幕图标仍需单独核验。
+- 复发记录：`Seen 1x (2026-11-13)`，用户反馈和隔离应用重启验收检出。
+
 ## 记录模板
 
 复制下列模板新增条目，已有同类条目则更新原条。未知的提交、原因或验收结果明确写待核实。

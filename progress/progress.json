@@ -1,0 +1,308 @@
+{
+  "facts": {
+    "default_branch": "main",
+    "issues": [],
+    "main": "110d20f135ced869ee88aaeee4a3336ceee3d517",
+    "open_pulls": [],
+    "pulls": [
+      {
+        "base": "1d36ca0205616cb6fc4ed1a9b379f0d297137e37",
+        "head": "f6d4c61df74fb97e4c31e7c9570ab756d82e2ae7",
+        "merge_commit": "85ea5e07276a3c7d5113ee4ed7031eb716490317",
+        "merged": true,
+        "number": 1,
+        "state": "closed"
+      },
+      {
+        "base": "85ea5e07276a3c7d5113ee4ed7031eb716490317",
+        "head": "5bd96bd0289e774ba5b4eb02ad3bbcd15da2eace",
+        "merge_commit": "649e03ead71d14ac73ba316b7db644f341befa98",
+        "merged": true,
+        "number": 2,
+        "state": "closed"
+      },
+      {
+        "base": "649e03ead71d14ac73ba316b7db644f341befa98",
+        "head": "09585f4a7bd5ab99a1eb89d8e7ca9af7840d52a3",
+        "merge_commit": "d027267c4939669d076505437823ba66d317e1a9",
+        "merged": true,
+        "number": 3,
+        "state": "closed"
+      },
+      {
+        "base": "d027267c4939669d076505437823ba66d317e1a9",
+        "head": "ede20c447318a4dae52c7fdbfa411e2b3eb984de",
+        "merge_commit": "a7d1126ae68011aa78b33996c1226b860817ee99",
+        "merged": true,
+        "number": 4,
+        "state": "closed"
+      },
+      {
+        "base": "a7d1126ae68011aa78b33996c1226b860817ee99",
+        "head": "c4ce191df98e1c97d0daa05374cf760048c97298",
+        "merge_commit": "b8b2a1b651789b0274dc013a6570e0cbef29eefa",
+        "merged": true,
+        "number": 5,
+        "state": "closed"
+      },
+      {
+        "base": "b8b2a1b651789b0274dc013a6570e0cbef29eefa",
+        "head": "2f748732fa9b1267963ae19df6764c1db03808e4",
+        "merge_commit": "110d20f135ced869ee88aaeee4a3336ceee3d517",
+        "merged": true,
+        "number": 6,
+        "state": "closed"
+      }
+    ],
+    "releases": []
+  },
+  "inputs": [
+    "docs/code-quality.md",
+    "docs/milestones.md"
+  ],
+  "observed_at": "2026-11-13T01:06:00.123767Z",
+  "outputs": [
+    "progress/index.html"
+  ],
+  "page": "progress/index.html",
+  "related_repositories": [
+    "p0deje/Maccy"
+  ],
+  "renderer": null,
+  "repository": "semantic-craft/coding-rewind",
+  "schema_version": 1,
+  "sections": [
+    {
+      "id": "implemented",
+      "title": "已经实现与合并",
+      "items": [
+        {
+          "id": "m0-m1",
+          "title": "M0/M1 · 需求、单一 Memos 架构与统一门禁",
+          "status": "done",
+          "summary": "需求、来源、原文边界、离线队列和统一检查入口已纳入主分支。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/architecture.md",
+              "note": "架构与线级契约"
+            },
+            {
+              "kind": "pull",
+              "ref": 1,
+              "note": "原文和并发队列修复已合并"
+            }
+          ],
+          "next": "后续改动按代码质量标准及对应里程碑验收。"
+        },
+        {
+          "id": "web-capture",
+          "title": "M2 · 网页选段剪藏",
+          "status": "done",
+          "summary": "扩展包含 ChatGPT、Claude、Gemini 适配；ChatGPT 的真实选区与端到端保存已有实机证据。其余站点单列待验。",
+          "evidence": [
+            {
+              "kind": "pull",
+              "ref": 4,
+              "note": "真实选区修复与当前 ChatGPT 支持已合并"
+            }
+          ],
+          "next": "Claude 与 Gemini 用真实页面补验。"
+        },
+        {
+          "id": "shortcuts",
+          "title": "M2 · 可配置 Hyper 快捷键",
+          "status": "done",
+          "summary": "录制、清空、恢复、持久化与独占冲突反馈已实现。",
+          "evidence": [
+            {
+              "kind": "pull",
+              "ref": 3,
+              "note": "独立进程冲突测试与实机验收已交付"
+            }
+          ],
+          "next": "修改快捷键代码时重跑跨进程测试。"
+        },
+        {
+          "id": "enrichment",
+          "title": "M3 · AI 定锚与近期卡片",
+          "status": "done",
+          "summary": "Memos、增强器、72 小时浮窗与本地缓存已实现；之前的已安装应用端到端验收读回了原文和 AI 摘要。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "deploy/vps/enricher/enricher.py",
+              "note": "标准 webhook 与轮询处理"
+            },
+            {
+              "kind": "pull",
+              "ref": 5,
+              "note": "开发凭据启动器与桌面延续验证"
+            }
+          ],
+          "next": "云端部署变更时重新核对实际容器契约。"
+        },
+        {
+          "id": "handoff",
+          "title": "M4 · Antigravity 一键接聊",
+          "status": "done",
+          "summary": "官方 sidecar 创建会话并发送完整卡片上下文。已安装 HUD 的真实创建、重启和幂等验收已完成。自动选中新会话正文仍无已核实接口。",
+          "evidence": [
+            {
+              "kind": "pull",
+              "ref": 6,
+              "note": "已合并；本机历史验收记录证实真实会话回读"
+            }
+          ],
+          "next": "用户在 Antigravity 选择新会话继续。"
+        }
+      ]
+    },
+    {
+      "id": "current",
+      "title": "本轮桌面入口与设置",
+      "items": [
+        {
+          "id": "menu-system",
+          "title": "菜单栏现场修复",
+          "status": "done",
+          "summary": "实际运行的 CodingRewindApp-native 被系统菜单栏开关禁用。已开启并读回开关值，屏幕重新出现图标。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "本机实测 2026-11-13",
+              "note": "系统开关 false → true；不是图标资源或进程丢失"
+            }
+          ],
+          "next": "在设置页保留系统菜单栏恢复入口。"
+        },
+        {
+          "id": "settings-implementation",
+          "title": "Dock 默认可见与原生设置分页",
+          "status": "done",
+          "summary": "显示偏好集中管理；通用、连接、快捷键、集成与权限四页已实现。环境覆盖字段禁用，地址配置不冒充联网成功。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindApp/SettingsViews.swift",
+              "note": "原生设置页"
+            },
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindApp/AppAppearancePreferences.swift",
+              "note": "Dock 偏好与系统策略单一所有者"
+            }
+          ],
+          "next": "后续改动继续按同一标准验收。"
+        },
+        {
+          "id": "quality-standard",
+          "title": "后续代码标准与验收入口",
+          "status": "done",
+          "summary": "标准已写为可判定规则，覆盖状态所有权、真实反馈、原文保真、凭据隔离、行为测试和交付实测。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/code-quality.md",
+              "note": "Maccy 与既有 MIT 组件的参考和验收方法"
+            }
+          ],
+          "next": "每次修复使用同一标准，不能用编译或截图代理替代实际行为。"
+        },
+        {
+          "id": "current-verification",
+          "title": "本轮自动验证与实机验收",
+          "status": "done",
+          "summary": "最终全仓门禁通过；隔离设置的切换、持久化、URL 校验与离线反馈通过。日常交付包签名与二进制哈希核对通过，Dock、菜单栏、设置、窗口重开及应用重启已实测。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift",
+              "note": "显示与重启回归"
+            },
+            {
+              "kind": "file",
+              "ref": "scripts/verify-app-presence.swift",
+              "note": "可重放的激活策略检查"
+            }
+          ],
+          "next": "跨应用选区仍需系统辅助功能授权，见下方边界。"
+        },
+        {
+          "id": "delivery-state",
+          "title": "提交与合并",
+          "status": "in_progress",
+          "summary": "已安装日常应用；正在完成独立审查与提交合并。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "本机交付验收 2026-11-13",
+              "note": "签名校验、构建与安装二进制一致，重启成功"
+            }
+          ],
+          "next": "合并后刷新 GitHub 事实。"
+        }
+      ]
+    },
+    {
+      "id": "unverified",
+      "title": "未完成的验收边界",
+      "items": [
+        {
+          "id": "capture-permission",
+          "title": "桌面跨应用选区权限",
+          "status": "blocked",
+          "summary": "当前日常安装的设置页显示辅助功能未授权。代码与回归存在，不能据此称当前机器的跨应用捕获可用。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "本机设置页 2026-11-13",
+              "note": "辅助功能状态未授权"
+            }
+          ],
+          "next": "用户在系统授权后，从真实宿主选区补验捕获和剪贴板还原。"
+        },
+        {
+          "id": "other-websites",
+          "title": "Claude 与 Gemini 真实页面",
+          "status": "unverified",
+          "summary": "存在适配器和自动测试；本轮未找到足以确认两站当前真实 DOM 全链路的实机证据。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/extractors.mjs",
+              "note": "实现不等同于当前站点验收"
+            }
+          ],
+          "next": "逐站从选区保存到 Memos 回读。"
+        },
+        {
+          "id": "export-and-mcp",
+          "title": "导出删除与自然语言 MCP 消费",
+          "status": "unverified",
+          "summary": "Memos 原生能力和插件接线已具备；本轮未重新验证真实导出、删除及宿主自然语言调用。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/milestones.md",
+              "note": "M3/M4 验收项仍按各自证据判断"
+            }
+          ],
+          "next": "针对真实服务补证，避免用 sidecar 成功代替 MCP 验收。"
+        }
+      ]
+    }
+  ],
+  "title": "Coding Rewind 开发进度",
+  "tracked": {
+    "issues": [],
+    "pulls": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ]
+  }
+}

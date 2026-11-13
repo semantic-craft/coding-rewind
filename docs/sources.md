@@ -66,3 +66,7 @@
 | GitHub Docs About READMEs | [About READMEs](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-readmes) | 保持根 `README.md` 简明扼要，专题文档拆分至 `docs/` 并用相对链接互指 |
 | Diataxis | [Diataxis Start Here](https://www.diataxis.fr/start-here/) | 将需求边界、架构参考、来源核查与验收步骤分文件独立维护 |
 | GDPR Article 5 | [EUR-Lex Regulation 2016/679](https://eur-lex.europa.eu/eli/reg/2016/679/oj) | 作为 [privacy.md](privacy.md) 数据最小化、原文准确性与可删除设计原则的参考，不构成法域合规声明 |
+
+## 2026-11-13 桌面入口与设置复核
+
+核读 Maccy 提交 `f0b571e32e4031d7b91ba811f50d0f33e8e5548b` 的 [AppDelegate](https://github.com/p0deje/Maccy/blob/f0b571e32e4031d7b91ba811f50d0f33e8e5548b/Maccy/AppDelegate.swift)、[GeneralSettingsPane](https://github.com/p0deje/Maccy/blob/f0b571e32e4031d7b91ba811f50d0f33e8e5548b/Maccy/Settings/GeneralSettingsPane.swift) 与 [AppearanceSettingsPane](https://github.com/p0deje/Maccy/blob/f0b571e32e4031d7b91ba811f50d0f33e8e5548b/Maccy/Settings/AppearanceSettingsPane.swift)，再次读取根 LICENSE 确认为 MIT。此次沿用状态栏对象集中持有、偏好集中保存、原生设置分组的做法，不引入其 Defaults 或 Settings 依赖，不复制源码。具体验收规则见 [代码质量与验收标准](code-quality.md)。

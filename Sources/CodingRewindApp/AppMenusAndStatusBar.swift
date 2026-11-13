@@ -434,15 +434,15 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let isMemosConnected: Bool = {
-            if case .connected = snapshot.connection { return true }
+        let isMemosConfigured: Bool = {
+            if case .configured = snapshot.connection { return true }
             return false
         }()
         menu.addItem(
             makeCommandMenuItem(
                 title: "打开 Memos 网页 ↗",
                 command: .openMemosWeb,
-                isEnabled: isMemosConnected,
+                isEnabled: isMemosConfigured,
                 handler: onCommand
             )
         )
@@ -501,6 +501,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 @MainActor
 public final class SettingsWindowController: NSWindowController {
     private let coordinator: AppCoordinator
+    private let appearance: AppAppearancePreferences
     private let shortcuts: AppShortcuts
     private let onInstallPlugin: @MainActor () -> Void
     private let onRequestAccessibility: @MainActor () -> Void
@@ -509,27 +510,29 @@ public final class SettingsWindowController: NSWindowController {
 
     public init(
         coordinator: AppCoordinator,
+        appearance: AppAppearancePreferences,
         shortcuts: AppShortcuts,
         onInstallPlugin: @escaping @MainActor () -> Void,
         onRequestAccessibility: @escaping @MainActor () -> Void
     ) {
         self.coordinator = coordinator
+        self.appearance = appearance
         self.shortcuts = shortcuts
         self.onInstallPlugin = onInstallPlugin
         self.onRequestAccessibility = onRequestAccessibility
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 570),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 520),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = "Coding Rewind 设置"
-        window.level = .floating
         window.isReleasedWhenClosed = false
 
         let placeholderView = SettingsFormView(
             coordinator: coordinator,
+            appearance: appearance,
             shortcuts: shortcuts,
             onInstallPlugin: onInstallPlugin,
             onRequestAccessibility: onRequestAccessibility,
@@ -540,7 +543,7 @@ public final class SettingsWindowController: NSWindowController {
 
         self.hostingView.rootView = makeRootView()
         window.contentView = self.hostingView
-        window.setContentSize(NSSize(width: 520, height: 570))
+        window.setContentSize(NSSize(width: 580, height: 520))
     }
 
     @available(*, unavailable)
@@ -562,6 +565,7 @@ public final class SettingsWindowController: NSWindowController {
     private func makeRootView() -> SettingsFormView {
         SettingsFormView(
             coordinator: coordinator,
+            appearance: appearance,
             shortcuts: shortcuts,
             onInstallPlugin: onInstallPlugin,
             onRequestAccessibility: onRequestAccessibility,
