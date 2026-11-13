@@ -352,7 +352,7 @@ test("selected text excludes ChatGPT copy-excluded footers while preserving Mark
   }
 });
 
-test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to 4 turns up to selection", () => {
+test("ChatGPT context keeps four user-led rounds through the selected assistant block", () => {
   const url = "https://chatgpt.com/c/67f0a1b2-3344";
   const doc = parseHtmlDocument(
     `
@@ -368,7 +368,12 @@ test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to
           <div data-message-author-role="assistant"><div class="markdown"><p>Turn 1 assistant reply</p></div></div>
           <div data-message-author-role="user"><div class="whitespace-pre-wrap">Turn 2 user question</div></div>
           <div data-message-author-role="assistant"><div class="markdown"><p>Turn 2 assistant reply</p></div></div>
+          <div data-message-author-role="user"><div class="whitespace-pre-wrap">Turn 3 user question</div></div>
+          <div data-message-author-role="assistant"><div class="markdown"><p>Turn 3 assistant reply</p></div></div>
+          <div data-message-author-role="user"><div class="whitespace-pre-wrap">Turn 4 user question</div></div>
+          <div data-message-author-role="assistant"><div class="markdown"><p>Turn 4 assistant reply</p></div></div>
           <div data-message-author-role="user"><div class="whitespace-pre-wrap">How do I keep NSPanel from stealing focus?</div></div>
+          <div data-message-author-role="assistant"><div class="markdown"><p>Turn 5 assistant preface</p></div></div>
           <div data-message-author-role="assistant">
             <div class="markdown">
               <p>Use <code>.nonactivatingPanel</code> in your style mask:</p>
@@ -377,8 +382,9 @@ test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to
               </div>
             </div>
           </div>
-          <div data-message-author-role="user"><div class="whitespace-pre-wrap">Turn 4 later follow-up below selection</div></div>
-          <div data-message-author-role="assistant"><div class="markdown"><p>Turn 4 later answer below selection</p></div></div>
+          <div data-message-author-role="assistant"><div class="markdown"><p>Turn 5 later assistant block</p></div></div>
+          <div data-message-author-role="user"><div class="whitespace-pre-wrap">Turn 6 later follow-up</div></div>
+          <div data-message-author-role="assistant"><div class="markdown"><p>Turn 6 later answer</p></div></div>
         </main>
       </body>
     </html>
@@ -397,13 +403,76 @@ test("ChatGPT DOM extraction captures title, nearest preceding prompt, and up to
   assert.equal(ctx.prompt, "How do I keep NSPanel from stealing focus?");
   assert.equal(ctx.selectedMarkdown, "```swift\npanel.styleMask.insert(.nonactivatingPanel)\n```");
 
-  const turnBlocks = ctx.recentTurns.split(/\n\n(?=(?:User|Assistant): )/);
-  assert.equal(turnBlocks.length, 4);
-  assert.match(turnBlocks[0], /^User: Turn 2 user question$/);
-  assert.match(turnBlocks[1], /^Assistant: Turn 2 assistant reply$/);
-  assert.match(turnBlocks[2], /^User: How do I keep NSPanel from stealing focus\?$/);
-  assert.match(turnBlocks[3], /^Assistant: Use `\.nonactivatingPanel` in your style mask:/);
-  assert.doesNotMatch(ctx.recentTurns, /later follow-up below selection/);
+  assert.equal(ctx.recentTurns, [
+    "User: Turn 2 user question",
+    "Assistant: Turn 2 assistant reply",
+    "User: Turn 3 user question",
+    "Assistant: Turn 3 assistant reply",
+    "User: Turn 4 user question",
+    "Assistant: Turn 4 assistant reply",
+    "User: How do I keep NSPanel from stealing focus?",
+    "Assistant: Turn 5 assistant preface",
+    "Assistant: Use `.nonactivatingPanel` in your style mask:\n\n" + ctx.selectedMarkdown
+  ].join("\n\n"));
+});
+
+test("ChatGPT keeps a selected user message in recent rounds without attaching a preceding prompt", () => {
+  const doc = parseHtmlDocument(`
+    <div data-message-author-role="user">First question?</div>
+    <div data-message-author-role="assistant">First answer.</div>
+    <div data-message-author-role="user" id="picked">Next question?</div>
+    <div data-message-author-role="assistant">Later answer.</div>
+  `, { url: "https://chatgpt.com/c/selected-question" });
+  const range = doc.createRangeFromNode(doc.querySelector("#picked"));
+  const selection = {
+    rangeCount: 1,
+    isCollapsed: false,
+    getRangeAt() { return range; },
+    toString() { return range.toString(); }
+  };
+
+  const ctx = extractClipContext({ doc, selection });
+  assert.equal(ctx.selectedMarkdown, "Next question?");
+  assert.equal(ctx.prompt, "");
+  assert.equal(ctx.recentTurns, "User: First question?\n\nAssistant: First answer.\n\nUser: Next question?");
+});
+
+test("ChatGPT saves page text outside a message without attaching nearby chat context", () => {
+  const doc = parseHtmlDocument(`
+    <div data-message-author-role="user">First question?</div>
+    <div data-message-author-role="assistant">First answer.</div>
+    <aside id="picked">Text outside the chat.</aside>
+    <div data-message-author-role="user">Later question?</div>
+  `, { url: "https://chatgpt.com/c/outside-message" });
+  const selectionRange = doc.createRangeFromNode(doc.querySelector("#picked"));
+
+  const ctx = extractClipContext({ doc, selectionRange });
+  assert.equal(ctx.selectedMarkdown, "Text outside the chat.");
+  assert.equal(ctx.prompt, "");
+  assert.equal(ctx.recentTurns, "");
+});
+
+test("ChatGPT saves a selection spanning messages without attaching context to either message", () => {
+  const doc = parseHtmlDocument(
+    '<main><div data-message-author-role="user">A question?</div><div data-message-author-role="assistant">An answer.</div></main>',
+    { url: "https://chatgpt.com/c/spanning-messages" }
+  );
+  const main = doc.querySelector("main");
+  const startContainer = main.children[0].childNodes[0];
+  const endContainer = main.children[1].childNodes[0];
+  const selectionRange = {
+    ...doc.createRangeFromNode(main),
+    startContainer,
+    startOffset: 0,
+    endContainer,
+    endOffset: endContainer.nodeValue.length,
+    toString() { return "A question?\n\nAn answer."; }
+  };
+
+  const ctx = extractClipContext({ doc, selectionRange });
+  assert.equal(ctx.selectedMarkdown, "A question?\n\nAn answer.");
+  assert.equal(ctx.prompt, "");
+  assert.equal(ctx.recentTurns, "");
 });
 
 test("ChatGPT role headings preserve separate messages inside shared turn containers", () => {
@@ -492,6 +561,7 @@ test("Claude DOM extraction deduplicates nested message containers and enforces 
   assert.equal(ctx.prompt, "Why does Memos block private webhook IPs?");
   assert.ok(ctx.recentTurns.length <= 4000, `Expected <= 4000 chars, got ${ctx.recentTurns.length}`);
   assert.match(ctx.recentTurns, /Why does Memos block private webhook IPs\?/);
+  assert.match(ctx.recentTurns, /A…/);
 });
 
 test("Gemini DOM extraction parses custom elements and cleans Google Gemini boilerplate", () => {
