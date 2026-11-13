@@ -515,11 +515,12 @@ function normalizeMarkdownSpacing(md) {
     if (inFence) {
       out.push(line);
     } else {
-      out.push(line.replace(/[ \t]+$/g, "").replace(/^[ \t]+(?=(?:#{1,6}\s|> ))/, ""));
+      const normalized = line.replace(/[ \t]+$/g, "").replace(/^[ \t]+(?=(?:#{1,6}\s|> ))/, "");
+      if (normalized || out.at(-1) !== "") out.push(normalized);
     }
   }
 
-  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return out.join("\n").trim();
 }
 
 export function htmlToMarkdown(nodeOrHtml, options = {}) {

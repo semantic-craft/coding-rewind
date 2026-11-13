@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 import base64, hashlib, hmac, json, os, re, sys, threading, time, urllib.request
 
 CONTEXT_MARKER = "<!-- rewind-context-v1 -->"
@@ -129,8 +129,22 @@ class EnricherService:
         return "enriched"
 
     def reconcile_once(self) -> int:
+        candidates = {}
+        page_token = ""
+        while True:
+            query = {"pageSize": 50}
+            if page_token:
+                query["pageToken"] = page_token
+            page = _json_req("GET", f"{self._base_url()}/api/memos?{urlencode(query)}", self.memos_token)
+            for memo in page.get("memos", []):
+                if parse_raw_memo(memo.get("content", "")) is not None:
+                    candidates[memo.get("name", "")] = memo
+            page_token = page.get("nextPageToken")
+            if not page_token:
+                break
+
         enriched = 0
-        for memo in _json_req("GET", f"{self._base_url()}/api/memos?pageSize=50", self.memos_token).get("memos", []):
+        for memo in candidates.values():
             try:
                 enriched += int(self.process_memo(memo) == "enriched")
             except Exception as exc:

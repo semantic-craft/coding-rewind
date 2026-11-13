@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 import base64
 import hashlib
@@ -147,9 +148,37 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertTrue(state.memos["older-pending"]["content"].startswith("#rewind/ready "))
             self.assertTrue(state.memos["older-pending"]["content"].endswith(snippet))
             self.assertEqual(len(state.ai_calls), 1)
+            self.assertEqual(svc.reconcile_once(), 0)
+            self.assertEqual(len(state.ai_calls), 1)
         finally:
             srv.shutdown()
             srv.server_close()
+
+    def test_reconcile_enumerates_pages_before_processing_and_encodes_token(self) -> None:
+        token = "next=50&cursor= +/#?"
+        pending = {"name": "memos/pending", "content": "#rewind/pending #source/web\n\nClip"}
+        older = {"name": "memos/older", "content": "#rewind/pending #source/web\n\nOlder clip"}
+        events = []
+
+        def request(method, url, auth):
+            self.assertEqual(method, "GET")
+            query = parse_qs(urlparse(url).query)
+            events.append("page")
+            self.assertEqual(query["pageSize"], ["50"])
+            if len(events) == 1:
+                self.assertNotIn("pageToken", query)
+                return {"memos": [pending], "nextPageToken": token}
+            self.assertEqual(query["pageToken"], [token])
+            return {"memos": [pending, older]}
+
+        def process(memo):
+            events.append(memo["name"])
+            return "enriched"
+
+        svc = enricher.EnricherService("http://memos.invalid", "memos-tok", "http://ai.invalid", "ai-tok", "fixture")
+        with patch.object(enricher, "_json_req", side_effect=request), patch.object(svc, "process_memo", side_effect=process):
+            self.assertEqual(svc.reconcile_once(), 2)
+        self.assertEqual(events, ["page", "page", "memos/pending", "memos/older"])
 
     def test_standard_webhooks_hmac_verification(self) -> None:
         raw_key = b"super-secret-signing-bytes-32len"

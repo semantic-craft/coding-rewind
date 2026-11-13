@@ -73,15 +73,19 @@ async function notifyTabToast(tabId, result) {
 }
 
 async function processClipSave(clip) {
-  return runSerialized(async () => {
-    const { baseUrl, token } = await getMemosSettings();
-    return saveClipWithOutbox({
-      clip,
-      baseUrl,
-      token,
-      storage: chromeOutboxStorage
+  try {
+    return await runSerialized(async () => {
+      const { baseUrl, token } = await getMemosSettings();
+      return saveClipWithOutbox({
+        clip,
+        baseUrl,
+        token,
+        storage: chromeOutboxStorage
+      });
     });
-  });
+  } catch {
+    return { status: "error", queued: false, toast: "保存失败，未确认存入 Rewind 或离线队列" };
+  }
 }
 
 async function triggerFlushOutbox() {
@@ -164,8 +168,7 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     if (!msg || typeof msg !== "object") return false;
     if (msg.type === "REWIND_SAVE_CLIP" && msg.clip) {
       processClipSave(msg.clip)
-        .then((res) => sendResponse(res))
-        .catch(() => sendResponse({ status: "queued", toast: "离线已暂存队列" }));
+        .then((res) => sendResponse(res));
       return true;
     }
     if (msg.type === "REWIND_FLUSH_OUTBOX") {
