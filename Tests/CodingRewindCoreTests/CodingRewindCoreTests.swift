@@ -225,9 +225,9 @@ struct CodingRewindCoreTests {
         #expect(!coordinator.isCapturingSelection)
     }
 
-    @Test("A refresh preserves a clip captured while its remote list is in flight", arguments: [false, true])
+    @Test("A refresh preserves a clip captured while its remote list is in flight", arguments: [false, true], [false, true])
     @MainActor
-    func refreshPreservesConcurrentCapture(captureSucceeds: Bool) async throws {
+    func refreshPreservesConcurrentCapture(captureSucceeds: Bool, refreshFails: Bool) async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
@@ -264,8 +264,10 @@ struct CodingRewindCoreTests {
         #expect(capturedCard.isOfflinePending == !captureSucceeds)
         #expect(coordinator.hotCache.loadCards().contains { $0.id == capturedCard.id })
 
-        await gate.release(0, status: 200, data: Data("{\"memos\":[]}".utf8))
+        let captureBanner = coordinator.bannerMessage
+        await gate.release(0, status: refreshFails ? 500 : 200, data: Data("{\"memos\":[]}".utf8))
         await refresh.value
+        #expect(coordinator.bannerMessage == captureBanner)
 
         #expect(coordinator.outbox.loadEntries().contains { $0.clientClipId == capturedCard.id } == !captureSucceeds)
         #expect(coordinator.cards.contains { $0.id == capturedCard.id })
@@ -293,6 +295,121 @@ struct CodingRewindCoreTests {
         #expect(cards.map(\.id) == ["rewind-on-second-page"])
         #expect(cards.first?.verbatimText == "Recent highlight")
         #expect(requests.count == 2)
+    }
+
+    @Test("An unconfigured refresh retains the current cards when the cache has changed")
+    @MainActor
+    func unconfiguredRefreshPreservesCurrentCards() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let card = try #require(MemosWireFormat.parseMemo(id: "current", rawContent: "#rewind/ready #source/macos\n\nCurrent card", createdAt: Date()))
+        let cache = HotCache(fileURL: paths.hotCacheFileURL)
+        try cache.saveCards([card])
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        try cache.saveCards([])
+        await coordinator.refresh()
+        #expect(coordinator.cards.map(\.id) == [card.id])
+    }
+
+    @Test("Only the latest started refresh publishes cards, cache and errors", arguments: [false, true], [false, true])
+    @MainActor
+    func latestRefreshOwnsPublication(olderFails: Bool, latestFails: Bool) async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let gate = MemosResponseGate()
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in await gate.response() }
+        let now = Date()
+        let initial = try #require(MemosWireFormat.parseMemo(id: "initial", rawContent: "#rewind/ready #source/macos\n\nInitial card", createdAt: now))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([initial])
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        try coordinator.hotCache.saveCards([])
+        func response(_ id: String) throws -> Data {
+            try JSONSerialization.data(withJSONObject: ["memos": [["name": "memos/\(id)", "content": "#rewind/ready #source/macos\n\n\(id)", "createTime": MemosWireFormat.formatISO8601UTC(now)]]])
+        }
+        let older = Task { await coordinator.refresh() }
+        await gate.waitForRequests(1)
+        let latest = Task { await coordinator.refresh() }
+        await gate.waitForRequests(2)
+        await gate.release(1, status: latestFails ? 500 : 200, data: try response("latest"))
+        await latest.value
+        let latestCards = coordinator.cards
+        let latestCache = coordinator.hotCache.loadCards()
+        let latestBanner = coordinator.bannerMessage
+        #expect(latestCards.map(\.id) == [latestFails ? "initial" : "latest"])
+        #expect(coordinator.isErrorBanner == latestFails)
+        await gate.release(0, status: olderFails ? 500 : 200, data: try response("older"))
+        await older.value
+        #expect(coordinator.cards == latestCards)
+        #expect(coordinator.hotCache.loadCards() == latestCache)
+        #expect(coordinator.bannerMessage == latestBanner)
+        #expect(coordinator.isErrorBanner == latestFails)
+    }
+
+    @Test("A refresh started during capture cannot remove its provisional card")
+    @MainActor
+    func refreshStartedDuringCapturePreservesCard() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let gate = MemosResponseGate()
+        MockMemosURLProtocol.register(suiteID: suiteID) { request, _ in
+            if request.httpMethod == "POST" { return await gate.response() }
+            return (200, Data("{\"memos\":[]}".utf8))
+        }
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "Capture in progress", bundleIdentifier: "fixture", appName: "Fixture")))
+        let capture = Task { await coordinator.captureSelection() }
+        await gate.waitForRequests(1)
+        let captured = try #require(coordinator.cards.first)
+        await coordinator.refresh()
+        #expect(coordinator.cards == [captured])
+        await gate.release(0, status: 500)
+        await capture.value
+        #expect(coordinator.cards == [captured])
+        #expect(coordinator.hotCache.loadCards().map(\.id) == [captured.id])
+        #expect(coordinator.outbox.loadEntries().map(\.clientClipId) == [captured.id])
+    }
+
+    @Test("Refresh commits the current outbox into both cards and cache")
+    @MainActor
+    func refreshReadsCurrentOutboxAtCommit() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let gate = MemosResponseGate()
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in await gate.response() }
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        let refresh = Task { await coordinator.refresh() }
+        await gate.waitForRequests(1)
+        try coordinator.outbox.enqueue(OutboxEntry(clientClipId: "new-outbox", memoContent: "#rewind/pending #source/macos\n\nQueued during refresh", commentContent: nil))
+        await gate.release(0, status: 200, data: Data("{\"memos\":[]}".utf8))
+        await refresh.value
+        #expect(coordinator.cards.map(\.id) == ["new-outbox"])
+        #expect(coordinator.hotCache.loadCards() == coordinator.cards)
+    }
+
+    @Test("Failure on a later memo page rejects the whole remote list")
+    func hotClipsRejectIncompletePagination() async throws {
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let firstPage = try JSONSerialization.data(withJSONObject: ["memos": [["name": "memos/first", "content": "#rewind/ready #source/macos\n\nFirst page", "createTime": MemosWireFormat.formatISO8601UTC(Date())]], "nextPageToken": "page + /?two"])
+        MockMemosURLProtocol.register(suiteID: suiteID) { request, _ in
+            let token = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems?.first { $0.name == "pageToken" }?.value
+            return token == nil ? (200, firstPage) : (503, Data())
+        }
+        await #expect(throws: RewindError.self) {
+            try await MemosClient(session: makeMockSession()).listHotClips(baseURL: URL(string: "https://\(suiteID).mock.memos.local")!, token: "fixture-token")
+        }
+        let requests = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(requests.count == 2)
+        #expect(URLComponents(url: requests.last!.url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "pageToken" }?.value == "page + /?two")
     }
 
     private func makeMockSession() -> URLSession {
@@ -826,7 +943,7 @@ struct CodingRewindCoreTests {
             #expect(flatArray[0]["timeout"] as? Int == 5)
             let cmd = try #require(flatArray[0]["command"] as? String)
             #expect(!cmd.contains(".build"))
-            #expect(cmd.hasPrefix("'") && cmd.hasSuffix("'"))
+            #expect(cmd.hasPrefix("/usr/bin/env ") && cmd.hasSuffix("'"))
         }
     }
 
@@ -847,7 +964,7 @@ struct CodingRewindCoreTests {
             windowTitle: "Gemini Thread",
             documentURL: "https://gemini.google.com/app/123"
         )
-        let coord = try AppCoordinator(
+        var coord = try AppCoordinator(
             paths: paths,
             environment: [StoragePaths.qaEnvironmentKey: "1"],
             memosClient: MemosClient(session: makeMockSession()),
@@ -897,10 +1014,10 @@ struct CodingRewindCoreTests {
 
         let now = Date()
         coord.checkedCardIDs.removeAll()
-        coord.cards = (1...6).map { idx in
+        let menuCards = (1...6).map { idx in
             RewindCard(
                 id: "c-\(idx)",
-                rawContent: "#rewind/ready #source/claude",
+                rawContent: "#rewind/ready #source/claude\n\n> **Title:** \(idx == 1 ? "Multi line Card One" : "Card \(idx)")\n> **Source:** [Claude](https://claude.ai)\n\nBody \(idx)",
                 status: .ready,
                 sourcePlatform: "claude",
                 title: idx == 1 ? "  Multi\n  line\tCard One  " : "Card \(idx)",
@@ -909,6 +1026,9 @@ struct CodingRewindCoreTests {
                 createdAt: now.addingTimeInterval(Double(-idx))
             )
         }
+        try coord.hotCache.saveCards(menuCards)
+        try FileManager.default.removeItem(at: paths.outboxFileURL)
+        coord = try AppCoordinator(paths: paths, environment: coord.environment, memosClient: coord.memosClient, capturer: coord.capturer)
         coord.focusAndCheckCard(id: "nonexistent-id")
         #expect(coord.checkedCardIDs.isEmpty)
 
@@ -978,8 +1098,10 @@ struct CodingRewindCoreTests {
         let capturer = StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
         let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
         #expect(coordinator.checkedCardIDs == ["memo"])
+        coordinator.markSynthesizedOnLaunch = true
         #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == .failed(state: .unknown))
         coordinator.endUnconfirmedConversation()
+        #expect(try store.current()?.markSynthesized == false)
         #expect(try store.current()?.requestId == current.requestId)
         #expect(try store.pendingRequests().count == 1)
         try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
@@ -1002,9 +1124,9 @@ struct CodingRewindCoreTests {
         defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
         MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (500, Data()) }
         let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
-        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
-        let card = RewindCard(id: "memo", rawContent: "#rewind/ready #source/macos\n\noriginal", status: .ready, sourcePlatform: "macos", sourceTitle: "Fixture", verbatimText: "original", createdAt: Date())
-        coordinator.cards = [card]
+        let card = try #require(MemosWireFormat.parseMemo(id: "memo", rawContent: "#rewind/ready #source/macos\n\noriginal", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
+        var coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local", StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"], memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
         coordinator.checkedCardIDs = [card.id]
         let current = try coordinator.handoff.submit(prompt: AntigravityLauncher.buildPrompt(for: [card]), cardIDs: [card.id], markSynthesized: true)
         let conversationID = UUID().uuidString
@@ -1023,7 +1145,8 @@ struct CodingRewindCoreTests {
         #expect(try coordinator.handoff.current() == nil)
         #expect(await coordinator.launchCheckedInAntigravity(waitSeconds: 0) == nil)
         #expect(try coordinator.handoff.pendingRequests().isEmpty)
-        coordinator.cards = [card]
+        try coordinator.hotCache.saveCards([card])
+        coordinator = try AppCoordinator(paths: paths, environment: coordinator.environment, memosClient: coordinator.memosClient, capturer: coordinator.capturer)
         coordinator.checkedCardIDs = [card.id, "missing-old-card"]
         let partial = try coordinator.handoff.submit(prompt: "another confirmed conversation", cardIDs: [card.id, "missing-old-card"], markSynthesized: true)
         try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: partial.requestId, state: .succeeded, conversationId: conversationID))

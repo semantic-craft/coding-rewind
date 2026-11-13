@@ -29,13 +29,12 @@ public enum AntigravityIntegration {
             .appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
     }
 
-    public static func hookCommandString(for executableURL: URL) -> String {
-        let path = executableURL.standardizedFileURL.path
-        if path.contains(" ") {
-            let escaped = path.replacingOccurrences(of: "'", with: "'\\''")
-            return "'\(escaped)'"
+    public static func hookCommandString(for executableURL: URL, dataDirectoryURL: URL) -> String {
+        func quoted(_ value: String) -> String {
+            "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
         }
-        return path
+        let dataEnvironment = "CODING_REWIND_DATA_DIR=\(dataDirectoryURL.standardizedFileURL.path)"
+        return "/usr/bin/env \(quoted(dataEnvironment)) \(quoted(executableURL.standardizedFileURL.path))"
     }
 
     @discardableResult
@@ -122,7 +121,7 @@ public enum AntigravityIntegration {
 
         let handler: [String: Any] = [
             "type": "command",
-            "command": hookCommandString(for: destHook),
+            "command": hookCommandString(for: destHook, dataDirectoryURL: resolvedData),
             "timeout": 5
         ]
         let hooksPayload: [String: Any] = [
@@ -205,7 +204,7 @@ public enum AntigravityIntegration {
         let hooksJSONURL = pluginDir.appendingPathComponent("hooks.json", isDirectory: false)
         let skillURL = pluginDir.appendingPathComponent("skills/rewind/SKILL.md", isDirectory: false)
         let expectedHookURL = stableHookBinaryURL(in: resolvedData)
-        let expectedCmd = hookCommandString(for: expectedHookURL)
+        let expectedCmd = hookCommandString(for: expectedHookURL, dataDirectoryURL: resolvedData)
 
         var reasons: [String] = []
         let allowedPluginKeys: Set<String> = ["name", "version", "description", "suggestedPrompts"]

@@ -2,6 +2,7 @@
 
 import AppKit
 import Carbon.HIToolbox
+import CodingRewindCore
 import Testing
 @testable import CodingRewindApp
 @testable import KeyboardShortcuts
@@ -26,6 +27,50 @@ struct AppShortcutsTests {
         KeyboardShortcuts.isPaused = false
         KeyboardShortcuts.isEnabled = true
         Self.defaults.removePersistentDomain(forName: Self.suite)
+    }
+
+    @Test("The Operations menu uses the coordinator archive preference", arguments: [false, true])
+    func menuLaunchUsesSharedArchiveIntent(archive: Bool) async throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("dist/test-data/menu-launch-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let binary = dir.appendingPathComponent("fixture-executable")
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: binary, permissions: 0o755)
+        try AntigravityIntegration.installOrRepair(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL, sourceHookBinaryURL: binary, sourceSidecarBinaryURL: binary)
+        let card = try #require(MemosWireFormat.parseMemo(id: "selected", rawContent: "#rewind/ready #source/macos\n\nSelected", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
+        let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: UnusedSelectionCapturer())
+        coordinator.checkedCardIDs = [card.id]
+        coordinator.markSynthesizedOnLaunch = archive
+        let delegate = CodingRewindAppDelegate()
+        delegate.coordinator = coordinator
+        let shortcuts = AppShortcuts { delegate.perform($0) }
+        defer { shortcuts.stop() }
+        let menu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts) { delegate.perform($0) }
+        let operations = try #require(menu.items.first { $0.title == "操作" }?.submenu)
+        let launch = try #require(operations.items.first { $0.keyEquivalent == "\r" })
+        let action = try #require(launch.action)
+        let persistedIntent: Bool = await withCheckedContinuation { continuation in
+            coordinator.onOpenAntigravityApp = {
+                do {
+                    guard let current = try coordinator.handoff.current() else {
+                        Issue.record("Menu launch did not persist a handoff")
+                        continuation.resume(returning: !archive)
+                        return
+                    }
+                    try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
+                    continuation.resume(returning: current.markSynthesized)
+                } catch {
+                    Issue.record(error)
+                    continuation.resume(returning: !archive)
+                }
+            }
+            #expect(NSApplication.shared.sendAction(action, to: launch.target, from: launch))
+        }
+        #expect(persistedIntent == archive)
+        #expect(try coordinator.handoff.current()?.markSynthesized == archive)
+        #expect(coordinator.cards == [card])
     }
 
     @Test func qaPreferencesAreStableAndGated() {
@@ -187,4 +232,8 @@ struct AppShortcutsTests {
         await release.value
         #expect(!(await MacOSAccessibilitySelectionCapturer.waitForReleasedModifiers(timeout: .milliseconds(20), flags: { [.maskCommand] })))
     }
+}
+
+private struct UnusedSelectionCapturer: SelectionCapturing {
+    func captureFrontmostSelection() async throws -> CapturedSelection { throw RewindError.ioError("Capture is not used by menu launch") }
 }

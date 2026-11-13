@@ -12,6 +12,7 @@ public struct MemoWireDTO: Codable, Equatable, Sendable {
 
 private struct ListMemosResponseDTO: Codable {
     let memos: [MemoWireDTO]?
+    let nextPageToken: String?
 }
 
 private struct CreateMemoRequestDTO: Codable {
@@ -107,28 +108,29 @@ public struct MemosClient: Sendable {
         token: String,
         now: Date = Date()
     ) async throws -> [RewindCard] {
-        let listURL = try endpointURL(
-            baseURL: baseURL,
-            path: "/api/memos",
-            queryItems: [URLQueryItem(name: "pageSize", value: "100")]
-        )
-        let (data, status) = try await performRequest(url: listURL, method: "GET", token: token, body: nil)
-        guard (200..<300).contains(status) else {
-            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
-        }
-        let decoded = try JSONDecoder().decode(ListMemosResponseDTO.self, from: data)
-        let cards = (decoded.memos ?? []).compactMap { dto -> RewindCard? in
-            guard let created = dto.createTime.flatMap(MemosWireFormat.parseISO8601) else {
-                return nil
+        var pageToken: String?
+        var cardsByID: [String: RewindCard] = [:]
+        repeat {
+            var queryItems = [URLQueryItem(name: "pageSize", value: "100")]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
             }
-            return MemosWireFormat.parseMemo(
-                id: dto.name,
-                rawContent: dto.content,
-                createdAt: created,
-                now: now
-            )
-        }
-        return cards.sorted { $0.createdAt > $1.createdAt }
+            let listURL = try endpointURL(baseURL: baseURL, path: "/api/memos", queryItems: queryItems)
+            let (data, status) = try await performRequest(url: listURL, method: "GET", token: token, body: nil)
+            guard (200..<300).contains(status) else {
+                throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+            }
+            let decoded = try JSONDecoder().decode(ListMemosResponseDTO.self, from: data)
+            for dto in decoded.memos ?? [] {
+                guard let created = dto.createTime.flatMap(MemosWireFormat.parseISO8601),
+                      let card = MemosWireFormat.parseMemo(id: dto.name, rawContent: dto.content, createdAt: created, now: now) else {
+                    continue
+                }
+                cardsByID[card.id] = card
+            }
+            pageToken = decoded.nextPageToken
+        } while pageToken?.isEmpty == false
+        return cardsByID.values.sorted { $0.createdAt > $1.createdAt }
     }
 
     public func markSynthesized(

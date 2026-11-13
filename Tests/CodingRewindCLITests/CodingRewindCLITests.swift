@@ -77,7 +77,7 @@ struct CodingRewindCLITests {
     func installedHookPreservesDataDirectory() throws {
         let dir = try makeIsolatedDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let installedData = dir.appendingPathComponent("Custom Data", isDirectory: true)
+        let installedData = dir.appendingPathComponent("Custom 'Data;$dir", isDirectory: true)
         let hostData = dir.appendingPathComponent("Host Data", isDirectory: true)
         let config = dir.appendingPathComponent("Config", isDirectory: true)
         let plugin = try AntigravityIntegration.installOrRepair(
