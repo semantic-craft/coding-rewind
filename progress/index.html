@@ -60,6 +60,20 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/8">pull 8: Gemini 换行保真修复与补验记录</a></li>
 </ul><p>Next: 本轮重点验收已补齐；覆盖范围与未单测分支见验收记录。</p></article>
 </section>
+<section id="architecture-quality"><h2>架构与代码标准核验</h2>
+<article id="architecture-fixes"><h3>七处架构缺陷修复</h3><span class="badge">done</span><p>统一菜单归档意图，阻止过期刷新覆盖新卡，显式传递 Hook 目录；修复代码空行、存储失败误报和桌面/云端分页遗漏。未增加框架或业务数据库。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 逐条标准与核验结论</a></li>
+</ul><p>Next: 后续变更继续执行相同标准。</p></article>
+<article id="architecture-verification"><h3>自动回归与实机对照</h3><span class="badge">done</span><p>失败基线后，Swift 48、扩展 24、增强器 10 项通过，全仓门禁通过。隔离原生菜单请求正确保存归档意图；Chrome 真实 DOM 对照保留代码空行。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 明确实测边界</a></li>
+</ul><p>Next: 独立复核完成后记录交付状态。</p></article>
+<article id="architecture-delivery"><h3>独立复核与合并</h3><span class="badge">in_progress</span><p>代码和实机验证已完成，独立工作区正在复核。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 更新后的责任边界与失败处理</a></li>
+</ul><p>Next: 复核通过后合并并刷新事实快照。</p></article>
+<article id="architecture-runtime"><h3>本轮修复的运行环境升级</h3><span class="badge">unverified</span><p>本轮使用隔离包与真实 Chrome DOM 验证。日常应用、已加载扩展及云端增强器尚未更新到本轮源码，不把源码通过记作部署通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 实现、安装和部署分别验收</a></li>
+</ul><p>Next: 升级日常包、重新加载扩展及部署增强器时分别重验。</p></article>
+</section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
 </ul></section></html>
