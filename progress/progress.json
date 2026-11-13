@@ -2,7 +2,7 @@
   "facts": {
     "default_branch": "main",
     "issues": [],
-    "main": "bbce860947ae31b767231f6c5ae74341408eb113",
+    "main": "e443d0b014bf2fae1d609a8b70513a82e15a1be1",
     "open_pulls": [],
     "pulls": [
       {
@@ -76,6 +76,14 @@
         "merged": true,
         "number": 9,
         "state": "closed"
+      },
+      {
+        "base": "293a79ddfe5293c2d236b6c95af0916c7dcc828f",
+        "head": "59bbcb1f70e1ce78338613146805e62147d11f7f",
+        "merge_commit": "e443d0b014bf2fae1d609a8b70513a82e15a1be1",
+        "merged": true,
+        "number": 10,
+        "state": "closed"
       }
     ],
     "releases": []
@@ -85,7 +93,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T03:53:42.161669Z",
+  "observed_at": "2026-11-13T04:06:57.762472Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -394,8 +402,13 @@
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/acceptance-2026-11-13.md",
-              "note": "实际安装、重载、部署、读回及清理证据"
+              "note": "实际安装、重载、部署、读回及清理证据",
+              "ref": "docs/acceptance-2026-11-13.md"
+            },
+            {
+              "kind": "pull",
+              "note": "文件页修复、三端运行验收及独立 PASS+NOTES 已合并",
+              "ref": 10
             }
           ],
           "id": "architecture-runtime",
@@ -420,7 +433,8 @@
       6,
       7,
       8,
-      9
+      9,
+      10
     ]
   }
 }
