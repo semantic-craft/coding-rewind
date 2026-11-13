@@ -2,7 +2,7 @@
   "facts": {
     "default_branch": "main",
     "issues": [],
-    "main": "961236a48c37918ab1f44e851a4348969d042694",
+    "main": "2ca643276f8d60a8c9f280eec2007af7899f7334",
     "open_pulls": [],
     "pulls": [
       {
@@ -60,15 +60,24 @@
         "merged": true,
         "number": 7,
         "state": "closed"
+      },
+      {
+        "base": "7bc604e6ebfab87b204c4c0c7050bddac8658a65",
+        "head": "1ad85ae5c12a60b9259fff38aa9353eb134df6e8",
+        "merge_commit": "2ca643276f8d60a8c9f280eec2007af7899f7334",
+        "merged": true,
+        "number": 8,
+        "state": "closed"
       }
     ],
     "releases": []
   },
   "inputs": [
     "docs/code-quality.md",
-    "docs/milestones.md"
+    "docs/milestones.md",
+    "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T01:23:09.168301Z",
+  "observed_at": "2026-11-13T01:49:03.048611Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -256,60 +265,74 @@
       "id": "unverified",
       "items": [
         {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "明确区分桌面按钮、热键与剪贴板覆盖范围",
+              "ref": "docs/acceptance-2026-11-13.md"
+            }
+          ],
           "id": "capture-permission",
-          "title": "桌面跨应用选区",
+          "next": "全局热键和 Chrome 的桌面捕获路径仍未取得成功证据；剪贴板二进制内容未逐项核验。",
           "status": "done",
           "summary": "用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。",
-          "next": "全局热键和 Chrome 的桌面捕获路径仍未取得成功证据；剪贴板二进制内容未逐项核验。",
+          "title": "桌面跨应用选区"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/acceptance-2026-11-13.md",
-              "note": "明确区分桌面按钮、热键与剪贴板覆盖范围"
+              "note": "真实 DOM 形状的换行回归",
+              "ref": "extensions/web-clipper/test_extractors.mjs"
             }
-          ]
-        },
-        {
+          ],
           "id": "other-websites",
-          "title": "Gemini 真实页面",
+          "next": "后续修改转换器时重跑回归和真实选区检查。",
           "status": "done",
           "summary": "真实页面发现并修复 pre-wrap 换行丢失；重新加载扩展后，保存、AI 处理与上下文评论保留三行、加粗和代码。Claude 按用户要求退出本轮验收。",
-          "next": "后续修改转换器时重跑回归和真实选区检查。",
+          "title": "Gemini 真实页面"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "extensions/web-clipper/test_extractors.mjs",
-              "note": "真实 DOM 形状的换行回归"
+              "note": "当前宿主实际 MCP 读回",
+              "ref": "docs/acceptance-2026-11-13.md"
             }
-          ]
-        },
-        {
+          ],
           "id": "mcp",
-          "title": "当前 Codex 宿主 MCP 调用",
+          "next": "Antigravity 内的自然语言 MCP 调用仍需独立验收，不能由 sidecar 成功代替。",
           "status": "done",
           "summary": "实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。",
-          "next": "Antigravity 内的自然语言 MCP 调用仍需独立验收，不能由 sidecar 成功代替。",
-          "evidence": [
-            {
-              "kind": "file",
-              "ref": "docs/acceptance-2026-11-13.md",
-              "note": "当前宿主实际 MCP 读回"
-            }
-          ]
+          "title": "当前 Codex 宿主 MCP 调用"
         },
         {
-          "id": "export-and-mcp",
-          "title": "导出删除与其他宿主消费",
-          "status": "unverified",
-          "summary": "本轮没有执行真实导出、删除，也没有在 Antigravity 内验证自然语言 MCP 调用。",
-          "next": "按对应里程碑分别补验。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/milestones.md",
-              "note": "剩余范围"
+              "note": "剩余范围",
+              "ref": "docs/milestones.md"
             }
-          ]
+          ],
+          "id": "export-and-mcp",
+          "next": "按对应里程碑分别补验。",
+          "status": "unverified",
+          "summary": "本轮没有执行真实导出、删除，也没有在 Antigravity 内验证自然语言 MCP 调用。",
+          "title": "导出删除与其他宿主消费"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "Gemini 换行保真修复与补验记录",
+              "ref": 8
+            }
+          ],
+          "id": "remaining-delivery",
+          "next": "保持上列未验边界，收到真实快捷键操作结果后更新。",
+          "status": "done",
+          "summary": "PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。",
+          "title": "补验修复交付"
         }
       ],
       "title": "本轮补验与剩余边界"
@@ -325,7 +348,8 @@
       4,
       5,
       6,
-      7
+      7,
+      8
     ]
   }
 }
