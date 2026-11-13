@@ -394,14 +394,14 @@
           "evidence": [
             {
               "kind": "file",
-              "note": "实现、安装和部署分别验收",
-              "ref": "docs/code-quality.md"
+              "ref": "docs/acceptance-2026-11-13.md",
+              "note": "实际安装、重载、部署、读回及清理证据"
             }
           ],
           "id": "architecture-runtime",
-          "next": "升级日常包、重新加载扩展及部署增强器时分别重验。",
-          "status": "unverified",
-          "summary": "本轮使用隔离包与真实 Chrome DOM 验证。日常应用、已加载扩展及云端增强器尚未更新到本轮源码，不把源码通过记作部署通过。",
+          "next": "跨页和交错并发沿用回归；第三方站点及物理全局热键未全量重验。",
+          "status": "done",
+          "summary": "日常签名包和固定 Hook/sidecar 已升级，重启、真实联网同步及菜单接聊后归档通过。Chrome 已重载并完成 HTTP/file 真实剪藏；云端仅更新增强器，正文保真且 Memos 未重启。仅清理本轮四条记录，原有14条正常主记录完整返回值未变。",
           "title": "本轮修复的运行环境升级"
         }
       ],
