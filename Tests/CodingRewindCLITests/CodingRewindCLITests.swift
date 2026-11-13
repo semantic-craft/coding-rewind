@@ -34,13 +34,16 @@ struct CodingRewindCLITests {
 
     private func runSubprocess(
         executableURL: URL,
+        arguments: [String] = [],
         stdinData: Data,
-        environmentOverrides: [String: String]
+        environmentOverrides: [String: String],
+        inheritEnvironment: Bool = true
     ) throws -> (exitCode: Int32, stdout: Data, stderr: Data, elapsedMilliseconds: Double) {
         let process = Process()
         process.executableURL = executableURL
+        process.arguments = arguments
 
-        var env = ProcessInfo.processInfo.environment
+        var env = inheritEnvironment ? ProcessInfo.processInfo.environment : [:]
         for (k, v) in environmentOverrides {
             env[k] = v
         }
@@ -55,6 +58,11 @@ struct CodingRewindCLITests {
 
         let startNanos = DispatchTime.now().uptimeNanoseconds
         try process.run()
+        let timeout = DispatchWorkItem {
+            if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 5, execute: timeout)
+        defer { timeout.cancel() }
         inPipe.fileHandleForWriting.write(stdinData)
         try? inPipe.fileHandleForWriting.close()
 
@@ -63,6 +71,49 @@ struct CodingRewindCLITests {
         process.waitUntilExit()
         let elapsedMS = Double(DispatchTime.now().uptimeNanoseconds - startNanos) / 1_000_000.0
         return (process.terminationStatus, stdoutData, stderrData, elapsedMS)
+    }
+
+    @Test("An installed hook writes to the installation data directory despite a different host environment")
+    func installedHookPreservesDataDirectory() throws {
+        let dir = try makeIsolatedDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let installedData = dir.appendingPathComponent("Custom Data", isDirectory: true)
+        let hostData = dir.appendingPathComponent("Host Data", isDirectory: true)
+        let config = dir.appendingPathComponent("Config", isDirectory: true)
+        let plugin = try AntigravityIntegration.installOrRepair(
+            dataDirectoryURL: installedData,
+            configDirectoryURL: config,
+            sourceHookBinaryURL: builtExecutableURL(named: "coding-rewind-hook"),
+            sourceSidecarBinaryURL: builtExecutableURL(named: "coding-rewind-sidecar")
+        )
+        let hooks = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: plugin.appendingPathComponent("hooks.json"))) as? [String: Any])
+        let group = try #require(hooks[AntigravityIntegration.pluginName] as? [String: Any])
+        let handlers = try #require(group["PostInvocation"] as? [[String: Any]])
+        let command = try #require(handlers.first?["command"] as? String)
+        let transcript = dir.appendingPathComponent("transcript.jsonl")
+        try Data().write(to: transcript)
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "conversationId": "installed-hook-conversation",
+            "lastUserInput": "Keep this context in the configured installation",
+            "transcriptPath": transcript.path
+        ])
+        let result = try runSubprocess(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", command],
+            stdinData: payload,
+            environmentOverrides: [
+                "PATH": "/usr/bin:/bin",
+                StoragePaths.dataDirEnvironmentKey: hostData.path,
+                StoragePaths.antigravityConfigEnvironmentKey: config.path,
+                StoragePaths.qaEnvironmentKey: "1"
+            ],
+            inheritEnvironment: false
+        )
+        #expect(result.exitCode == 0)
+        #expect(String(decoding: result.stdout, as: UTF8.self) == "{}\n")
+        let installedStore = try ActiveTurnStore(dataDirectoryURL: installedData)
+        #expect(installedStore.latestTurn(forFrontmostBundleID: CapturedSelection.antigravityBundleIdentifier)?.conversationId == "installed-hook-conversation")
+        #expect(!FileManager.default.fileExists(atPath: hostData.appendingPathComponent("active_turn.json").path))
     }
 
     @Test("coding-rewind-hook subprocess finishes in <50ms on a multi-MB transcript and writes <dataDir>/active_turn.json")

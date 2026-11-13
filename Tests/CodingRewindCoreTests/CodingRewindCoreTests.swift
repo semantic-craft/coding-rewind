@@ -129,8 +129,8 @@ private actor MemosResponseGate {
         }
     }
 
-    func release(_ index: Int, status: Int) {
-        responses[index]?.resume(returning: (status, Data()))
+    func release(_ index: Int, status: Int, data: Data = Data()) {
+        responses[index]?.resume(returning: (status, data))
         responses[index] = nil
     }
 }
@@ -223,6 +223,53 @@ struct CodingRewindCoreTests {
         #expect(await capturer.calls == 1)
         #expect(coordinator.outbox.loadEntries().count == 1)
         #expect(!coordinator.isCapturingSelection)
+    }
+
+    @Test("A refresh preserves a clip captured while its remote list is in flight", arguments: [false, true])
+    @MainActor
+    func refreshPreservesConcurrentCapture(captureSucceeds: Bool) async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let gate = MemosResponseGate()
+        let createdAt = MemosWireFormat.formatISO8601UTC(Date())
+        MockMemosURLProtocol.register(suiteID: suiteID) { request, body in
+            if request.httpMethod == "GET" { return await gate.response() }
+            guard captureSucceeds,
+                  let content = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["content"] as? String,
+                  let url = request.url,
+                  let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "memoId" })?.value else {
+                return (-1, Data())
+            }
+            let memo = ["name": "memos/\(id)", "content": content, "createTime": createdAt]
+            return (201, (try? JSONSerialization.data(withJSONObject: memo)) ?? Data())
+        }
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+                StoragePaths.memosTokenEnvironmentKey: "fixture-token",
+                StoragePaths.qaEnvironmentKey: "1"
+            ],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "Captured after refresh began", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+
+        let refresh = Task { await coordinator.refresh() }
+        await gate.waitForRequests(1)
+        await coordinator.captureSelection()
+        let capturedCard = try #require(coordinator.cards.first)
+        #expect(capturedCard.isOfflinePending == !captureSucceeds)
+        #expect(coordinator.hotCache.loadCards().contains { $0.id == capturedCard.id })
+
+        await gate.release(0, status: 200, data: Data("{\"memos\":[]}".utf8))
+        await refresh.value
+
+        #expect(coordinator.outbox.loadEntries().contains { $0.clientClipId == capturedCard.id } == !captureSucceeds)
+        #expect(coordinator.cards.contains { $0.id == capturedCard.id })
+        #expect(coordinator.hotCache.loadCards().contains { $0.id == capturedCard.id })
     }
 
     private func makeMockSession() -> URLSession {
