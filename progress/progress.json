@@ -273,9 +273,9 @@
             }
           ],
           "id": "capture-permission",
-          "next": "Chrome 的桌面捕获路径仍未取得成功证据；剪贴板二进制内容未逐项核验。",
+          "next": "Chrome 自动化快捷键未取得成功记录；系统剪贴板二进制内容未逐项核验。",
           "status": "done",
-          "summary": "用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。 2026-11-13 用户实际按 ⌃⌥⇧⌘K 后确认浮窗出现新卡片，全局快捷键路径通过用户实机验收。",
+          "summary": "用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。 2026-11-13 用户实际按 ⌃⌥⇧⌘K 后确认浮窗出现新卡片，全局快捷键路径通过用户实机验收。 Chrome 原生窗口的三行选区经 HUD 保存，服务端正文逐字读回一致。",
           "title": "桌面跨应用选区"
         },
         {
@@ -301,10 +301,10 @@
             }
           ],
           "id": "mcp",
-          "next": "Antigravity 内的自然语言 MCP 调用仍需独立验收，不能由 sidecar 成功代替。",
+          "next": "宿主或 MCP 接线变更后重新进行会话内读回验收。",
           "status": "done",
-          "summary": "实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。",
-          "title": "当前 Codex 宿主 MCP 调用"
+          "summary": "实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。 Antigravity 新会话也实际完成这三项调用，并展开工具参数与返回值核对。",
+          "title": "Codex 与 Antigravity 宿主 MCP 调用"
         },
         {
           "evidence": [
@@ -317,8 +317,8 @@
           "id": "export-and-mcp",
           "next": "按对应里程碑分别补验。",
           "status": "unverified",
-          "summary": "本轮没有执行真实导出、删除，也没有在 Antigravity 内验证自然语言 MCP 调用。",
-          "title": "导出删除与其他宿主消费"
+          "summary": "本轮没有执行真实导出和删除；Antigravity MCP 已另项验收通过。",
+          "title": "导出与删除"
         },
         {
           "evidence": [
@@ -329,7 +329,7 @@
             }
           ],
           "id": "remaining-delivery",
-          "next": "全局快捷键已获用户实机确认；继续保留 Chrome 桌面捕获及其他未验边界。",
+          "next": "Chrome HUD 与 Antigravity MCP 已补验；保留 Chrome 快捷键、剪贴板二进制及导出删除边界。",
           "status": "done",
           "summary": "PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。",
           "title": "补验修复交付"
