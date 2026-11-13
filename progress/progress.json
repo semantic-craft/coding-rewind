@@ -2,7 +2,7 @@
   "facts": {
     "default_branch": "main",
     "issues": [],
-    "main": "e443d0b014bf2fae1d609a8b70513a82e15a1be1",
+    "main": "e302db43c65fb53f1df40345d8adf29d281a22b5",
     "open_pulls": [],
     "pulls": [
       {
@@ -93,7 +93,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T04:06:57.762472Z",
+  "observed_at": "2026-11-13T05:22:18.980390Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -419,6 +419,26 @@
         }
       ],
       "title": "架构与代码标准核验"
+    },
+    {
+      "id": "web-hotkey-reacceptance",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "接续状态与真实失败边界",
+              "ref": "docs/acceptance-2026-11-13.md"
+            }
+          ],
+          "id": "web-hotkey-current",
+          "next": "完成精确提交的独立复核与合并。",
+          "status": "in_progress",
+          "summary": "ChatGPT 混合与部分代码选区、Gemini 正文与去重上下文均已通过真实扩展重载后的服务端读回。用户实际完成捕获和浮窗切换。仅清理本轮八条记录，原有14条完整返回值未变。",
+          "title": "当前实机补验"
+        }
+      ],
+      "title": "网页聊天与快捷键复验"
     }
   ],
   "title": "Coding Rewind 开发进度",

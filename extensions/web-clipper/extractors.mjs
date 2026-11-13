@@ -21,7 +21,7 @@ const SKIP_TAGS = new Set([
 const MARKDOWN_STRUCTURE_TAGS = new Set([
   ...VOID_TAGS,
   ...SKIP_TAGS,
-  "pre", "code", "h1", "h2", "h3", "h4", "h5", "h6",
+  "pre", "h1", "h2", "h3", "h4", "h5", "h6",
   "strong", "b", "em", "i", "del", "s", "a", "ul", "ol", "li",
   "blockquote", "table", "p", "section", "article", "div"
 ]);
@@ -128,6 +128,10 @@ function getAttr(node, name) {
     return node.attributes[name];
   }
   return null;
+}
+
+function isInlineCodeElement(node) {
+  return getTagName(node) === "code" || getAttr(node, "data-markdown-copy") === "inline-code";
 }
 
 function getClassString(node) {
@@ -411,6 +415,7 @@ function convertNode(node, ctx) {
   const tag = getTagName(node);
   if (SKIP_TAGS.has(tag)) return "";
   if (getAttr(node, "data-markdown-copy") === "exclude") return "";
+  if (hasClass(node, "screen-reader-user-query-label")) return "";
 
   const katex = extractKatexTex(node);
   if (katex !== null) return katex;
@@ -430,7 +435,7 @@ function convertNode(node, ctx) {
     return formatFencedCodeBlock(rawCode, lang);
   }
 
-  if (tag === "code") {
+  if (isInlineCodeElement(node)) {
     return formatInlineCode(extractCodeText(node));
   }
 
@@ -530,10 +535,10 @@ export function htmlToMarkdown(nodeOrHtml, options = {}) {
   return normalizeMarkdownSpacing(raw);
 }
 
-function findAncestorTag(node, targetTag) {
+function findAncestorElement(node, matches) {
   let cur = node;
   while (cur) {
-    if (cur.nodeType === ELEMENT_NODE && getTagName(cur) === targetTag) {
+    if (cur.nodeType === ELEMENT_NODE && matches(cur)) {
       return cur;
     }
     cur = cur.parentNode || cur.parentElement || null;
@@ -562,6 +567,7 @@ function hasMarkdownStructure(node) {
     if (getAttr(node, "data-markdown-copy") === "exclude") return false;
     if (
       getAttr(node, "aria-hidden") === "true" ||
+      isInlineCodeElement(node) ||
       MARKDOWN_STRUCTURE_TAGS.has(getTagName(node))
     ) {
       return true;
@@ -595,10 +601,10 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
 
   if (!range) return plainFallback;
 
-  const ancestorPre = findAncestorTag(range.commonAncestorContainer, "pre");
+  const ancestorPre = findAncestorElement(range.commonAncestorContainer, (el) => getTagName(el) === "pre");
   if (ancestorPre) {
     const ancestorCode =
-      findAncestorTag(range.commonAncestorContainer, "code") ||
+      findAncestorElement(range.commonAncestorContainer, (el) => getTagName(el) === "code") ||
       findFirstDescendantTag(ancestorPre, "code");
     const lang =
       extractLanguageFromNode(ancestorCode) ||
@@ -611,7 +617,7 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     }
   }
 
-  const ancestorInlineCode = findAncestorTag(range.commonAncestorContainer, "code");
+  const ancestorInlineCode = findAncestorElement(range.commonAncestorContainer, isInlineCodeElement);
   if (ancestorInlineCode) {
     const fragment = range.cloneContents();
     const codeText = extractCodeText(fragment) || plainFallback;
@@ -624,8 +630,11 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
     const md = htmlToMarkdown(fragment, { baseUrl, lineBreakModes: selectedLineBreakModes(range, fragment) });
     if (md) {
       if (typeof selectionOrRange.getRangeAt === "function") {
-        const leadingWhitespace = plainFallback.match(/^\s*/)[0];
-        const trailingWhitespace = plainFallback.match(/\s*$/)[0];
+        const selectedText = [...nonemptyTextNodes(fragment)];
+        const leadingWhitespace = findAncestorElement(selectedText[0], isInlineCodeElement)
+          ? "" : plainFallback.match(/^\s*/)[0];
+        const trailingWhitespace = findAncestorElement(selectedText.at(-1), isInlineCodeElement)
+          ? "" : plainFallback.match(/\s*$/)[0];
         return `${leadingWhitespace}${md}${trailingWhitespace}`;
       }
       return md;
