@@ -45,7 +45,13 @@
 - **核查链接**，[下载页](https://antigravity.google/download)、[2.0 发布说明](https://antigravity.google/blog/introducing-google-antigravity-2)、[构建插件指南](https://antigravity.google/docs/build-plugins/)、[自定义发现路径](https://antigravity.google/docs/customization-discovery/)、[更新日志](https://antigravity.google/docs/changelog/)。
 - **宿主事实**，Google Antigravity 2.x 是独立 Electron 桌面应用，`CFBundleIdentifier` 为 `com.google.antigravity`，不支持 VS Code `.vsix` 扩展；官方扩展表面位于 `~/.gemini/config/plugins/<name>/`，其中 `plugin.json` 的 `suggestedPrompts` 必须为纯字符串数组，插件内 `hooks.json` 的 `PostInvocation` 与 `Stop` 必须为扁平命令处理器数组，标准输入提供 `lastUserInput`、`conversationId`、`workspacePaths` 与 `transcriptPath`，内置 `/Applications/Antigravity.app/Contents/Resources/app/bin/agentapi` 支持通过 `new-conversation` 启动新会话，且 `Knowledge Work` 视图适合直接消费 `/mcp` 工具对照成文。
 
-### 2. 立项初期核查的产品机制对照项
+### 2. Codex 官方 app-server 与本机安装包
+
+- **协议来源**，发现的官方 CLI 的 `app-server --help` 与 `app-server generate-json-schema`。实现使用 `initialize`、`thread/start`、`thread/name/set`、`thread/unsubscribe`、`thread/queue/add`、`thread/queue/list` 和 `thread/read`，不复制安装包源码。
+- **持久化依据**，官方 [LocalThreadStore 的 metadata 更新](https://github.com/openai/codex/blob/main/codex-rs/thread-store/src/local/update_thread_metadata.rs#L99-L107) 在首轮前命名线程时持久化空记录。官方 [线程配置](https://github.com/openai/codex/blob/main/codex-rs/config/src/config_toml.rs#L349-L353) 定义 `thread_unload_delay_secs=0` 使无订阅、无活动的线程立即卸载。
+- **宿主边界**，本机 `com.openai.codex` 安装包的 `codex://threads/wake/<UUID>` 负责运行待发消息，`codex://threads/<UUID>` 负责导航。接聊只向本次创建、已持久化且已卸载的新线程排队。成功须读回真实首轮及原文，不把 queue 回执或 URL 打开作为收件证明。
+
+### 3. 立项初期核查的产品机制对照项
 
 | 来源 | 链接与性质 | 机制启发与取舍边界 |
 | --- | --- | --- |

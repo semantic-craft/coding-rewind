@@ -8,7 +8,7 @@
 
 在使用独立桌面端 **Google Antigravity App 2.x、ChatGPT、Gemini** 或网页版 ChatGPT、Claude、Gemini 聊天时，经常会撞见接下来两三天马上要用、带来灵感的对话段落。当下正在推进主线任务，不想立刻切走新开对话分叉，存进重型笔记库太重，贴进系统备忘录又会丢掉提问语境且难以继续追问成文。
 
-**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可通过官方 sidecar 在 Antigravity 新建会话并发送完整上下文，继续推演或对照写稿。
+**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可在 Antigravity 或 Codex 新建会话并发送完整上下文，继续推演或对照写稿。
 
 立项需求正本来自用户 t4624u 于 2026-11-10 的记录：
 
@@ -23,7 +23,7 @@
 项目拒绝双数据库双向同步与半原生半网页胶水层，围绕阿里云轻量应用服务器上的单实例原版 `usememos/memos` 构建极薄边缘端：
 
 - **单一事实源后端 `deploy/vps/`**，直接运行官方固定版本 `neosmemo/memos:26.11.0` 容器承接 `/api/memos` REST 存储与原生 Streamable HTTP `/mcp` 服务，旁挂约百行纯 Python 3 标准库编写的幂等语境增强器 `rewind-enricher`，结合前文 4 轮对话生成标题、会话主题、脉络摘要与关键词引用头，100% 保留用户选中原文不改动。
-- **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，默认使用 `⌃⌥S` 捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。`⌘Return` 将勾选卡片交给 Antigravity，接聊方式见下文。
+- **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，默认使用 `⌃⌥S` 捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。`⌘Return` 将勾选卡片交给浮窗选定的 Antigravity 或 Codex，接聊方式见下文。
 - **Antigravity 2.x 上下文与官方插件**，桌面捕获从选区所属聊天页面确认会话编号，只读取该会话的官方 transcript，定位所选消息与对应提问；钥匙串桥接脚本在不落盘明文令牌的前提下将原生 `/mcp` 暴露给 Antigravity 的 `/rewind` 技能与 `Knowledge Work` 写作界面。
 - **ChatGPT 与 Gemini App 剪藏**，选中文本后按 `⌃⌥S`，自动保存来源、私有会话链接、前序提问与截止选中消息的最多四个用户轮。通过当前窗口的辅助功能树和系统复制读取内容，不读取其他会话日志。回链使用应用自带的打开会话入口，完成后关闭本次打开的浏览器标签。Gemini 的回链读取目前支持默认浏览器为 Google Chrome。
 - **网页端薄剪藏扩展 `extensions/web-clipper/`**，Manifest V3 无依赖扩展，吸收 MIT 项目 `mem0ai/mem0-chrome-extension`、`revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter` 经验，在 ChatGPT、Claude 与 Gemini 页面提取选区 Markdown 与前序 4 轮对话后后台直连 Memos API，右上角展示 2.2 秒轻提示，不弹自定义协议确认框也不抢焦点。
@@ -39,6 +39,16 @@
 新会话出现在 Antigravity 的 sidecar 专属项目中。当前官方接口能创建并发送，但没有已核实的按会话编号自动切换正文接口，因此应用只唤起 Antigravity，不猜测 deep link。点击新会话即可继续，无须粘贴或再次发送。
 
 [官方 sidecar 文档](https://antigravity.google/docs/sidecars)说明宿主运行环境、项目配置和 `agentapi`。普通外部进程直接调用 CLI 不能替代 sidecar。交接请求和宿主事件的留存范围见 [隐私说明](docs/privacy.md#4-一键接聊的短期请求与宿主记录)。
+
+## 在 Codex 接聊
+
+安装并登录 Codex，在浮窗的接聊应用选择器中选择 **Codex**，勾选卡片后按 `⌘Return`。应用创建真实新会话，发送与 Antigravity 相同的卡片原文、已有脉络和出处，并打开该会话供继续追问，无须粘贴或再次发送。首次默认目标仍是 Antigravity，之后保存所选应用。应用菜单与状态菜单也提供两种宿主的明确开聊动作。
+
+Codex 接聊使用应用自带的官方 CLI，不需要安装 Antigravity 插件。找不到捆绑 CLI 时会检查 `~/.local/bin/codex`，开发或排障时可用绝对路径环境变量 `CODING_REWIND_CODEX_BIN` 指定。模型和审批沿用 Codex 自己的配置，新会话的工作目录为当前用户主目录。
+
+应用先把提示词交给 Codex 的新会话队列，再唤醒 Codex 运行。只有从真实会话读回首轮用户消息、确认请求编号和完整原文字节一致后，才显示已发送并按已保存的“开聊后归档”意图归档。排队回执或打开应用本身不算发送成功。
+
+已有请求优先于新的目标、选卡与归档偏好。等待超时或进程中断后不会自动重发，也不会归档。先到对应宿主核对，再使用浮窗中的结束请求动作。归档失败时再次点击开聊只处理剩余卡片。会话已发送而打开失败时，可点击 **打开已发送的 Codex 会话** 重试打开同一会话。
 
 ## 快速验证与构建
 
@@ -86,7 +96,7 @@ CODING_REWIND_MEMOS_TOKEN_REFERENCE='op://vault/item/password' \
 
 1. **聚焦 72 小时热窗口**，服务近两三天马上要用的高质量对话片段，保存时不打断当前对话、不强迫当场开新会话、不要求手填标题或标签。
 2. **双端无感采集与脉络保真**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面端与 ChatGPT、Claude、Gemini 网页端，自动附带原问题、出处链接与近期轮次脉络。
-3. **交回主力宿主推演与成文**，浮窗只做毫秒级速览、检索筛选与多选勾选，长对话追问与对照写稿直接交给用户主力使用的 Antigravity App 2.x 及原生 `/mcp` 工具完成，不重复造本地富文本编辑器。
+3. **交回主力宿主推演与成文**，浮窗只做毫秒级速览、检索筛选与多选勾选，长对话追问与对照写稿直接交给用户主力使用的 Antigravity App 2.x 或 Codex 完成，Antigravity 继续提供原生 `/mcp` 工具，不重复造本地富文本编辑器。
 4. **明确不做**，不做默认全量聊天自动采集，不做相关时主动弹窗打扰，不在配置文件写入明文密钥，也不引入任何 GPL、AGPL、Commons Clause 或无许可代码。
 
 ## 桌面入口与设置

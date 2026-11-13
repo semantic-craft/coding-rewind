@@ -1,6 +1,6 @@
 # 统一架构与线级数据契约
 
-本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储、Webhook 事件与原生 `/mcp` 服务，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览以及拉起 **Google Antigravity App 2.x** 对话的极薄界面。
+本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储、Webhook 事件与原生 `/mcp` 服务，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览以及拉起 **Google Antigravity App 2.x 或 Codex** 对话的极薄界面。
 
 需求依据见 [requirements.md](requirements.md)，开源底座与许可核查见 [sources.md](sources.md)，凭据与数据保护规则见 [privacy.md](privacy.md)。
 
@@ -64,7 +64,7 @@
 - **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，释放捕获快捷键（默认 `⌃⌥S`）时先读取焦点元素的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时，从选区所属 AXWebArea 的本机会话 URL 确认编号，再由 Core 读取对应 transcript；不能定位消息时不附带猜测的上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
 - **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待分析` 与 `AI 已定锚` 状态徽标。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获与浮窗两个动作；`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
-- **一键创建宿主对话**，勾选卡片按下 `⌘Return`，组装包含脉络抬头、原始选段及出处链接的 Markdown 提示词。桌面端写入私有交接请求，Antigravity 管理的 `coding-rewind/launcher` sidecar 在宿主环境中以参数数组调用 `agentapi new-conversation`。桌面端异步等待会话编号回执，不读取其他进程环境，不使用剪贴板回退。“开聊后归档”由 `AppCoordinator` 唯一持有，HUD、菜单与快捷键共用同一个动作；首次请求保存该意图，恢复请求沿用已保存值。只有确认创建成功后才允许归档。
+- **一键创建宿主对话**，勾选卡片按下 `⌘Return`，由 `ConversationPrompt` 组装包含脉络抬头、原始选段及出处链接的共享 Markdown 提示词。`AppCoordinator` 唯一持有目标与归档意图，HUD、菜单与快捷键调用同一个 `launchChecked(in:)`。目标偏好保存到 `conversation-host.json`，默认 Antigravity。已有任一宿主请求时始终先恢复它，不能切换目标覆盖已保存的意图。只有确认宿主实际收件后才允许归档。Antigravity 继续由官方 sidecar 调用 `agentapi new-conversation`，Codex 走下述官方队列与 App 唤醒链路。
 - **本地离线韧性**，未配置地址或网络异常时，采集请求追加写入 `<dataDir>/outbox.jsonl` 并镜像更新 `<dataDir>/hot_cache.json`，断网时从本地缓存显示热卡，网络恢复后凭 `?memoId=<clientClipId>` 幂等冲刷队列。
 
 刷新请求在网络等待前记录请求编号和本地卡片版本，提交时核对仍为最新、卡片未变化且捕获已结束。过期成功或失败响应都不覆盖当前卡片、缓存或提示。有效提交重读当前 outbox，并把同一合并结果交给 UI 与热缓存。捕获不会等待刷新网络请求；交错时放弃旧刷新，后续刷新再读取远端更新。
@@ -86,11 +86,23 @@
 
 ### 接聊请求与回执
 
-`ConversationHandoff.swift` 统一管理 `handoff/` 中的当前请求、独立请求文件和回执。应用先持久化请求编号与选卡信息，再发布正文。sidecar 持有独占进程锁，先记录 `dispatching`，然后调用宿主。成功只认结构化回执中的会话编号，已启动调用但结果不明时记录 `unknown`，不重发。
+`ConversationHandoff.swift` 为 Antigravity 保留 `handoff/` v1 文件契约，为 Codex 使用独立 `codex-handoff/`。旧 sidecar 不会消费 Codex 请求。两套目录都复用 `ConversationSidecarWorker` 的独占进程锁和状态流转，调用前先落盘 `dispatching`，不明结果保持 `unknown` 并禁止重发。请求、回执和逐卡归档进度只有既有 store 一个所有者，没有额外业务数据库或分阶段检查点。
 
+Antigravity 成功只认结构化回执中的会话编号。Codex 成功必须同时有真实 thread 编号、turn 编号，以及首条用户消息的 `clientId` 和完整 UTF-8 提示词匹配。助手回复是否完成不影响收件事实。
 请求在 30 秒后过期。未发布完整的请求会在过期后收敛为 `expired`，不会补发。成功、拒绝、过期或未知结果都会清理请求正文。已完成回执保留七天，仍被当前请求引用的回执继续保留，避免重启后失去结果。归档进度按卡片编号单独保存，重试不会重新创建会话。
 
 安装器保留宿主配置的其他字段和已有 `projectId`。sidecar 检测到稳定二进制被替换后退出，由宿主的 `always` 重启策略启动新版。它不读取 Memos 令牌。
+
+### Codex 的队列与原生 App 接管
+
+`CodexAppIntegration.swift` 发现 `com.openai.codex` 应用和它的捆绑 CLI，显式 `CODING_REWIND_CODEX_BIN` 绝对路径优先，常规 CLI `~/.local/bin/codex` 作为后备。子进程不接收协调器注入的 Memos 凭据，启动环境也移除 `CODING_REWIND_*`。`CodexConversationClient.swift` 通过私有管道使用官方 `app-server --stdio` JSONL，每个响应按请求编号关联，忽略通知。只声明自己的客户端身份和 `experimentalApi`，不覆盖模型、sandbox 或审批设置。
+
+1. 第一个短暂进程执行 `initialize`、`initialized`、`thread/start`，工作目录为用户主目录，仅设置 `thread_unload_delay_secs=0`。随后 `thread/name/set` 正常持久化空会话，`thread/unsubscribe` 释放运行时并退出。
+2. 第二个短暂进程只读新会话，确认它未加载且没有轮次。随后仅向该专用新会话执行一次 `thread/queue/add`，以持久化请求 UUID 作为 `clientUserMessageId`。`thread/queue/list` 核对唯一条目和完整提示词后退出。
+3. AppKit 层打开 `codex://threads/wake/<threadId>`。Codex App 接管首轮运行、审批与后续输入。第三个短暂进程只用 `thread/read` 核对真实首条用户消息，确认后写成功回执。它不 resume、不创建 turn，也不保留会话运行时。
+4. 确认收件后 AppKit 层打开 `codex://threads/<threadId>` 导航到同一会话。打开失败保留已成功回执供重试，不能重新发送。归档按既有剩余卡片编号恢复。
+
+上述写操作均在 durable worker 的 `dispatching` 之后发生。任何中断或不明结果都不再创建线程或投递消息，保留卡片让用户核对。所有短暂子进程有确认超时并在退出时关闭、终止和回收。
 
 ## Memos REST 共享线级契约
 
