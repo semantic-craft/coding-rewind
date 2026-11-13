@@ -6,10 +6,10 @@
         "number": 14,
         "reason": null,
         "state": "open",
-        "updated_at": "2026-11-13T17:38:17Z"
+        "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "806e056737bae98ac222a0159d904ece548c27f9",
+    "main": "404d3add3225d2acac021185d0d246911b359c47",
     "open_pulls": [],
     "pulls": [
       {
@@ -129,10 +129,9 @@
   },
   "inputs": [
     "docs/code-quality.md",
-    "docs/milestones.md",
-    "docs/acceptance-2026-11-13.md"
+    "docs/milestones.md"
   ],
-  "observed_at": "2026-11-13T18:15:15.377257Z",
+  "observed_at": "2026-11-13T23:47:53.836450Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -144,6 +143,31 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "release-030",
+      "title": "0.3.0 候选发布",
+      "items": [
+        {
+          "id": "release-030-preparation",
+          "title": "候选版准备",
+          "status": "in_progress",
+          "summary": "用户选择 v0.3.0-rc.1。全仓检查通过，release 配置的 arm64 应用包已构建并通过 ad-hoc 签名校验；公开包不含个人凭据配置，未经过 Apple 公证。仓库已为 PUBLIC。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "scripts/build-app-bundle.sh",
+              "note": "release 构建与应用版本。"
+            },
+            {
+              "kind": "issue",
+              "ref": 14,
+              "note": "剩余实机验收保留，不视为全部完成。"
+            }
+          ],
+          "next": "独立审查、合并并发布候选附件。"
+        }
+      ]
+    },
     {
       "id": "codex-delivery",
       "items": [
@@ -313,9 +337,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "本轮实现与实机边界分开记录",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "closeout-context",
@@ -327,9 +351,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "网页文件适配器、原生Core及实际服务读回范围",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "closeout-offline-protocol",
@@ -341,9 +365,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "部署源码哈希、真实模型与服务验证",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "closeout-summary",
@@ -355,15 +379,15 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "人工保留的应用操作边界",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "closeout-runtime",
           "next": "完成#14列出的独立实机验收。",
           "status": "unverified",
-          "summary": "Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位的实机路径仍由#14跟踪。当前设置页修复插件后已显示就绪，但不据此判定全部宿主行为通过。ChatGPT与Gemini在PR #13安装包已通过原生剪藏验收；更新包的授权与回归状态另列。",
+          "summary": "Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位的实机路径仍由#14跟踪。当前设置页修复插件后已显示就绪，但不据此判定全部宿主行为通过。ChatGPT与Gemini在PR #13安装包已通过原生剪藏验收；更新包的授权与回归状态另列。 多卡实际接聊与 /rewind 引用成文也尚未完成完整实机覆盖。",
           "title": "新版本实际应用验收"
         },
         {
@@ -561,9 +585,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "明确区分桌面按钮、热键与剪贴板覆盖范围",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "capture-permission",
@@ -589,9 +613,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "当前宿主实际 MCP 读回",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "mcp",
@@ -603,9 +627,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "仅本轮新建数据的导出、级联删除及缓存实测",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             }
           ],
           "id": "export-and-mcp",
@@ -679,9 +703,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "实际安装、重载、部署、读回及清理证据",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             },
             {
               "kind": "pull",
@@ -704,9 +728,9 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "接续状态与真实失败边界",
-              "ref": "docs/acceptance-2026-11-13.md"
+              "kind": "commit",
+              "note": "历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。",
+              "ref": "404d3ad"
             },
             {
               "kind": "pull",

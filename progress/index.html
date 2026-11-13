@@ -3,8 +3,14 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T18:15:15.377257Z</p>
-<p>Main: <code>main: 806e056737bae98ac222a0159d904ece548c27f9</code></p>
+<p>Observed: 2026-11-13T23:47:53.836450Z</p>
+<p>Main: <code>main: 404d3add3225d2acac021185d0d246911b359c47</code></p>
+<section id="release-030"><h2>0.3.0 候选发布</h2>
+<article id="release-030-preparation"><h3>候选版准备</h3><span class="badge">in_progress</span><p>用户选择 v0.3.0-rc.1。全仓检查通过，release 配置的 arm64 应用包已构建并通过 ad-hoc 签名校验；公开包不含个人凭据配置，未经过 Apple 公证。仓库已为 PUBLIC。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/build-app-bundle.sh">file scripts/build-app-bundle.sh: release 构建与应用版本。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 剩余实机验收保留，不视为全部完成。</a></li>
+</ul><p>Next: 独立审查、合并并发布候选附件。</p></article>
+</section>
 <section id="codex-delivery"><h2>Codex 对等接聊与当前安装</h2>
 <article id="codex-implementation"><h3>统一接聊与可靠回执</h3><span class="badge">done</span><p>浮窗和菜单可选择Antigravity或Codex，⌘Return发送勾选剪藏及已有上下文。共享提示词、持久化请求和归档流程，宿主队列分开保存。Codex经官方app-server排队并由App唤醒，真实首轮的请求编号、轮次和原文匹配后才确认成功；未知结果不重发。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/15">pull 15: Codex接聊实现、独立复核与合并</a></li>
@@ -43,16 +49,16 @@
 </section>
 <section id="context-recovery-closeout"><h2>当前收尾与待实机验收</h2>
 <article id="closeout-context"><h3>上下文契约与会话归属</h3><span class="badge">in_progress</span><p>网页与桌面统一截止所选消息的最多四个用户轮，原生按已确认会话读取官方日志，退役最新快照。选区竞态和旧Hook升级遗漏已修复，代码已合并并随当前桌面包安装。设置页修复插件后显示Antigravity 2.x已就绪；当前AX会话定位与Chrome扩展重载仍需#14实机验证。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 本轮实现与实机边界分开记录</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 按#14验证Antigravity A/B会话切换、实际选区归属与Chrome扩展重载。</p></article>
 <article id="closeout-offline-protocol"><h3>双端队列真实服务恢复</h3><span class="badge">done</span><p>生产队列经过真实 HTTP503、独立进程重启和真实 Memos 重放，两端各同步一项，二次同步零写入，原文、私密评论和ID匹配。原生待同步缓存跨重启保持。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 网页文件适配器、原生Core及实际服务读回范围</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 尚需已安装应用和 Chrome storage 生命周期实测，协议验证不能代替该项。</p></article>
 <article id="closeout-summary"><h3>摘要误述修复与云端部署</h3><span class="badge">done</span><p>弃用仍误判的首版候选，最终以结构化输入区分选区和上下文，只归纳主题。两轮六次真实模型输出及独立复核通过；云端增强器已部署，两个真实入库样本原文与评论一致。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 部署源码哈希、真实模型与服务验证</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 生成内容仍需按实际样本审查，不把有限样本通过视为普遍准确保证。</p></article>
-<article id="closeout-runtime"><h3>新版本实际应用验收</h3><span class="badge">unverified</span><p>Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位的实机路径仍由#14跟踪。当前设置页修复插件后已显示就绪，但不据此判定全部宿主行为通过。ChatGPT与Gemini在PR #13安装包已通过原生剪藏验收；更新包的授权与回归状态另列。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 人工保留的应用操作边界</a></li>
+<article id="closeout-runtime"><h3>新版本实际应用验收</h3><span class="badge">unverified</span><p>Chrome扩展重载、离线生命周期及Antigravity当前AX会话定位的实机路径仍由#14跟踪。当前设置页修复插件后已显示就绪，但不据此判定全部宿主行为通过。ChatGPT与Gemini在PR #13安装包已通过原生剪藏验收；更新包的授权与回归状态另列。 多卡实际接聊与 /rewind 引用成文也尚未完成完整实机覆盖。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 完成#14列出的独立实机验收。</p></article>
 <article id="closeout-delivery"><h3>本轮源码交付</h3><span class="badge">done</span><p>PR #12已合并至main；非作者独立工作区复验全仓检查、签名包、网页缺陷前后对照通过，结论PASS+NOTES。桌面源码已随PR #13安装，云端增强器已部署；扩展与Antigravity剩余实机路径见#14。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/12">pull 12: 源码、回归和收尾验收记录</a></li>
@@ -98,16 +104,16 @@
 </section>
 <section id="unverified"><h2>本轮补验与剩余边界</h2>
 <article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>TextEdit 与 Chrome 真实选区、Chrome 用户全局快捷键已通过服务读回。新增受控来源证明 AX 无值时模拟复制成功，原文与实际选区一致。成功 AX、空选区和成功复制回退均核对两条剪贴板 item、七种格式原始字节，用户原剪贴板恢复一致。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 明确区分桌面按钮、热键与剪贴板覆盖范围</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 成功复制回退已通过受控 AppKit 来源验收；任意第三方应用及延迟提供数据的剪贴板类型未作全面覆盖。</p></article>
 <article id="other-websites"><h3>Gemini 真实页面</h3><span class="badge">done</span><p>真实页面发现并修复 pre-wrap 换行丢失；重新加载扩展后，保存、AI 处理与上下文评论保留三行、加粗和代码。Claude 按用户要求退出本轮验收。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 真实 DOM 形状的换行回归</a></li>
 </ul><p>Next: 后续修改转换器时重跑回归和真实选区检查。</p></article>
 <article id="mcp"><h3>Codex 与 Antigravity 宿主 MCP 调用</h3><span class="badge">done</span><p>实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。 Antigravity 新会话也实际完成这三项调用，并展开工具参数与返回值核对。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 当前宿主实际 MCP 读回</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 宿主或 MCP 接线变更后重新进行会话内读回验收。</p></article>
 <article id="export-and-mcp"><h3>导出与删除</h3><span class="badge">done</span><p>原生网页全账户导出已通过。新增两种测试附件，ZIP 内原始字节、SHA-256 和元数据一致；只删除本轮主记录，两个附件随之删除且均读回 404。原有 15 条主记录完整返回值未变。此前评论级联删除和桌面缓存刷新也已通过。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 仅本轮新建数据的导出、级联删除及缓存实测</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 </ul><p>Next: 文本与 PNG 附件导出已补验；后续导出行为变更时重跑原生网页下载与逐字节核对。</p></article>
 <article id="remaining-delivery"><h3>补验修复交付</h3><span class="badge">done</span><p>PR #8 已合并；独立工作区复验 PASS+NOTES，最终全仓检查通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/8">pull 8: Gemini 换行保真修复与补验记录</a></li>
@@ -124,13 +130,13 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/9">pull 9: 独立验收评论及合并结果</a></li>
 </ul><p>Next: 运行环境升级仍单列，不能用合并替代部署验收。</p></article>
 <article id="architecture-runtime"><h3>本轮修复的运行环境升级</h3><span class="badge">done</span><p>日常签名包和固定 Hook/sidecar 已升级，重启、真实联网同步及菜单接聊后归档通过。Chrome 已重载并完成 HTTP/file 真实剪藏；云端仅更新增强器，正文保真且 Memos 未重启。仅清理本轮四条记录，原有14条正常主记录完整返回值未变。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 实际安装、重载、部署、读回及清理证据</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/10">pull 10: 文件页修复、三端运行验收及独立 PASS+NOTES 已合并</a></li>
 </ul><p>Next: 当前源码已随Codex交付包安装；旧Hook修复后的设置页已显示就绪，剩余运行验收见#14与当前交付条目。</p></article>
 </section>
 <section id="web-hotkey-reacceptance"><h2>网页聊天与快捷键复验</h2>
 <article id="web-hotkey-current"><h3>当前实机补验</h3><span class="badge">done</span><p>ChatGPT 混合与部分代码选区、Gemini 正文与去重上下文均已通过真实扩展重载后的服务端读回。用户实际完成捕获和浮窗切换。仅清理本轮八条记录，原有14条完整返回值未变。 扩展30项和全仓门禁通过；非作者独立工作区复核PASS+NOTES，PR #11已合并，已安装扩展与提交运行文件一致。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 接续状态与真实失败边界</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/404d3ad">commit 404d3ad: 历史验收记录保留于该提交的 docs/acceptance-2026-11-13.md，当前未验范围见 issue #14。</a></li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/11">pull 11: 真实剪藏修复、独立复核和合并</a></li>
 </ul><p>Next: 后续网页 DOM 或快捷键行为变化时，重跑对应真实入口与行为回归。</p></article>
 </section>

@@ -39,9 +39,9 @@ case "${RESOLVED_DIST_DIR}" in
 esac
 
 cd "${REPO_ROOT}"
-swift build
+swift build -c release
 
-BIN_DIR="$(swift build --show-bin-path)"
+BIN_DIR="$(swift build -c release --show-bin-path)"
 APP_BUNDLE="${RESOLVED_DIST_DIR}/CodingRewind.app"
 CONTENTS_DIR="${APP_BUNDLE}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -104,9 +104,9 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.0</string>
+    <string>0.3.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
