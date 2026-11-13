@@ -363,11 +363,45 @@ function convertChildren(node, ctx) {
   return out;
 }
 
+function preservesRenderedLineBreaks(node) {
+  const element = node.parentElement;
+  const view = element?.ownerDocument?.defaultView;
+  if (!view) return false;
+  return ["pre", "pre-wrap", "pre-line", "break-spaces"].includes(view.getComputedStyle(element).whiteSpace);
+}
+
+function* nonemptyTextNodes(node) {
+  if (node.nodeType === TEXT_NODE) {
+    if (node.nodeValue) yield node;
+    return;
+  }
+  for (const child of node.childNodes || []) yield* nonemptyTextNodes(child);
+}
+
+function selectedLineBreakModes(range, fragment) {
+  const modes = new WeakMap();
+  if (typeof range.intersectsNode !== "function") return modes;
+  const source = [...nonemptyTextNodes(range.commonAncestorContainer)].filter((node) => {
+    if (!range.intersectsNode(node)) return false;
+    const start = node === range.startContainer ? range.startOffset : 0;
+    const end = node === range.endContainer ? range.endOffset : node.nodeValue.length;
+    return end > start;
+  });
+  const cloned = [...nonemptyTextNodes(fragment)];
+  for (let index = 0; index < cloned.length; index += 1) {
+    modes.set(cloned[index], preservesRenderedLineBreaks(source[index]));
+  }
+  return modes;
+}
+
 function convertNode(node, ctx) {
   if (!node) return "";
   if (node.nodeType === TEXT_NODE) {
     const raw = node.nodeValue ?? node.textContent ?? "";
     if (!raw) return "";
+    if (ctx.lineBreakModes?.get(node) ?? preservesRenderedLineBreaks(node)) {
+      return raw.replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ");
+    }
     return raw.replace(/[ \t\r\n]+/g, " ");
   }
   if (node.nodeType === DOCUMENT_FRAGMENT_NODE || node.nodeType === DOCUMENT_NODE) {
@@ -492,7 +526,7 @@ function normalizeMarkdownSpacing(md) {
 export function htmlToMarkdown(nodeOrHtml, options = {}) {
   if (!nodeOrHtml) return "";
   const root = typeof nodeOrHtml === "string" ? parseHtmlDocument(nodeOrHtml).body : nodeOrHtml;
-  const raw = convertNode(root, { baseUrl: options.baseUrl || "", listDepth: 0 });
+  const raw = convertNode(root, { baseUrl: options.baseUrl || "", listDepth: 0, lineBreakModes: options.lineBreakModes });
   return normalizeMarkdownSpacing(raw);
 }
 
@@ -587,7 +621,7 @@ export function selectionToMarkdown(selectionOrRange, baseUrl = "") {
   try {
     const fragment = range.cloneContents();
     if (plainFallback && !hasMarkdownStructure(fragment)) return plainFallback;
-    const md = htmlToMarkdown(fragment, { baseUrl });
+    const md = htmlToMarkdown(fragment, { baseUrl, lineBreakModes: selectedLineBreakModes(range, fragment) });
     if (md) {
       if (typeof selectionOrRange.getRangeAt === "function") {
         const leadingWhitespace = plainFallback.match(/^\s*/)[0];

@@ -12,7 +12,7 @@
 </ul><p>Next: 后续改动按代码质量标准及对应里程碑验收。</p></article>
 <article id="web-capture"><h3>M2 · 网页选段剪藏</h3><span class="badge">done</span><p>扩展包含 ChatGPT、Claude、Gemini 适配；ChatGPT 的真实选区与端到端保存已有实机证据。其余站点单列待验。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/4">pull 4: 真实选区修复与当前 ChatGPT 支持已合并</a></li>
-</ul><p>Next: Claude 与 Gemini 用真实页面补验。</p></article>
+</ul><p>Next: Gemini 实机通过；Claude 按用户要求不纳入本轮。</p></article>
 <article id="shortcuts"><h3>M2 · 可配置 Hyper 快捷键</h3><span class="badge">done</span><p>录制、清空、恢复、持久化与独占冲突反馈已实现。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/3">pull 3: 独立进程冲突测试与实机验收已交付</a></li>
 </ul><p>Next: 修改快捷键代码时重跑跨进程测试。</p></article>
@@ -38,21 +38,24 @@
 <article id="current-verification"><h3>本轮自动验证与实机验收</h3><span class="badge">done</span><p>最终全仓门禁通过；隔离设置的切换、持久化、URL 校验与离线反馈通过。日常交付包签名与二进制哈希核对通过，Dock、菜单栏、设置、窗口重开及应用重启已实测。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift">file Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift: 显示与重启回归</a></li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/verify-app-presence.swift">file scripts/verify-app-presence.swift: 可重放的激活策略检查</a></li>
-</ul><p>Next: 跨应用选区仍需系统辅助功能授权，见下方边界。</p></article>
+</ul><p>Next: 辅助功能授权已生效，补验结果见下方。</p></article>
 <article id="delivery-state"><h3>提交与合并</h3><span class="badge">done</span><p>PR #7 已合并，日常应用已安装；全仓门禁通过，独立验收 PASS+NOTES。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/7">pull 7: 设置与桌面入口已合并，独立验收评论记录范围</a></li>
 </ul><p>Next: 按代码质量标准继续补验下列未覆盖项。</p></article>
 </section>
-<section id="unverified"><h2>未完成的验收边界</h2>
-<article id="capture-permission"><h3>桌面跨应用选区权限</h3><span class="badge">blocked</span><p>当前日常安装的设置页显示辅助功能未授权。代码与回归存在，不能据此称当前机器的跨应用捕获可用。</p><ul>
-<li>note 本机设置页 2026-11-13: 辅助功能状态未授权</li>
-</ul><p>Next: 用户在系统授权后，从真实宿主选区补验捕获和剪贴板还原。</p></article>
-<article id="other-websites"><h3>Claude 与 Gemini 真实页面</h3><span class="badge">unverified</span><p>存在适配器和自动测试；本轮未找到足以确认两站当前真实 DOM 全链路的实机证据。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/extractors.mjs">file extensions/web-clipper/extractors.mjs: 实现不等同于当前站点验收</a></li>
-</ul><p>Next: 逐站从选区保存到 Memos 回读。</p></article>
-<article id="export-and-mcp"><h3>导出删除与自然语言 MCP 消费</h3><span class="badge">unverified</span><p>Memos 原生能力和插件接线已具备；本轮未重新验证真实导出、删除及宿主自然语言调用。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/milestones.md">file docs/milestones.md: M3/M4 验收项仍按各自证据判断</a></li>
-</ul><p>Next: 针对真实服务补证，避免用 sidecar 成功代替 MCP 验收。</p></article>
+<section id="unverified"><h2>本轮补验与剩余边界</h2>
+<article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>用户授权并重启应用后，TextEdit 真实选区经 HUD 抓选段保存；MCP 读回原文一致。无选区时提示明确且未新增记录。系统剪贴板文本与类型列表前后相同。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 明确区分桌面按钮、热键与剪贴板覆盖范围</a></li>
+</ul><p>Next: 全局热键和 Chrome 的桌面捕获路径仍未取得成功证据；剪贴板二进制内容未逐项核验。</p></article>
+<article id="other-websites"><h3>Gemini 真实页面</h3><span class="badge">done</span><p>真实页面发现并修复 pre-wrap 换行丢失；重新加载扩展后，保存、AI 处理与上下文评论保留三行、加粗和代码。Claude 按用户要求退出本轮验收。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 真实 DOM 形状的换行回归</a></li>
+</ul><p>Next: 后续修改转换器时重跑回归和真实选区检查。</p></article>
+<article id="mcp"><h3>当前 Codex 宿主 MCP 调用</h3><span class="badge">done</span><p>实际调用 list/get/comments，读取桌面与 Gemini 新建记录，核对 PRIVATE、原文和上下文标记。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/acceptance-2026-11-13.md">file docs/acceptance-2026-11-13.md: 当前宿主实际 MCP 读回</a></li>
+</ul><p>Next: Antigravity 内的自然语言 MCP 调用仍需独立验收，不能由 sidecar 成功代替。</p></article>
+<article id="export-and-mcp"><h3>导出删除与其他宿主消费</h3><span class="badge">unverified</span><p>本轮没有执行真实导出、删除，也没有在 Antigravity 内验证自然语言 MCP 调用。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/milestones.md">file docs/milestones.md: 剩余范围</a></li>
+</ul><p>Next: 按对应里程碑分别补验。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>

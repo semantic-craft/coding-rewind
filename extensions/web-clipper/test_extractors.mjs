@@ -101,6 +101,35 @@ test("selectionToMarkdown preserves ancestor fenced code block language on parti
   assert.equal(md, "```swift\nlet panel = NSPanel()\n```");
 });
 
+test("rendered Gemini line breaks survive formatted selection and conversation conversion", () => {
+  const html = '<p><span>REWIND-QA-GEMINI-20261113\n中文原文保真 Alpha 42\n</span><b>加粗测试</b><span> 与 </span><code>sample_code</code></p>';
+  const doc = parseHtmlDocument(html);
+  const paragraph = doc.querySelector("p");
+  const attachDocument = (node) => {
+    node.ownerDocument = doc;
+    for (const child of node.childNodes) attachDocument(child);
+  };
+  attachDocument(paragraph);
+  let whiteSpace = "pre-wrap";
+  doc.defaultView = { getComputedStyle() { return { whiteSpace }; } };
+  const range = {
+    commonAncestorContainer: paragraph,
+    startContainer: paragraph,
+    startOffset: 0,
+    endContainer: paragraph,
+    endOffset: paragraph.childNodes.length,
+    intersectsNode(node) { return paragraph.contains(node); },
+    cloneContents() { return parseHtmlDocument(html).querySelector("p"); },
+    toString() { return paragraph.textContent; }
+  };
+  const expected = 'REWIND-QA-GEMINI-20261113\n中文原文保真 Alpha 42\n**加粗测试** 与 `sample_code`';
+  assert.equal(selectionToMarkdown(range), expected);
+  assert.equal(htmlToMarkdown(paragraph), expected);
+  whiteSpace = "normal";
+  assert.equal(selectionToMarkdown(range), expected.replaceAll("\n", " "));
+  assert.equal(htmlToMarkdown(paragraph), expected.replaceAll("\n", " "));
+});
+
 test("selectionToMarkdown preserves selected plain text boundaries", () => {
   const plainOnlySelection = {
     rangeCount: 0,
