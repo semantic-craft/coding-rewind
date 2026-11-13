@@ -91,6 +91,16 @@ test("htmlToMarkdown converts code blocks, copy headers, lists, headings, links,
   assert.match(md, /> Keep verbatim body untouched\./);
 });
 
+test("ChatGPT semantic inline code survives selection and conversation context", () => {
+  const doc = parseHtmlDocument('<div data-message-author-role="assistant"><p id="selected">REWIND-WEB-QA-20261113-CGPT<br>第二行：<strong>绿色叶子</strong>与 <span data-markdown-copy="inline-code" dir="ltr">alpha = 42</span>。<br>第三行：中文原文保持完整。</p></div>');
+  const expected = 'REWIND-WEB-QA-20261113-CGPT\n第二行：**绿色叶子**与 `alpha = 42`。\n第三行：中文原文保持完整。';
+
+  assert.equal(selectionToMarkdown(doc.createRangeFromNode(doc.querySelector("#selected"))), expected);
+  assert.deepEqual(extractConversationTurns(doc, "chatgpt").map(({ role, text }) => ({ role, text })), [
+    { role: "assistant", text: expected }
+  ]);
+});
+
 test("selectionToMarkdown preserves ancestor fenced code block language on partial code selection", () => {
   const doc = parseHtmlDocument(
     `<pre><code class="language-swift"><span id="sel">let panel = NSPanel()</span>\npanel.isFloatingPanel = true</code></pre>`
@@ -99,6 +109,43 @@ test("selectionToMarkdown preserves ancestor fenced code block language on parti
   const range = doc.createRangeFromNode(span);
   const md = selectionToMarkdown(range, "https://chatgpt.com/c/1");
   assert.equal(md, "```swift\nlet panel = NSPanel()\n```");
+});
+
+test("ChatGPT inline code semantics survive text-only and wrapper selections", () => {
+  const doc = parseHtmlDocument('<span id="code" data-markdown-copy="inline-code">alpha = 42</span>');
+  const code = doc.querySelector("#code");
+  const selected = "alpha ";
+  const range = {
+    commonAncestorContainer: code.childNodes[0],
+    cloneContents() { return parseHtmlDocument(selected).body; },
+    toString() { return selected; }
+  };
+  assert.equal(selectionToMarkdown(range), "`alpha `");
+
+  const wrapper = parseHtmlDocument('<span id="wrapper">value <span data-markdown-copy="inline-code">alpha = 42</span></span>');
+  assert.equal(selectionToMarkdown(wrapper.createRangeFromNode(wrapper.querySelector("#wrapper"))), "value `alpha = 42`");
+});
+
+test("a mixed Selection keeps code whitespace inside its Markdown delimiters", async (t) => {
+  const cases = [
+    { name: "starts inside code", html: '<span data-markdown-copy="inline-code"> = 42</span> remains. ', expected: "` = 42` remains. " },
+    { name: "ends inside code", html: ' Keep <span data-markdown-copy="inline-code">alpha </span>', expected: " Keep `alpha `" }
+  ];
+
+  for (const { name, html, expected } of cases) {
+    await t.test(name, () => {
+      const doc = parseHtmlDocument(`<p>${html}</p>`);
+      const range = doc.createRangeFromNode(doc.querySelector("p"));
+      const selection = {
+        rangeCount: 1,
+        isCollapsed: false,
+        getRangeAt() { return range; },
+        toString() { return range.toString(); }
+      };
+
+      assert.equal(selectionToMarkdown(selection), expected);
+    });
+  }
 });
 
 test("rendered Gemini line breaks survive formatted selection and conversation conversion", () => {
@@ -478,6 +525,15 @@ test("Gemini DOM extraction parses custom elements and cleans Google Gemini boil
     "Pass a deterministic `memoId` query parameter to `POST /api/memos`."
   );
   assert.match(ctx.recentTurns, /^User: How do we make MV3 retries idempotent against Memos\?\n\nAssistant: Pass a deterministic `memoId`/);
+});
+
+test("Gemini context excludes the duplicate screen reader prompt label and keeps normal headings", () => {
+  const url = "https://gemini.google.com/app/prompt-label";
+  const doc = parseHtmlDocument('<user-query><div class="query-text"><h5 class="cdk-visually-hidden screen-reader-user-query-label"><span>You said</span> 请保留完整…</h5><p class="query-text-line">请保留完整提问。</p><h5>用户标题</h5></div></user-query><model-response><message-content><p id="answer">原样保留。</p></message-content></model-response>');
+  const ctx = extractClipContext({ doc, selectionRange: doc.createRangeFromNode(doc.querySelector("#answer")), url });
+
+  assert.equal(ctx.prompt, "请保留完整提问。\n\n##### 用户标题");
+  assert.equal(ctx.recentTurns, "User: 请保留完整提问。\n\n##### 用户标题\n\nAssistant: 原样保留。");
 });
 
 test("buildMemosWirePayloads matches exact canonical wire contract with and without context", () => {
