@@ -9,7 +9,11 @@ import base64, hashlib, hmac, json, os, re, sys, threading, time, urllib.request
 
 CONTEXT_MARKER = "<!-- rewind-context-v1 -->"
 SYSTEM_PROMPT = (
-    "Summarize this developer snippet and its surrounding chat context. Return ONLY valid JSON: "
+    "Summarize the Selected Excerpt and how it relates to the Captured Chat Context. "
+    "The Selected Excerpt may be only part of a message. The Captured Chat Context may also be incomplete or truncated. "
+    "Make claims about omissions, completeness, or instruction compliance only when the captured chat context directly supports them. "
+    "If the evidence is unclear, describe the excerpt and discussion neutrally. "
+    "Return ONLY valid JSON: "
     '{"title": "<concise 8-18 char Chinese/tech title>", "session_topic": "<original session title & problem>", '
     '"context_summary": "<1-2 sentences on surrounding discussion & why snippet matters>", "keywords": ["kw1", "kw2", "kw3"]}'
 )
@@ -117,7 +121,11 @@ class EnricherService:
                     return "deferred"
             else:
                 ctx_text = found.replace(CONTEXT_MARKER, "").strip()
-        prompt = f"Source: {parsed['source_line'] or 'N/A'}\n\nContext:\n{ctx_text or 'N/A'}\n\nSelected Snippet:\n{parsed['verbatim_body'][:6000]}"
+        prompt = (
+            f"Source: {parsed['source_line'] or 'N/A'}\n\n"
+            f"Captured Chat Context:\n{ctx_text or 'N/A'}\n\n"
+            f"Selected Excerpt:\n{parsed['verbatim_body'][:6000]}"
+        )
         ai_resp = _json_req("POST", f"{self.ai_base_url.rstrip('/')}/chat/completions", self.ai_api_key, {
             "model": self.ai_model, "temperature": 0.2, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
