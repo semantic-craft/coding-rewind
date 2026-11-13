@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T01:06:00.123767Z</p>
-<p>Main: <code>main: 110d20f135ced869ee88aaeee4a3336ceee3d517</code></p>
+<p>Observed: 2026-11-13T01:23:09.168301Z</p>
+<p>Main: <code>main: 961236a48c37918ab1f44e851a4348969d042694</code></p>
 <section id="implemented"><h2>已经实现与合并</h2>
 <article id="m0-m1"><h3>M0/M1 · 需求、单一 Memos 架构与统一门禁</h3><span class="badge">done</span><p>需求、来源、原文边界、离线队列和统一检查入口已纳入主分支。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 架构与线级契约</a></li>
@@ -39,9 +39,9 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift">file Tests/CodingRewindAppTests/AppAppearancePreferencesTests.swift: 显示与重启回归</a></li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/verify-app-presence.swift">file scripts/verify-app-presence.swift: 可重放的激活策略检查</a></li>
 </ul><p>Next: 跨应用选区仍需系统辅助功能授权，见下方边界。</p></article>
-<article id="delivery-state"><h3>提交与合并</h3><span class="badge">in_progress</span><p>已安装日常应用；正在完成独立审查与提交合并。</p><ul>
-<li>note 本机交付验收 2026-11-13: 签名校验、构建与安装二进制一致，重启成功</li>
-</ul><p>Next: 合并后刷新 GitHub 事实。</p></article>
+<article id="delivery-state"><h3>提交与合并</h3><span class="badge">done</span><p>PR #7 已合并，日常应用已安装；全仓门禁通过，独立验收 PASS+NOTES。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/7">pull 7: 设置与桌面入口已合并，独立验收评论记录范围</a></li>
+</ul><p>Next: 按代码质量标准继续补验下列未覆盖项。</p></article>
 </section>
 <section id="unverified"><h2>未完成的验收边界</h2>
 <article id="capture-permission"><h3>桌面跨应用选区权限</h3><span class="badge">blocked</span><p>当前日常安装的设置页显示辅助功能未授权。代码与回归存在，不能据此称当前机器的跨应用捕获可用。</p><ul>
