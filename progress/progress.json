@@ -9,7 +9,7 @@
         "number": 12
       },
       {
-        "head": "c9ffd1438c3976a3224f699881717f02e7104fdf",
+        "head": "9c2f4782bacedee68235b0baf0af15b6677bcf6f",
         "number": 13
       }
     ],
@@ -112,8 +112,8 @@
       },
       {
         "base": "15b3bbce847f6ed83e0ba0fc1326a4074dafdd3f",
-        "head": "c9ffd1438c3976a3224f699881717f02e7104fdf",
-        "merge_commit": "b35ca9f8cfd7af29c7988da229d4d08d88d9417d",
+        "head": "9c2f4782bacedee68235b0baf0af15b6677bcf6f",
+        "merge_commit": "e2cbbe6e17512ca989ba1521a1c7df4688509c38",
         "merged": false,
         "number": 13,
         "state": "open"
@@ -126,7 +126,7 @@
     "docs/milestones.md",
     "docs/acceptance-2026-11-13.md"
   ],
-  "observed_at": "2026-11-13T16:44:51.065214Z",
+  "observed_at": "2026-11-13T17:34:33.292863Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -187,15 +187,20 @@
         {
           "evidence": [
             {
+              "kind": "commit",
+              "note": "原生主入口绑定用途说明，开发凭据在内存中加载；全仓检查与7项凭据回归通过",
+              "ref": "6fcdbaa"
+            },
+            {
               "kind": "note",
-              "note": "安装前版本保留在本轮本地验收目录；授权窗口明确请求CodingRewind CLI访问",
-              "ref": "2026-11-14 安装"
+              "note": "本机 .scratch/native-app-clipping/installed-acceptance.json、verify-installed.py 与两端服务端正文和评论回读；真实自定义快捷键，不经QA写入代理",
+              "ref": "2026-11-14 日常安装实测"
             }
           ],
           "id": "native-chat-installed",
-          "next": "允许当前CodingRewind控制Chrome后，重做Gemini与ChatGPT日常快捷键并从Memos核对私有链接、正文与上下文。",
-          "status": "in_progress",
-          "summary": "日常版⌃⌥⇧⌘K已证实正文与上下文直连入库。已将shell凭据启动器替换为原生入口，签名绑定用途说明；全仓检查、开发凭据与QA隔离回归通过。最终包已安装，1Password与辅助功能权限已生效；原先AppleEvents -1743已变为正确的CodingRewind控制Chrome授权弹窗，等待本人Allow。首轮弹窗等待超时所得片段缺回链，不能记为完整通过。",
+          "next": "",
+          "status": "done",
+          "summary": "日常安装版已通过1Password、辅助功能和Chrome自动化授权。ChatGPT与Gemini实际⌃⌥⇧⌘K均直接写入Memos，服务端ready回读确认来源、私有会话链接、选区Markdown、代码缩进与空行、前序提问及唯一私密上下文评论完全匹配。已安装二进制与验收构建逐字一致。Gemini回链覆盖默认Chrome。",
           "title": "日常安装版直连验收"
         },
         {
@@ -207,9 +212,9 @@
             }
           ],
           "id": "native-chat-source-delivery",
-          "next": "日常安装版完成凭据授权与直连复验后更新状态；保留父PR的既有验收边界。",
+          "next": "PR #13保留在尚未合并的父PR #12之上；父PR的Antigravity接聊验收不包含在本轮通过结论中。",
           "status": "done",
-          "summary": "原生剪藏实现、实测回归与文档已提交并推送。PR #13 以尚未合并的 #12 为基线，当前未合并。",
+          "summary": "原生剪藏、凭据启动修复、回归与日常实机验收已提交并推送。PR #13以尚未合并的 #12为基线；当前未合并，日常应用已安装并验收通过。",
           "title": "源码提交与推送"
         }
       ],
