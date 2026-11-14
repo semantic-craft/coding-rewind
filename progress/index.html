@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T02:38:12.653401Z</p>
-<p>Main: <code>main: 73c6413e388eff867e70d35eefa463cca6515a72</code></p>
+<p>Observed: 2026-11-14T03:15:15.489467Z</p>
+<p>Main: <code>main: 68765db1ff0eeb529ee0a26b44f5de04e9736808</code></p>
 <section id="release-030-rc3"><h2>网页扩展 0.3.0 第三候选版</h2>
 <article id="rc3-preparation"><h3>扩展版本与发布包</h3><span class="badge">done</span><p>扩展候选版显示 0.3.0-rc.3、内部 0.3.0.5。实际 ZIP 的12个文件及 MIT 许可证逐字节对应发布源码，权限与运行逻辑不变。PR #24 经非作者独立包验收 PASS+NOTES 后合并。扩展34/34、实际包界面14项断言和10张截图通过；全仓首跑在未改动的 Vendor 时序测试失败一次，单例及全仓复跑均通过，原始失败已记录。桌面应用继续 rc.2 build4，本次未改安装、签名或凭据。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/24">pull 24: 精确 head b047f59e0fdcc90989530b8bbc59a37ef09b4910 已独立复验，已读回合并至 main。</a></li>
@@ -26,8 +26,10 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/23">pull 23: 独立复验覆盖精确 head 2257ae0013664c6f2abbfda4f279a9ab00288e17；已读回 MERGED，base 为 main。</a></li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.3">release v0.3.0-rc.3: 新样式已进入公开 ZIP，匿名下载已核对。</a></li>
 </ul><p>Next: </p></article>
-<article id="extension-bright-installed"><h3>日常 Chrome 重载</h3><span class="badge">unverified</span><p>未操作日常 Chrome 的扩展管理页；已安装扩展的重载与页面刷新尚未确认。</p><ul>
-</ul><p>Next: 在 Chrome 扩展管理页重新加载 Coding Rewind，刷新聊天页并核对设置、选区按钮和保存提示。</p></article>
+<article id="extension-bright-installed"><h3>日常 Chrome 重载</h3><span class="badge">done</span><p>已在日常 Chrome 扩展管理页就地重载解包扩展（ID hfhgjgmlcpppajdoakfmbkokflfbdmpl）至 0.3.0-rc.3，已启用且无报错。单页设置保留既有配置且连接检查成功，刷新 Gemini 测试对话页后确认 +保存所选文本 按钮与 片段已保存到 Memos 提示正常，测试片段已删除并恢复基线。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.3">release v0.3.0-rc.3: 日常 Chrome 原地重载至 0.3.0-rc.3（内部 0.3.0.5），ID 与已存配置保持不变。</a></li>
+<li>note 2026-11-14 日常 Chrome 重载验收: 单页设置连接检查通过；刷新 Gemini 无敏感测试页后实测选区保存按钮、保存提示与 Memos 往返，测试片段已删除并恢复 30 条基线。</li>
+</ul><p>Next: </p></article>
 </section>
 <section id="release-030-rc2"><h2>0.3.0 第二候选版</h2>
 <article id="rc2-extension-copy"><h3>Chrome 扩展中文同步</h3><span class="badge">done</span><p>扩展设置页、右键菜单、保存按钮和提示与桌面统一用语，权限、提取与队列逻辑不变。扩展显示版本 0.3.0-rc.2，内部版本 0.3.0.4；用户已确认在 Chrome 中重载并读到新版。</p><ul>

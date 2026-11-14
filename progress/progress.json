@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "73c6413e388eff867e70d35eefa463cca6515a72",
+    "main": "68765db1ff0eeb529ee0a26b44f5de04e9736808",
     "open_pulls": [],
     "pulls": [
       {
@@ -217,7 +217,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T02:38:12.653401Z",
+  "observed_at": "2026-11-14T03:15:15.489467Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -324,11 +324,22 @@
           "title": "源码交付"
         },
         {
-          "evidence": [],
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "日常 Chrome 原地重载至 0.3.0-rc.3（内部 0.3.0.5），ID 与已存配置保持不变。",
+              "ref": "v0.3.0-rc.3"
+            },
+            {
+              "kind": "note",
+              "note": "单页设置连接检查通过；刷新 Gemini 无敏感测试页后实测选区保存按钮、保存提示与 Memos 往返，测试片段已删除并恢复 30 条基线。",
+              "ref": "2026-11-14 日常 Chrome 重载验收"
+            }
+          ],
           "id": "extension-bright-installed",
-          "next": "在 Chrome 扩展管理页重新加载 Coding Rewind，刷新聊天页并核对设置、选区按钮和保存提示。",
-          "status": "unverified",
-          "summary": "未操作日常 Chrome 的扩展管理页；已安装扩展的重载与页面刷新尚未确认。",
+          "next": "",
+          "status": "done",
+          "summary": "已在日常 Chrome 扩展管理页就地重载解包扩展（ID hfhgjgmlcpppajdoakfmbkokflfbdmpl）至 0.3.0-rc.3，已启用且无报错。单页设置保留既有配置且连接检查成功，刷新 Gemini 测试对话页后确认 +保存所选文本 按钮与 片段已保存到 Memos 提示正常，测试片段已删除并恢复基线。",
           "title": "日常 Chrome 重载"
         }
       ],
