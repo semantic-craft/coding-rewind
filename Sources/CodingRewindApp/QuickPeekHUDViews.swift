@@ -166,34 +166,48 @@ public struct QuickPeekHUDRootView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.cyan)
+                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
                 Text("Coding Rewind").font(.system(size: 13, weight: .bold))
                 Spacer()
                 Button {
                     Task { await coordinator.captureSelection() }
                 } label: {
-                    Label("抓选段 \(shortcuts.hint(for: .captureSelection))", systemImage: "plus.viewfinder").font(.system(size: 11))
+                    HStack(spacing: 5) {
+                        Label("抓选段", systemImage: "plus.viewfinder")
+                        Text(shortcuts.hint(for: .captureSelection))
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .rewindButtonRole(.secondary)
+                .accessibilityLabel("抓选段")
+                .accessibilityIdentifier("hud.capture")
+                .help(shortcuts.instruction(for: .captureSelection))
                 Button {
                     Task { await coordinator.refresh() }
                 } label: {
-                    Image(systemName: "arrow.clockwise")
+                    Image(systemName: "arrow.clockwise").frame(width: 22, height: 22)
                 }
-                .buttonStyle(.borderless)
+                .rewindButtonRole(.toolbar)
+                .accessibilityLabel("立即同步热流")
+                .accessibilityIdentifier("hud.refresh")
                 .help("立即同步热流 (⌘R)")
                 Button {
                     onOpenSettings()
                 } label: {
-                    Image(systemName: "gearshape")
+                    Image(systemName: "gearshape").frame(width: 22, height: 22)
                 }
-                .buttonStyle(.borderless)
+                .rewindButtonRole(.toolbar)
+                .accessibilityLabel("设置")
+                .accessibilityIdentifier("hud.settings")
                 .help("设置… (⌘,)")
-                Button("关闭") { onClose() }
-                    .keyboardShortcut(.cancelAction)
-                    .buttonStyle(.borderless)
-                    .font(.system(size: 11))
+                Button { onClose() } label: {
+                    Image(systemName: "xmark").frame(width: 22, height: 22)
+                }
+                .keyboardShortcut(.cancelAction)
+                .rewindButtonRole(.toolbar)
+                .accessibilityLabel("关闭速览")
+                .accessibilityIdentifier("hud.close")
+                .help("关闭速览 (Esc)")
             }
             if let msg = coordinator.bannerMessage {
                 HStack(spacing: 6) {
@@ -201,7 +215,11 @@ public struct QuickPeekHUDRootView: View {
                         .foregroundStyle(coordinator.isErrorBanner ? .orange : .green)
                     Text(msg).font(.system(size: 11)).lineLimit(2)
                     Spacer()
-                    Button("×") { coordinator.bannerMessage = nil }.buttonStyle(.borderless)
+                    Button { coordinator.bannerMessage = nil } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .rewindButtonRole(.toolbar)
+                    .accessibilityLabel("关闭提示")
                 }
                 .padding(7)
                 .background((coordinator.isErrorBanner ? Color.orange : Color.green).opacity(0.15))
@@ -213,21 +231,24 @@ public struct QuickPeekHUDRootView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .focused($isSearchFocused)
-                ForEach(StatusFilter.allCases, id: \.self) { filter in
-                    Button(filter.label) { coordinator.statusFilter = filter }
-                        .buttonStyle(.plain)
-                        .focusEffectDisabled()
-                        .font(.system(size: 10, weight: coordinator.statusFilter == filter ? .semibold : .regular))
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(coordinator.statusFilter == filter ? Color.accentColor.opacity(0.24) : Color.primary.opacity(0.06))
-                        .clipShape(Capsule())
-                }
+                    .accessibilityLabel("搜索标题、上下文或选中原文")
+                    .accessibilityIdentifier("hud.search")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(Color.primary.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack(spacing: 12) {
+                ForEach(StatusFilter.allCases, id: \.self) { filter in
+                    Button(filter.label) { coordinator.statusFilter = filter }
+                        .rewindButtonRole(.toolbar)
+                        .font(.system(size: 11, weight: coordinator.statusFilter == filter ? .semibold : .regular))
+                        .foregroundStyle(coordinator.statusFilter == filter ? Color.accentColor : Color.secondary)
+                        .accessibilityAddTraits(coordinator.statusFilter == filter ? .isSelected : [])
+                        .accessibilityIdentifier("hud.filter.\(filter.rawValue)")
+                }
+            }
 
             if coordinator.filteredCards.isEmpty {
                 emptyStateView
@@ -243,40 +264,57 @@ public struct QuickPeekHUDRootView: View {
                 Button("结束接聊，保留未归档卡片") {
                     coordinator.endUnarchivedConversation()
                 }
-                .font(.system(size: 11))
+                .rewindButtonRole(.secondary)
             }
             if coordinator.canEndUnconfirmedConversation {
                 Button("已核对 \(coordinator.effectiveConversationHost.displayName)，结束本次请求") {
                     coordinator.endUnconfirmedConversation()
                 }
-                .font(.system(size: 11))
+                .rewindButtonRole(.secondary)
             }
             if coordinator.confirmedConversation?.host == .codex {
                 Button("打开已发送的 Codex 会话") { coordinator.reopenConfirmedConversation() }
-                    .font(.system(size: 11))
+                    .rewindButtonRole(.secondary)
             }
             Divider()
-            HStack {
-                Picker("接聊应用", selection: $coordinator.conversationHost) {
+            HStack(spacing: 12) {
+                Text("已选 \(coordinator.checkedCardIDs.count) 张")
+                    .font(.system(size: 11, weight: .medium))
+                Toggle("开聊后归档", isOn: $coordinator.markSynthesizedOnLaunch)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 11))
+                    .accessibilityIdentifier("hud.archiveOnLaunch")
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Picker("接聊应用", selection: Binding(
+                    get: { coordinator.effectiveConversationHost },
+                    set: { coordinator.conversationHost = $0 }
+                )) {
                     ForEach(ConversationHost.allCases, id: \.self) { host in
                         Text(host.displayName).tag(host)
                     }
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
+                .controlSize(.small)
+                .fixedSize()
                 .labelsHidden()
                 .accessibilityLabel("接聊应用")
+                .accessibilityIdentifier("hud.conversationHost")
                 .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
-            }
-            HStack(spacing: 8) {
-                Text("已选 \(coordinator.checkedCardIDs.count) 张").font(.system(size: 11, weight: .medium))
-                Toggle("开聊后归档", isOn: $coordinator.markSynthesizedOnLaunch).toggleStyle(.checkbox).font(.system(size: 11))
-                Spacer()
-                Button(coordinator.isLaunchingConversation ? "正在接聊…" : "\(coordinator.conversationActionTitle) ⌘↵") {
+                Button {
                     Task { await coordinator.launchChecked() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(coordinator.isLaunchingConversation ? "正在接聊…" : "开聊")
+                        Text("⌘↵").foregroundStyle(.secondary)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .rewindButtonRole(.primary)
                 .keyboardShortcut(.return, modifiers: [.command])
+                .accessibilityLabel(coordinator.isLaunchingConversation ? "正在接聊…" : coordinator.conversationActionTitle)
+                .accessibilityIdentifier("hud.launch")
                 .disabled(coordinator.isLaunchingConversation)
             }
         }
@@ -297,7 +335,7 @@ public struct QuickPeekHUDRootView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles.rectangle.stack")
                     .font(.system(size: 20))
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(.secondary)
                 Text(coordinator.cards.isEmpty ? "近 72 小时热池暂无灵感卡片" : "没有匹配当前筛选条件的卡片")
                     .font(.system(size: 13, weight: .semibold))
             }
@@ -311,14 +349,13 @@ public struct QuickPeekHUDRootView: View {
 
             HStack(spacing: 8) {
                 Button("设置… (⌘,)") { onOpenSettings() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .rewindButtonRole(.secondary)
                 if !coordinator.cards.isEmpty {
                     Button("清除筛选") {
                         coordinator.searchText = ""
                         coordinator.statusFilter = .all
                     }
-                    .buttonStyle(.borderless)
+                    .rewindButtonRole(.toolbar)
                     .font(.system(size: 11))
                 }
             }
@@ -336,12 +373,13 @@ public struct QuickPeekHUDRootView: View {
             HStack(spacing: 6) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
                     .foregroundStyle(checked ? Color.accentColor : .secondary)
+                Circle()
+                    .fill(card.status == .ready ? Color.green : Color.orange)
+                    .frame(width: 5, height: 5)
+                    .accessibilityHidden(true)
                 Text(card.status.badgeText)
-                    .font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background((card.status == .ready ? Color.green : Color.orange).opacity(0.2))
-                    .clipShape(Capsule())
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
                 Text("#\(card.sourcePlatform)").font(.system(size: 10)).foregroundStyle(.secondary)
                 if card.isOfflinePending {
                     Text("离线待同步").font(.system(size: 10)).foregroundStyle(.orange)
@@ -349,7 +387,7 @@ public struct QuickPeekHUDRootView: View {
                 Spacer()
                 if let url = card.reopenURL {
                     Button("原出处 ↗") { coordinator.onOpenURL?(url) }
-                        .buttonStyle(.borderless)
+                        .rewindButtonRole(.toolbar)
                         .font(.system(size: 10))
                 }
             }

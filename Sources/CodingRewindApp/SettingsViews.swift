@@ -5,6 +5,38 @@ import CodingRewindCore
 import KeyboardShortcuts
 import SwiftUI
 
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case general
+    case connection
+    case keyboard
+    case integrations
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .general: "通用"
+        case .connection: "连接"
+        case .keyboard: "快捷键"
+        case .integrations: "集成与权限"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .connection: "network"
+        case .keyboard: "keyboard"
+        case .integrations: "puzzlepiece.extension"
+        }
+    }
+}
+
+enum SettingsLayout {
+    static let contentSize = NSSize(width: 720, height: 520)
+    static let sidebarWidth: CGFloat = 160
+}
+
 @MainActor
 public struct SettingsFormView: View {
     @Bindable public var coordinator: AppCoordinator
@@ -14,6 +46,7 @@ public struct SettingsFormView: View {
     public let onRequestAccessibility: @MainActor () -> Void
     public let onClose: @MainActor () -> Void
 
+    @State private var selectedPage: SettingsPage = .general
     @State private var urlDraft: String
     @State private var tokenDraft = ""
     @State private var isAccessibilityTrusted: Bool
@@ -39,22 +72,48 @@ public struct SettingsFormView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            TabView {
-                general.tabItem { Label("通用", systemImage: "gearshape") }
-                connection.tabItem { Label("连接", systemImage: "network") }
-                keyboard.tabItem { Label("快捷键", systemImage: "keyboard") }
-                integrations.tabItem { Label("集成与权限", systemImage: "puzzlepiece.extension") }
+        HStack(spacing: 0) {
+            List(selection: Binding<SettingsPage?>(
+                get: { selectedPage },
+                set: { if let page = $0 { selectedPage = page } }
+            )) {
+                ForEach(SettingsPage.allCases) { page in
+                    Label(page.title, systemImage: page.systemImage)
+                        .tag(page)
+                        .accessibilityIdentifier("settings.navigation.\(page.rawValue)")
+                }
             }
-            .padding(12)
-            HStack {
-                Text("Coding Rewind").foregroundStyle(.secondary)
-                Spacer()
-                Button("关闭") { onClose() }.keyboardShortcut(.cancelAction)
+            .listStyle(.sidebar)
+            .accessibilityLabel("设置分类")
+            .frame(width: SettingsLayout.sidebarWidth)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(selectedPage.title)
+                    .font(.title2.weight(.semibold))
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 20)
+
+                Divider()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        switch selectedPage {
+                        case .general: general
+                        case .connection: connection
+                        case .keyboard: keyboard
+                        case .integrations: integrations
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            .padding([.horizontal, .bottom], 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .frame(width: 580, height: 520)
+        .frame(width: SettingsLayout.contentSize.width, height: SettingsLayout.contentSize.height)
+        .onExitCommand(perform: onClose)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
             coordinator.refreshPluginStatus()
@@ -62,113 +121,126 @@ public struct SettingsFormView: View {
     }
 
     private var general: some View {
-        Form {
-            Section("应用入口") {
-                Toggle("在 Dock 中显示", isOn: Binding(
-                    get: { appearance.showsDockIcon },
-                    set: { appearance.setShowsDockIcon($0) }
-                ))
-                Text("修改立即保存。点击 Dock 图标或从 Finder 重新打开应用，可唤出速览浮窗。")
-                    .font(.callout).foregroundStyle(.secondary)
+        Group {
+            SettingsSection("应用入口") {
+                SettingsRow("在 Dock 中显示", help: "修改立即保存。点击 Dock 图标或从 Finder 重新打开应用，可唤出速览浮窗。") {
+                    Toggle("在 Dock 中显示", isOn: Binding(
+                        get: { appearance.showsDockIcon },
+                        set: { appearance.setShowsDockIcon($0) }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier("settings.dock")
+                }
                 if let error = appearance.errorMessage {
                     Text(error).foregroundStyle(.red)
                 }
             }
-            Section("菜单栏") {
-                Text("菜单栏图标提供速览、捕获选段与设置入口。")
-                Text("找不到图标时，请在系统设置的“菜单栏”中允许 CodingRewind。")
-                    .font(.callout).foregroundStyle(.secondary)
-                Button("打开系统菜单栏设置…") {
-                    if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
-                        NSWorkspace.shared.open(url)
+            SettingsSection("菜单栏") {
+                SettingsRow("图标与入口", help: "菜单栏图标提供速览、捕获选段与设置入口。找不到图标时，请在系统设置的“菜单栏”中允许 CodingRewind。") {
+                    Button("打开系统菜单栏设置…") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
+                            NSWorkspace.shared.open(url)
+                        }
                     }
+                    .rewindButtonRole(.secondary)
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     private var connection: some View {
-        Form {
-            Section("Memos 服务") {
-                TextField("服务地址", text: $urlDraft, prompt: Text("https://memos.example.com"))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(coordinator.connectionSettings.isURLManaged)
-                if coordinator.connectionSettings.isURLManaged {
-                    Text("地址由启动环境管理，请在启动配置中修改。")
-                        .font(.callout).foregroundStyle(.secondary)
+        Group {
+            SettingsSection("Memos 服务") {
+                SettingsRow("服务地址", layout: .field, help: coordinator.connectionSettings.isURLManaged
+                            ? "地址由启动环境管理，请在启动配置中修改。" : nil) {
+                    TextField("服务地址", text: $urlDraft, prompt: Text("https://memos.example.com"))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(coordinator.connectionSettings.isURLManaged)
+                        .accessibilityIdentifier("settings.memosURL")
                 }
-                SecureField("访问令牌", text: $tokenDraft, prompt: Text("留空则保留现有令牌"))
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(coordinator.connectionSettings.isTokenManaged)
-                Text(coordinator.connectionSettings.isTokenManaged
-                     ? "令牌由启动环境提供，此处不会读取或改写。"
-                     : "新令牌保存到 macOS 钥匙串，不写入配置文件。")
-                    .font(.callout).foregroundStyle(.secondary)
-                Button("保存连接设置") { saveConnection() }
-                    .disabled(coordinator.connectionSettings.isURLManaged && coordinator.connectionSettings.isTokenManaged)
+                Divider()
+                SettingsRow("访问令牌", layout: .field, help: coordinator.connectionSettings.isTokenManaged
+                            ? "令牌由启动环境提供，此处不会读取或改写。"
+                            : "新令牌保存到 macOS 钥匙串，不写入配置文件。") {
+                    SecureField("访问令牌", text: $tokenDraft, prompt: Text("留空则保留现有令牌"))
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(coordinator.connectionSettings.isTokenManaged)
+                        .accessibilityIdentifier("settings.memosToken")
+                }
+                SettingsRow("", layout: .field) {
+                    Button("保存连接设置") { saveConnection() }
+                        .rewindButtonRole(.primary)
+                        .disabled(coordinator.connectionSettings.isURLManaged && coordinator.connectionSettings.isTokenManaged)
+                        .accessibilityIdentifier("settings.saveConnection")
+                }
                 if let saveMessage {
-                    Text(saveMessage).foregroundStyle(saveFailed ? Color.red : Color.secondary)
+                    Text(saveMessage)
+                        .foregroundStyle(saveFailed ? Color.red : Color.secondary)
+                        .textSelection(.enabled)
                 }
             }
-            Section("最近操作") {
+            SettingsSection("最近操作") {
+                SettingsRow("连接检查") {
+                    Button("立即同步") { Task { await coordinator.refresh() } }
+                        .rewindButtonRole(.secondary)
+                }
                 Text(coordinator.bannerMessage ?? "点击立即同步检查连接。")
+                    .font(.callout)
                     .foregroundStyle(coordinator.isErrorBanner ? Color.orange : Color.secondary)
                     .textSelection(.enabled)
-                Button("立即同步") { Task { await coordinator.refresh() } }
             }
         }
-        .formStyle(.grouped)
     }
 
     private var keyboard: some View {
-        Form {
-            Section("全局快捷键") {
-                Text("修改立即生效并保存；清空即关闭。Hyper = ⌃⌥⇧⌘。")
-                    .font(.callout).foregroundStyle(.secondary)
-                ForEach(ShortcutAction.allCases) { action in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(action.title)
-                            Spacer()
-                            KeyboardShortcuts.Recorder(for: action.name)
-                                .shortcutValidation { shortcuts.validate($0, for: action) }
-                                .keyboardShortcutsConflictPolicy(.init(systemShortcut: .block))
-                            Button("恢复默认") { shortcuts.restoreDefault(for: action) }
-                        }
-                        HStack {
-                            Text(shortcuts.validationMessages[action] ?? shortcuts.statusText(for: action))
-                                .font(.callout).foregroundStyle(.secondary)
-                            if case .failed = shortcuts.state(for: action) {
-                                Button("重试") { shortcuts.retry(action) }
-                            }
+        SettingsSection("全局快捷键") {
+            Text("修改立即生效并保存；清空即关闭。Hyper = ⌃⌥⇧⌘。")
+                .font(.callout).foregroundStyle(.secondary)
+            ForEach(ShortcutAction.allCases) { action in
+                Divider()
+                SettingsRow(action.title, help: shortcuts.validationMessages[action] ?? shortcuts.statusText(for: action)) {
+                    HStack(spacing: 8) {
+                        KeyboardShortcuts.Recorder(for: action.name)
+                            .shortcutValidation { shortcuts.validate($0, for: action) }
+                            .keyboardShortcutsConflictPolicy(.init(systemShortcut: .block))
+                        Button("恢复默认") { shortcuts.restoreDefault(for: action) }
+                            .rewindButtonRole(.secondary)
+                        if case .failed = shortcuts.state(for: action) {
+                            Button("重试") { shortcuts.retry(action) }
+                                .rewindButtonRole(.secondary)
                         }
                     }
                 }
             }
         }
-        .formStyle(.grouped)
     }
 
     private var integrations: some View {
-        Form {
-            Section("Antigravity 插件") {
-                Text(coordinator.pluginStatusText).foregroundStyle(.secondary)
-                Button("安装或检查插件") {
-                    onInstallPlugin()
-                    coordinator.refreshPluginStatus()
+        Group {
+            SettingsSection("Antigravity 插件") {
+                SettingsRow("插件状态", help: coordinator.pluginStatusText) {
+                    Button("安装或检查插件") {
+                        onInstallPlugin()
+                        coordinator.refreshPluginStatus()
+                    }
+                    .rewindButtonRole(.secondary)
                 }
             }
-            Section("辅助功能") {
-                Text(isAccessibilityTrusted ? "已授权，可读取前台选区。" : "未授权，捕获其他应用选区前需要开启。")
-                    .foregroundStyle(isAccessibilityTrusted ? Color.secondary : Color.orange)
-                Button("检查或开启辅助功能权限…") {
-                    onRequestAccessibility()
-                    isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
+            SettingsSection("辅助功能") {
+                SettingsRow("选区读取") {
+                    Button("检查或开启权限…") {
+                        onRequestAccessibility()
+                        isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
+                    }
+                    .rewindButtonRole(.secondary)
+                    .accessibilityLabel("检查或开启辅助功能权限")
                 }
+                Text(isAccessibilityTrusted ? "已授权，可读取前台选区。" : "未授权，捕获其他应用选区前需要开启。")
+                    .font(.callout)
+                    .foregroundStyle(isAccessibilityTrusted ? Color.secondary : Color.orange)
             }
         }
-        .formStyle(.grouped)
     }
 
     private func saveConnection() {
@@ -180,6 +252,76 @@ public struct SettingsFormView: View {
         } catch {
             saveFailed = true
             saveMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.headline)
+            content()
+        }
+    }
+}
+
+private struct SettingsRow<Content: View>: View {
+    enum Layout {
+        case preference
+        case field
+    }
+
+    let title: String
+    let layout: Layout
+    let help: String?
+    @ViewBuilder let content: () -> Content
+
+    init(_ title: String, layout: Layout = .preference, help: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.layout = layout
+        self.help = help
+        self.content = content
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            switch layout {
+            case .preference:
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                    helpText
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                content()
+                    .fixedSize(horizontal: true, vertical: false)
+            case .field:
+                Text(title)
+                    .frame(width: 104, alignment: .leading)
+                VStack(alignment: .leading, spacing: 6) {
+                    content()
+                    helpText
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var helpText: some View {
+        if let help {
+            Text(help)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "c0d1b035e19985bf3afc7aa77254ca4ac2b36fdc",
+    "main": "e5e56a9b5f7e124ce8e784273a2064f2bee25957",
     "open_pulls": [],
     "pulls": [
       {
@@ -147,7 +147,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T00:10:28.089861Z",
+  "observed_at": "2026-11-14T00:47:20.415700Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -159,6 +159,78 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "native-ui-unification",
+      "title": "浮窗与设置风格统一",
+      "items": [
+        {
+          "id": "native-ui-shape",
+          "title": "共用原生控件层级与侧栏设置",
+          "status": "done",
+          "summary": "四页设置改为原生侧栏与偏好行、字段行两类布局，去掉嵌套表单边框及重复底栏。HUD 使用共用主次按钮样式、独立搜索与轻量筛选、状态圆点，以及相邻的宿主菜单和开聊按钮。业务状态仍由原协调器、显示偏好和快捷键模型拥有。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindApp/RewindUI.swift",
+              "note": "三个原生按钮角色，不新增主题引擎或依赖。"
+            },
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindApp/SettingsViews.swift",
+              "note": "四页枚举、单一设置尺寸及两类局部设置行。"
+            }
+          ],
+          "next": ""
+        },
+        {
+          "id": "native-ui-checks",
+          "title": "全仓检查与原生界面验收",
+          "status": "done",
+          "summary": "scripts/check 通过。隔离签名包验证四页、连接真实输入及非法地址反馈、切页保留草稿、托管令牌禁用、Dock 开关、录制取消、侧栏方向键、HUD 筛选、勾选、归档、宿主选择、搜索与空状态、搜索中空格、⌘Return 和 Escape。440 点窄窗完整显示；浅色与深色控件均已查看。源码独立审查未发现可证实回归。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "2026-11-14 原生 UI 验收",
+              "note": "使用本地假服务与示例卡片。深色诊断包仅临时指定 AppKit 外观，原始源码已恢复；未替代当前选区捕获权限与真实宿主接聊的其他验收条目。"
+            },
+            {
+              "kind": "file",
+              "ref": "docs/code-quality.md",
+              "note": "按真实控件、配置回读、签名安装分别记录证据。"
+            }
+          ],
+          "next": ""
+        },
+        {
+          "id": "native-ui-installed",
+          "title": "日常安装已更新",
+          "status": "done",
+          "summary": "日常应用已用新签名包替换并启动，原生侧栏与紧凑宿主菜单已从安装包读回。现有开发凭据配置保留，安装后二进制 SHA-256 与交付包一致。测试进程、启动注册与临时偏好已清理。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "2026-11-14 日常安装",
+              "note": "交付二进制 SHA-256 6c4ef8159b32469818da3d2fe2cc897102d9ca60c4c4e048e8641eda9b131a03；日常数据、凭据机制和宿主接聊逻辑未改。"
+            }
+          ],
+          "next": ""
+        },
+        {
+          "id": "native-ui-delivery",
+          "title": "源码交付",
+          "status": "in_progress",
+          "summary": "实现、全仓门禁、原生验收与本机安装已完成，正在提交并开 PR。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift",
+              "note": "当前授权改动位于原生 App 呈现层。"
+            }
+          ],
+          "next": "完成 PR 复核与合并后刷新远端事实。"
+        }
+      ]
+    },
     {
       "id": "release-030",
       "items": [
@@ -617,23 +689,23 @@
           "title": "提交与合并"
         },
         {
-          "id": "selected-app-menu-label",
-          "title": "所选应用开聊菜单文案",
-          "status": "done",
-          "summary": "状态菜单的 ⌘Return 入口改为“在所选应用开聊”，保留已选卡片数提示。全仓 scripts/check 通过；日常应用已升级、重启并从实际展开的状态菜单读回通用入口与两个固定宿主入口，Codex 不再重复。安装签名与构建二进制 SHA-256 一致，现有开发凭据配置保留。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindCore/AppCoordinator.swift",
-              "note": "仅修改菜单快照标题，接聊动作和宿主选择沿用现有逻辑。"
+              "note": "仅修改菜单快照标题，接聊动作和宿主选择沿用现有逻辑。",
+              "ref": "Sources/CodingRewindCore/AppCoordinator.swift"
             },
             {
               "kind": "note",
-              "ref": "2026-11-14 本机菜单读回",
-              "note": "安装二进制 SHA-256 c86e4c722752a31a9367832abf84af74f4a434939c40d3a3c1794245379af6df；状态菜单快照 s00000369。"
+              "note": "安装二进制 SHA-256 c86e4c722752a31a9367832abf84af74f4a434939c40d3a3c1794245379af6df；状态菜单快照 s00000369。",
+              "ref": "2026-11-14 本机菜单读回"
             }
           ],
-          "next": ""
+          "id": "selected-app-menu-label",
+          "next": "",
+          "status": "done",
+          "summary": "状态菜单的 ⌘Return 入口改为“在所选应用开聊”，保留已选卡片数提示。全仓 scripts/check 通过；日常应用已升级、重启并从实际展开的状态菜单读回通用入口与两个固定宿主入口，Codex 不再重复。安装签名与构建二进制 SHA-256 一致，现有开发凭据配置保留。",
+          "title": "所选应用开聊菜单文案"
         }
       ],
       "title": "本轮桌面入口与设置"
