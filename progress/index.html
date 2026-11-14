@@ -5,6 +5,13 @@
 <h1>Coding Rewind 开发进度</h1>
 <p>Observed: 2026-11-14T02:29:35.259926Z</p>
 <p>Main: <code>main: 7cd37a9616f858c64a1299bd7c2f20341cea05f0</code></p>
+<section id="release-030-rc3"><h2>网页扩展 0.3.0 第三候选版</h2>
+<article id="rc3-preparation"><h3>扩展版本与发布包</h3><span class="badge">in_progress</span><p>扩展版本已提升为显示 0.3.0-rc.3、内部 0.3.0.5，准备把已合并的单页设置、选区按钮和保存提示新样式打包。桌面应用继续使用 rc.2 build 4；本次不更改桌面签名、安装或凭据。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/manifest.json">file extensions/web-clipper/manifest.json: 仅提升扩展版本字段，权限与内容脚本配置不变。</a></li>
+</ul><p>Next: 检查完整发布包与精确源码一致，再经非作者独立复验。</p></article>
+<article id="rc3-publication"><h3>公开下载与校验</h3><span class="badge">planned</span><p>尚未公开发布 rc.3。计划提供扩展 ZIP 与 SHA-256 校验文件，不重复上传桌面应用。</p><ul>
+</ul><p>Next: 合并发布准备 PR 后，创建候选发布并匿名下载核对。</p></article>
+</section>
 <section id="extension-bright-preferences"><h2>网页扩展单页偏好与明亮样式</h2>
 <article id="extension-bright-implementation"><h3>单页设置与页面内组件</h3><span class="badge">done</span><p>按用户选定稿把设置集中为 Memos 连接、保存偏好和页脚操作。设置页与页面内保存按钮、保存提示统一使用明亮表面、蓝色强调、细边框和轻阴影，并适配深色。保留原有配置字段、权限流程、队列、原文提取及消息协议。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/options.html">file extensions/web-clipper/options.html: 原生表单包含全部分区和保存按钮，保留既有 ID。</a></li>

@@ -2,11 +2,11 @@
 
 本仓库是 **Coding-Rewind** 的产品规范与统一全栈实现，采用 [MIT License](LICENSE)。
 
-当前候选版为 `v0.3.0-rc.2`。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14，采用 ad-hoc 签名，尚未经过 Developer ID 签名或 Apple 公证。公开包不包含个人 Memos 地址、令牌或 1Password 配置。首次使用需配置自己的 Memos 服务并授予辅助功能权限。
+当前网页扩展候选版为 `v0.3.0-rc.3`，包含与桌面端统一的明亮单页设置、选区保存按钮和保存提示。本次仅更新扩展；桌面应用继续使用 [v0.3.0-rc.2](https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.2)。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14，采用 ad-hoc 签名，尚未经过 Developer ID 签名或 Apple 公证。公开包不包含个人 Memos 地址、令牌或 1Password 配置。首次使用需配置自己的 Memos 服务并授予辅助功能权限。
 
 当前版本仍有 Antigravity 会话归属、Chrome 扩展生命周期、多卡接聊和引用成文的实机覆盖待完成，见 [issue #14](https://github.com/semantic-craft/coding-rewind/issues/14)。当前状态见 [开发进度](progress/index.html)。修复和后续验收遵循 [代码质量标准](docs/code-quality.md)。
 
-本次候选版的应用版本为 0.3.0，build 4；Chrome 扩展显示版本为 0.3.0-rc.2，内部版本为 0.3.0.4。扩展继续通过解压文件加载，未发布到 Chrome 应用商店。升级时用新版文件覆盖原扩展目录，在 `chrome://extensions/` 中点击“重新加载”，再刷新已打开的聊天网页。
+桌面应用版本为 0.3.0，build 4；Chrome 扩展显示版本为 0.3.0-rc.3，内部版本为 0.3.0.5。扩展继续通过解压文件加载，未发布到 Chrome 应用商店。升级时解压新版扩展包，用其中的文件覆盖原扩展目录，在 `chrome://extensions/` 中点击“重新加载”，再刷新已打开的聊天网页。沿用原目录可保留扩展 ID 与已保存的配置；不要移除后重新添加。
 
 ## 这是什么
 
