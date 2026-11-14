@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "12104ea8c4b674c74cd3b93ae9b7b85ea658f492",
+    "main": "7cd37a9616f858c64a1299bd7c2f20341cea05f0",
     "open_pulls": [],
     "pulls": [
       {
@@ -171,6 +171,14 @@
         "merged": true,
         "number": 22,
         "state": "closed"
+      },
+      {
+        "base": "12104ea8c4b674c74cd3b93ae9b7b85ea658f492",
+        "head": "2257ae0013664c6f2abbfda4f279a9ab00288e17",
+        "merge_commit": "7cd37a9616f858c64a1299bd7c2f20341cea05f0",
+        "merged": true,
+        "number": 23,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -194,7 +202,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T02:26:08.509833Z",
+  "observed_at": "2026-11-14T02:29:35.259926Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -208,58 +216,69 @@
   "sections": [
     {
       "id": "extension-bright-preferences",
-      "title": "网页扩展单页偏好与明亮样式",
       "items": [
         {
-          "id": "extension-bright-implementation",
-          "title": "单页设置与页面内组件",
-          "status": "done",
-          "summary": "按用户选定稿把设置集中为 Memos 连接、保存偏好和页脚操作。设置页与页面内保存按钮、保存提示统一使用明亮表面、蓝色强调、细边框和轻阴影，并适配深色。保留原有配置字段、权限流程、队列、原文提取及消息协议。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "extensions/web-clipper/options.html",
-              "note": "原生表单包含全部分区和保存按钮，保留既有 ID。"
+              "note": "原生表单包含全部分区和保存按钮，保留既有 ID。",
+              "ref": "extensions/web-clipper/options.html"
             },
             {
               "kind": "file",
-              "ref": "extensions/web-clipper/content.js",
-              "note": "仅改变 Shadow DOM 样式与静态装饰标记。"
+              "note": "仅改变 Shadow DOM 样式与静态装饰标记。",
+              "ref": "extensions/web-clipper/content.js"
             }
           ],
-          "next": ""
+          "id": "extension-bright-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "按用户选定稿把设置集中为 Memos 连接、保存偏好和页脚操作。设置页与页面内保存按钮、保存提示统一使用明亮表面、蓝色强调、细边框和轻阴影，并适配深色。保留原有配置字段、权限流程、队列、原文提取及消息协议。",
+          "title": "单页设置与页面内组件"
         },
         {
-          "id": "extension-bright-verification",
-          "title": "全仓检查与实际源码浏览器验收",
-          "status": "done",
-          "summary": "scripts/check 通过。独立源码审查未发现必须修复问题。实际源码通过本地 HTTP 在独立浏览器运行，Chrome API 使用隔离模拟边界；检查设置保存、键盘开关、队列变更、权限拒绝、连接失败、四种保存提示和不抢焦点。浅色、深色、320px 布局均已查看，保存按钮实测约 101×28px，窄屏未溢出。此验收不代表日常 Chrome 扩展集成已通过。",
           "evidence": [
             {
               "kind": "note",
-              "ref": "2026-11-14 扩展样式浏览器验收",
-              "note": "本地示例数据；实际 options.js 与 content.js 在隔离 Chrome API 边界运行。未读取个人配置或连接真实 Memos。"
+              "note": "本地示例数据；实际 options.js 与 content.js 在隔离 Chrome API 边界运行。未读取个人配置或连接真实 Memos。",
+              "ref": "2026-11-14 扩展样式浏览器验收"
+            },
+            {
+              "kind": "pull",
+              "ref": 23,
+              "note": "独立工作区执行扩展 34/34、进度检查及源码浏览器 14 项断言，通过后查看 10 张截图；不代表已安装扩展集成。"
             }
           ],
-          "next": ""
+          "id": "extension-bright-verification",
+          "next": "",
+          "status": "done",
+          "summary": "scripts/check 通过。独立源码审查未发现必须修复问题。实际源码通过本地 HTTP 在独立浏览器运行，Chrome API 使用隔离模拟边界；检查设置保存、键盘开关、队列变更、权限拒绝、连接失败、四种保存提示和不抢焦点。浅色、深色、320px 布局均已查看，保存按钮实测约 101×28px，窄屏未溢出。此验收不代表日常 Chrome 扩展集成已通过。",
+          "title": "全仓检查与实际源码浏览器验收"
         },
         {
+          "evidence": [
+            {
+              "kind": "pull",
+              "ref": 23,
+              "note": "独立复验覆盖精确 head 2257ae0013664c6f2abbfda4f279a9ab00288e17；已读回 MERGED，base 为 main。"
+            }
+          ],
           "id": "extension-bright-delivery",
-          "title": "源码交付",
-          "status": "in_progress",
-          "summary": "已完成样式实现与本地验证，等待提交及 PR 独立验收。当前公开 rc.2 附件未重新发布。",
-          "evidence": [],
-          "next": "提交并独立验证 PR 后合并；日常 Chrome 重新加载扩展并刷新聊天页后另验。"
+          "next": "",
+          "status": "done",
+          "summary": "PR #23 经非作者独立工作区复验 PASS+NOTES 后合并至 main，合并结果与被测源码一致。源码已交付；当前公开 rc.2 附件未重新发布，日常 Chrome 重载另验。",
+          "title": "源码交付"
         },
         {
+          "evidence": [],
           "id": "extension-bright-installed",
-          "title": "日常 Chrome 重载",
+          "next": "在 Chrome 扩展管理页重新加载 Coding Rewind，刷新聊天页并核对设置、选区按钮和保存提示。",
           "status": "unverified",
           "summary": "未操作日常 Chrome 的扩展管理页；已安装扩展的重载与页面刷新尚未确认。",
-          "evidence": [],
-          "next": "在 Chrome 扩展管理页重新加载 Coding Rewind，刷新聊天页并核对设置、选区按钮和保存提示。"
+          "title": "日常 Chrome 重载"
         }
-      ]
+      ],
+      "title": "网页扩展单页偏好与明亮样式"
     },
     {
       "id": "release-030-rc2",
@@ -1267,7 +1286,8 @@
       19,
       20,
       21,
-      22
+      22,
+      23
     ]
   }
 }
