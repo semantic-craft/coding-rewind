@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "d630e736dfe872599847cdcd2aa3aa4a83968a7b",
+    "main": "817ecad4b39a0e51949170bab0b73485490a4d22",
     "open_pulls": [],
     "pulls": [
       {
@@ -195,9 +195,24 @@
         "merged": true,
         "number": 25,
         "state": "closed"
+      },
+      {
+        "base": "df8066d4b7f5c7b4ba42575273f06f141b1b804e",
+        "head": "46bdc363eccbc0ee2239a6a465eedcc884a21052",
+        "merge_commit": "817ecad4b39a0e51949170bab0b73485490a4d22",
+        "merged": true,
+        "number": 26,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 445481885,
+        "prerelease": false,
+        "published_at": "2026-11-14T17:53:47Z",
+        "tag": "v0.3.1"
+      },
       {
         "draft": false,
         "id": 444959170,
@@ -225,7 +240,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T06:19:55.144012Z",
+  "observed_at": "2026-11-14T17:55:21.866699Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -238,6 +253,98 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "coherence-release-031",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "线级编解码、URL 规范化、32 位客户端 ID 与括号标题转义集中管理。",
+              "ref": "Sources/CodingRewindCore/MemosWireFormat.swift"
+            },
+            {
+              "kind": "file",
+              "note": "本地存储路径、原子写盘、钥匙串隔离、离线队列与热缓存统一归位。",
+              "ref": "Sources/CodingRewindCore/PlatformStorage.swift"
+            },
+            {
+              "kind": "file",
+              "note": "Antigravity 与原生聊天共享 4 轮对话切片器及 4000 字符总长预算。",
+              "ref": "Sources/CodingRewindCore/ConversationContextSlicer.swift"
+            },
+            {
+              "kind": "file",
+              "note": "macOS 辅助功能属性读取、应用 Bundle ID 与聊天视图判定统一收敛。",
+              "ref": "Sources/CodingRewindApp/AccessibilitySupport.swift"
+            },
+            {
+              "kind": "pull",
+              "note": "跨端胶水代码清理、结构融贯收敛与 v0.3.1 版本元数据更新已合并至 main。",
+              "ref": 26
+            }
+          ],
+          "id": "coherence-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "拆分核心模型与网络层为 DomainModels、MemosWireFormat、PlatformStorage 与纯 HTTP 传输层 MemosClient，补齐 HTTP 409 同 ID 重放回读及离线队列冲刷后的选中卡片 ID 对齐。统一双端对话切片器 ConversationContextSlicer 与多态接聊通道 ConversationHostChannel，延长请求有效期至 45 秒，移除 Codex 唤醒路径上的主线程同步阻塞，补齐 .codex 启动恢复与非阻塞 worker 锁。桌面端收敛 AccessibilitySupport 与 AppCommand 动作路由；网页扩展将 330 行测试 DOM 解析桩移入 test_dom_shim.mjs，生产发布包精简为 12 个运行文件，并对齐三端已同步与待同步文案及 enricher CRLF 解析。",
+          "title": "跨端胶水清理与架构融贯重构"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "精确 head 46bdc363eccbc0ee2239a6a465eedcc884a21052 经三模型对抗审查与非作者独立工作区复验 PASS+NOTES 后合并。",
+              "ref": 26
+            },
+            {
+              "kind": "note",
+              "note": "三模型并发审查检出的 15 项并发交错、线级边界与界面状态缺陷全部修复并落盘回归用例。",
+              "ref": "2026-11-15 三模型审查与独立复验"
+            }
+          ],
+          "id": "coherence-verification",
+          "next": "",
+          "status": "done",
+          "summary": "scripts/check 全部 6 道门禁零警告通过，覆盖静态边界门禁、92 项 Swift 与 KeyboardShortcuts 测试、13 项 Python enricher 测试、39 项网页扩展测试、Shell 语法与图标规格校验。非作者子代理在独立工作区复核精确提交 46bdc363eccbc0ee2239a6a465eedcc884a21052、发布 ZIP 字节一致性、严格签名及 QA=1 隔离包后台启动，结论 PASS+NOTES 并写入 PR #26 评审记录。",
+          "title": "全仓门禁、对抗审查与独立复验"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "v0.3.1 正式发布 macOS 桌面包、12 文件网页扩展包与 SHA256SUMS.txt，匿名拉取核对一致。",
+              "ref": "v0.3.1"
+            },
+            {
+              "kind": "issue",
+              "note": "跨浏览器生命周期与剩余实机覆盖继续单列跟踪。",
+              "ref": 14
+            }
+          ],
+          "id": "release-031-publication",
+          "next": "",
+          "status": "done",
+          "summary": "基于合并提交 817ecad4b39a0e51949170bab0b73485490a4d22 公开发布 v0.3.1（桌面 0.3.1 build 5，网页扩展 0.3.1 / 内部 0.3.1.0）。桌面 ZIP（2253057 字节，SHA-256 338f6b12b39825c678c271ebdbe0f88aefa3e9e8d34fee00bf822b883f2022da）、扩展 ZIP（42249 字节，SHA-256 006b90ed545bf1babc1d4222eca9b5604a0119545d2e9cc3d26a19cbf4701cbd）与校验文件均已匿名下载，字节与 GitHub digest 完全一致，公开包不含任何个人凭据或测试桩文件。",
+          "title": "v0.3.1 公开发布与下载核验"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "标准目录 /Applications/CodingRewind.app 已升级至 0.3.1 build 5（二进制 SHA-256 d33c20f9923e2321e6bd130ec263f3e046f40a634ce526b3b01e3a8a848b54d8），保留 0600 DeveloperCredentials.plist 且同步更新固定目录 sidecar 与桥接脚本。",
+              "ref": "2026-11-15 本机 v0.3.1 原位升级"
+            }
+          ],
+          "id": "release-031-daily-install",
+          "next": "",
+          "status": "done",
+          "summary": "本机标准目录应用已通过 ditto 升级至 0.3.1 build 5，原样保留既有 0600 权限的 DeveloperCredentials.plist 且未读取明文，严格 codesign 校验通过；固定安装目录中的 coding-rewind-sidecar 与 memos-mcp-bridge.sh 同步更新至新版。",
+          "title": "本机标准目录与辅助进程升级"
+        }
+      ],
+      "title": "跨端融贯重构与 0.3.1 小版本发布"
+    },
     {
       "id": "selection-popup-hyper-s",
       "items": [
@@ -1431,7 +1538,8 @@
       22,
       23,
       24,
-      25
+      25,
+      26
     ]
   }
 }
