@@ -8,6 +8,26 @@ enum RewindButtonRole {
     case toolbar
 }
 
+struct RewindLaunchButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13))
+            .foregroundStyle(isEnabled ? Color.white : Color.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isEnabled ? Color(red: 0, green: 104 / 255, blue: 217 / 255) : Color.gray.opacity(0.18))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.black.opacity(isEnabled && configuration.isPressed ? 0.15 : 0))
+                    }
+            }
+    }
+}
+
 private struct RewindButtonModifier: ViewModifier {
     let role: RewindButtonRole
 
