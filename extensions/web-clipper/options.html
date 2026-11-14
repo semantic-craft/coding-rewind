@@ -7,167 +7,241 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f5f5f7;
-      --card: #ffffff;
-      --text: #1d1d1f;
-      --muted: #6e6e73;
-      --border: rgba(0, 0, 0, 0.12);
-      --accent: #0071e3;
-      --accent-hover: #0077ed;
-      --ok: #1d8348;
-      --err: #c0392b;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #202124;
+      --muted: #636970;
+      --border: #dfe3e8;
+      --accent: #0068d9;
+      --accent-hover: #005fc7;
+      --switch-bg: #e9ecf0;
+      --ok: #16713b;
+      --error: #b52632;
     }
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #121316;
-        --card: #1c1e24;
-        --text: #f5f5f7;
-        --muted: #98989d;
-        --border: rgba(255, 255, 255, 0.14);
+        --bg: #191a1d;
+        --surface: #202124;
+        --text: #f2f3f4;
+        --muted: #b1b6bd;
+        --border: #41454c;
         --accent: #0a84ff;
         --accent-hover: #409cff;
-        --ok: #30d158;
-        --err: #ff453a;
+        --switch-bg: #41454c;
+        --ok: #7ddc9d;
+        --error: #ff9199;
       }
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
-      padding: 40px 20px;
+      padding: 56px 24px;
       background: var(--bg);
       color: var(--text);
-      font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
     }
     main {
-      max-width: 540px;
+      max-width: 660px;
       margin: 0 auto;
-      padding: 28px;
-      background: var(--card);
+      overflow: hidden;
+      background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 16px;
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
+      border-radius: 14px;
+      box-shadow: 0 3px 14px rgba(0, 0, 0, 0.04);
     }
-    h1 {
-      margin: 0 0 6px;
-      font-size: 20px;
-      font-weight: 600;
-    }
-    p.subtitle {
-      margin: 0 0 22px;
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .field {
-      margin-bottom: 16px;
-    }
-    label {
-      display: block;
-      margin-bottom: 6px;
-      font-weight: 500;
-      font-size: 13px;
-    }
-    input[type="url"],
-    input[type="password"] {
-      width: 100%;
-      padding: 9px 12px;
-      border: 1px solid var(--border);
-      border-radius: 9px;
-      background: transparent;
-      color: var(--text);
-      font-size: 13.5px;
-      outline: none;
-    }
-    input[type="url"]:focus,
-    input[type="password"]:focus {
-      border-color: var(--accent);
-    }
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin: 18px 0;
-      font-size: 13px;
-    }
-    .checkbox-row label {
-      margin: 0;
-      font-weight: 400;
-    }
-    .actions {
+    .titlebar {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin-top: 20px;
+      padding: 17px 22px;
+      border-bottom: 1px solid var(--border);
+    }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      flex: 0 0 30px;
+      color: var(--accent);
+    }
+    .mark svg { width: 26px; height: 26px; }
+    h1 { margin: 0; font-size: 15px; font-weight: 600; }
+    .subtitle { margin: 0; color: var(--muted); font-size: 12px; }
+    .content { padding: 24px; }
+    section + section {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+    h2 { margin: 0 0 15px; font-size: 13px; font-weight: 600; }
+    .fields { display: flex; flex-direction: column; gap: 18px; }
+    .field {
+      display: grid;
+      grid-template-columns: 90px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+    .field > label { padding-top: 7px; }
+    .input-stack { min-width: 0; }
+    input[type="url"], input[type="password"] {
+      width: 100%;
+      min-height: 34px;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+    }
+    input::placeholder { color: var(--muted); opacity: 1; }
+    .help { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .connection-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 18px;
     }
     button {
-      padding: 8px 16px;
-      border-radius: 9px;
+      min-height: 32px;
+      padding: 5px 13px;
       border: 1px solid var(--border);
-      background: transparent;
+      border-radius: 7px;
+      background: var(--surface);
       color: var(--text);
-      font-size: 13px;
-      font-weight: 500;
+      font: 500 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
       cursor: pointer;
     }
-    button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #ffffff;
+    button:hover { background: var(--bg); }
+    button:active { filter: brightness(0.96); }
+    .primary { border-color: var(--accent); background: var(--accent); color: #ffffff; }
+    .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    input:focus-visible, button:focus-visible {
+      outline: 3px solid var(--accent);
+      outline-offset: 3px;
     }
-    button.primary:hover {
-      background: var(--accent-hover);
-    }
-    .meta {
-      margin-top: 18px;
-      padding-top: 14px;
-      border-top: 1px solid var(--border);
+    .preference {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 12.5px;
+      gap: 18px;
+      min-height: 38px;
+      cursor: pointer;
+    }
+    .switch {
+      appearance: none;
+      position: relative;
+      width: 32px;
+      height: 20px;
+      flex: 0 0 32px;
+      margin: 0;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--switch-bg);
+      cursor: pointer;
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+    }
+    .switch:checked { background: var(--accent); border-color: var(--accent); }
+    .switch:checked::after { left: 14px; }
+    .footer {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      padding: 13px 24px;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
       color: var(--muted);
+      font-size: 12px;
     }
-    #status {
-      margin-top: 14px;
-      min-height: 20px;
-      font-size: 13px;
-    }
+    .footer-state { min-width: 0; flex: 1 1 190px; }
+    .footer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    #status { overflow-wrap: anywhere; }
+    #status:not(:empty) { margin-top: 5px; }
     #status[data-kind="ok"] { color: var(--ok); }
-    #status[data-kind="error"] { color: var(--err); }
+    #status[data-kind="error"] { color: var(--error); }
+    @media (max-width: 540px) {
+      body { padding: 24px 16px; }
+      .titlebar { padding: 15px 18px; }
+      .content { padding: 20px; }
+      .field { grid-template-columns: 1fr; gap: 5px; }
+      .field > label { padding-top: 0; }
+      .footer { padding: 14px 20px; }
+      .footer-actions { margin-left: auto; }
+    }
+    @media (pointer: coarse) {
+      button { min-height: 44px; }
+      .preference { min-height: 48px; }
+      input[type="url"], input[type="password"] { min-height: 44px; font-size: 16px; }
+    }
   </style>
 </head>
 <body>
   <main>
-    <h1>Coding Rewind 网页扩展</h1>
-    <p class="subtitle">在 ChatGPT、Claude、Gemini 中选中文字，通过右键菜单或 Alt+Shift+S 保存到 Memos。</p>
+    <header class="titlebar">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11a9 9 0 1 1 2.7 7.4M3 4v7h7"/><path d="M12 7v5l3 2"/></svg>
+      </span>
+      <div>
+        <h1>Coding Rewind</h1>
+        <p class="subtitle">网页扩展设置</p>
+      </div>
+    </header>
 
     <form id="settings-form">
-      <div class="field">
-        <label for="memos-url">服务地址</label>
-        <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" required>
+      <div class="content">
+        <section aria-labelledby="connection-heading">
+          <h2 id="connection-heading">Memos 连接</h2>
+          <div class="fields">
+            <div class="field">
+              <label for="memos-url">服务地址</label>
+              <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" required>
+            </div>
+            <div class="field">
+              <label for="memos-token">访问令牌</label>
+              <div class="input-stack">
+                <input id="memos-token" type="password" autocomplete="off" placeholder="输入 Memos 访问令牌" aria-describedby="token-help">
+                <p class="help" id="token-help">用于将片段保存到你的 Memos。</p>
+              </div>
+            </div>
+          </div>
+          <div class="connection-actions">
+            <button id="test-btn" type="button">检查连接</button>
+          </div>
+        </section>
+
+        <section aria-labelledby="preferences-heading">
+          <h2 id="preferences-heading">保存偏好</h2>
+          <label class="preference" for="show-pill">
+            <span>选中文本时显示保存按钮</span>
+            <input id="show-pill" class="switch" type="checkbox" role="switch" aria-describedby="selection-help" checked>
+          </label>
+          <p class="help" id="selection-help">在 ChatGPT、Claude、Gemini 中，也可使用右键菜单或 Alt+Shift+S 保存。</p>
+        </section>
       </div>
 
-      <div class="field">
-        <label for="memos-token">访问令牌</label>
-        <input id="memos-token" type="password" autocomplete="off" placeholder="输入 Memos 访问令牌">
-      </div>
-
-      <div class="checkbox-row">
-        <input id="show-pill" type="checkbox" checked>
-        <label for="show-pill">选中文本时显示保存按钮</label>
-      </div>
-
-      <div class="actions">
-        <button id="save-btn" type="submit" class="primary">保存设置</button>
-        <button id="test-btn" type="button">检查连接</button>
-      </div>
+      <footer class="footer">
+        <div class="footer-state">
+          <span id="outbox-count">待同步片段：0 条</span>
+          <div id="status" role="status" aria-live="polite"></div>
+        </div>
+        <div class="footer-actions">
+          <button id="flush-btn" type="button" hidden>立即同步</button>
+          <button id="save-btn" type="submit" class="primary">保存设置</button>
+        </div>
+      </footer>
     </form>
-
-    <div id="status" role="status" aria-live="polite"></div>
-
-    <div class="meta">
-      <span id="outbox-count">待同步片段：0 条</span>
-      <button id="flush-btn" type="button" hidden>立即同步</button>
-    </div>
   </main>
   <script type="module" src="options.js"></script>
 </body>

@@ -35,24 +35,46 @@
 
     const style = document.createElement("style");
     style.textContent = `
+      :host {
+        color-scheme: light dark;
+        --rw-surface: rgba(255, 255, 255, 0.97);
+        --rw-text: #202124;
+        --rw-border: #dfe3e8;
+        --rw-accent: #0068d9;
+        --rw-success: #16713b;
+        --rw-warning: #9b5c06;
+        --rw-error: #b52632;
+      }
+      @media (prefers-color-scheme: dark) {
+        :host {
+          --rw-surface: rgba(32, 33, 36, 0.97);
+          --rw-text: #f2f3f4;
+          --rw-border: #41454c;
+          --rw-accent: #0a84ff;
+          --rw-success: #7ddc9d;
+          --rw-warning: #f4bd6d;
+          --rw-error: #ff9199;
+        }
+      }
       .rw-toast {
+        box-sizing: border-box;
         position: fixed;
         top: 18px;
         right: 18px;
         display: inline-flex;
         align-items: center;
         gap: 8px;
-        max-width: 360px;
-        padding: 9px 14px;
-        border-radius: 999px;
-        background: rgba(20, 22, 26, 0.88);
-        color: #f5f7fa;
-        border: 1px solid rgba(255, 255, 255, 0.14);
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
+        max-width: min(360px, calc(100vw - 36px));
+        padding: 10px 12px;
+        border-radius: 9px;
+        background: var(--rw-surface);
+        color: var(--rw-text);
+        border: 1px solid var(--rw-border);
+        box-shadow: 0 3px 12px rgba(0, 0, 0, 0.09);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
         font: 500 12.5px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
-        letter-spacing: 0.01em;
+        overflow-wrap: anywhere;
         pointer-events: none;
         opacity: 0;
         transform: translateY(-6px) scale(0.98);
@@ -63,39 +85,64 @@
         transform: translateY(0) scale(1);
       }
       .rw-dot {
-        width: 7px;
-        height: 7px;
+        box-sizing: border-box;
+        display: grid;
+        place-items: center;
+        width: 17px;
+        height: 17px;
+        border: 1.5px solid currentColor;
         border-radius: 50%;
         flex: 0 0 auto;
-        background: #34c759;
+        color: var(--rw-success);
+        font: 600 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
       }
+      .rw-dot::before { content: "✓"; }
       .rw-dot[data-variant="queued"] {
-        background: #ff9f0a;
+        position: relative;
+        color: var(--rw-warning);
       }
-      .rw-dot[data-variant="unconfigured"],
+      .rw-dot[data-variant="queued"]::before {
+        content: "";
+        position: absolute;
+        top: 3px;
+        left: 6px;
+        width: 3px;
+        height: 5px;
+        border-left: 1.5px solid currentColor;
+        border-bottom: 1.5px solid currentColor;
+      }
+      .rw-dot[data-variant="unconfigured"] {
+        border-radius: 4px;
+        color: var(--rw-warning);
+      }
+      .rw-dot[data-variant="unconfigured"]::before { content: "!"; }
       .rw-dot[data-variant="error"] {
-        background: #ff453a;
+        color: var(--rw-error);
       }
+      .rw-dot[data-variant="error"]::before { content: "×"; font-size: 14px; }
       .rw-pill {
+        box-sizing: border-box;
         position: fixed;
         display: none;
         align-items: center;
-        gap: 5px;
-        padding: 4px 10px;
-        border-radius: 999px;
-        background: rgba(24, 26, 31, 0.92);
-        color: #f5f7fa;
-        border: 1px solid rgba(255, 255, 255, 0.16);
-        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.24);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
+        gap: 4px;
+        height: 28px;
+        padding: 4px 8px;
+        border-radius: 7px;
+        background: var(--rw-surface);
+        color: var(--rw-accent);
+        border: 1px solid var(--rw-border);
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
         font: 500 11.5px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
         cursor: pointer;
         pointer-events: auto;
         user-select: none;
+        white-space: nowrap;
       }
-      .rw-pill:hover {
-        background: rgba(38, 42, 50, 0.96);
+      .rw-pill:hover { border-color: var(--rw-accent); }
+      .rw-pill-plus { font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; }
+      @media (prefers-reduced-motion: reduce) {
+        .rw-toast { transition: none; }
       }
     `;
 
@@ -106,6 +153,7 @@
 
     toastDotEl = document.createElement("span");
     toastDotEl.className = "rw-dot";
+    toastDotEl.setAttribute("aria-hidden", "true");
     toastTextEl = document.createElement("span");
     toastEl.append(toastDotEl, toastTextEl);
 
@@ -114,6 +162,11 @@
     pillEl.className = "rw-pill";
     pillEl.tabIndex = -1;
     pillEl.textContent = "保存所选文本";
+    const pillPlus = document.createElement("span");
+    pillPlus.className = "rw-pill-plus";
+    pillPlus.setAttribute("aria-hidden", "true");
+    pillPlus.textContent = "+";
+    pillEl.prepend(pillPlus);
     pillEl.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
