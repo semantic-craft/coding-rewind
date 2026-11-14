@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "a78a0595c662a1e97e9a8f6350369f7ace915964",
+    "main": "12104ea8c4b674c74cd3b93ae9b7b85ea658f492",
     "open_pulls": [],
     "pulls": [
       {
@@ -194,7 +194,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T02:05:20.885846Z",
+  "observed_at": "2026-11-14T02:26:08.509833Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -206,6 +206,61 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "extension-bright-preferences",
+      "title": "网页扩展单页偏好与明亮样式",
+      "items": [
+        {
+          "id": "extension-bright-implementation",
+          "title": "单页设置与页面内组件",
+          "status": "done",
+          "summary": "按用户选定稿把设置集中为 Memos 连接、保存偏好和页脚操作。设置页与页面内保存按钮、保存提示统一使用明亮表面、蓝色强调、细边框和轻阴影，并适配深色。保留原有配置字段、权限流程、队列、原文提取及消息协议。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/options.html",
+              "note": "原生表单包含全部分区和保存按钮，保留既有 ID。"
+            },
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/content.js",
+              "note": "仅改变 Shadow DOM 样式与静态装饰标记。"
+            }
+          ],
+          "next": ""
+        },
+        {
+          "id": "extension-bright-verification",
+          "title": "全仓检查与实际源码浏览器验收",
+          "status": "done",
+          "summary": "scripts/check 通过。独立源码审查未发现必须修复问题。实际源码通过本地 HTTP 在独立浏览器运行，Chrome API 使用隔离模拟边界；检查设置保存、键盘开关、队列变更、权限拒绝、连接失败、四种保存提示和不抢焦点。浅色、深色、320px 布局均已查看，保存按钮实测约 101×28px，窄屏未溢出。此验收不代表日常 Chrome 扩展集成已通过。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "2026-11-14 扩展样式浏览器验收",
+              "note": "本地示例数据；实际 options.js 与 content.js 在隔离 Chrome API 边界运行。未读取个人配置或连接真实 Memos。"
+            }
+          ],
+          "next": ""
+        },
+        {
+          "id": "extension-bright-delivery",
+          "title": "源码交付",
+          "status": "in_progress",
+          "summary": "已完成样式实现与本地验证，等待提交及 PR 独立验收。当前公开 rc.2 附件未重新发布。",
+          "evidence": [],
+          "next": "提交并独立验证 PR 后合并；日常 Chrome 重新加载扩展并刷新聊天页后另验。"
+        },
+        {
+          "id": "extension-bright-installed",
+          "title": "日常 Chrome 重载",
+          "status": "unverified",
+          "summary": "未操作日常 Chrome 的扩展管理页；已安装扩展的重载与页面刷新尚未确认。",
+          "evidence": [],
+          "next": "在 Chrome 扩展管理页重新加载 Coding Rewind，刷新聊天页并核对设置、选区按钮和保存提示。"
+        }
+      ]
+    },
     {
       "id": "release-030-rc2",
       "items": [
@@ -280,8 +335,8 @@
             },
             {
               "kind": "release",
-              "ref": "v0.3.0-rc.2",
-              "note": "三个发布附件均已匿名下载并逐字节哈希核对。"
+              "note": "三个发布附件均已匿名下载并逐字节哈希核对。",
+              "ref": "v0.3.0-rc.2"
             }
           ],
           "id": "rc2-publication",
