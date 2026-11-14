@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T00:47:20.415700Z</p>
-<p>Main: <code>main: e5e56a9b5f7e124ce8e784273a2064f2bee25957</code></p>
+<p>Observed: 2026-11-14T00:51:26.067575Z</p>
+<p>Main: <code>main: e07c132cbe840163a2fb88e65367ff1de5e38251</code></p>
 <section id="native-ui-unification"><h2>浮窗与设置风格统一</h2>
 <article id="native-ui-shape"><h3>共用原生控件层级与侧栏设置</h3><span class="badge">done</span><p>四页设置改为原生侧栏与偏好行、字段行两类布局，去掉嵌套表单边框及重复底栏。HUD 使用共用主次按钮样式、独立搜索与轻量筛选、状态圆点，以及相邻的宿主菜单和开聊按钮。业务状态仍由原协调器、显示偏好和快捷键模型拥有。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/RewindUI.swift">file Sources/CodingRewindApp/RewindUI.swift: 三个原生按钮角色，不新增主题引擎或依赖。</a></li>
@@ -17,9 +17,9 @@
 <article id="native-ui-installed"><h3>日常安装已更新</h3><span class="badge">done</span><p>日常应用已用新签名包替换并启动，原生侧栏与紧凑宿主菜单已从安装包读回。现有开发凭据配置保留，安装后二进制 SHA-256 与交付包一致。测试进程、启动注册与临时偏好已清理。</p><ul>
 <li>note 2026-11-14 日常安装: 交付二进制 SHA-256 6c4ef8159b32469818da3d2fe2cc897102d9ca60c4c4e048e8641eda9b131a03；日常数据、凭据机制和宿主接聊逻辑未改。</li>
 </ul><p>Next: </p></article>
-<article id="native-ui-delivery"><h3>源码交付</h3><span class="badge">in_progress</span><p>实现、全仓门禁、原生验收与本机安装已完成，正在提交并开 PR。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/QuickPeekHUDViews.swift">file Sources/CodingRewindApp/QuickPeekHUDViews.swift: 当前授权改动位于原生 App 呈现层。</a></li>
-</ul><p>Next: 完成 PR 复核与合并后刷新远端事实。</p></article>
+<article id="native-ui-delivery"><h3>源码交付</h3><span class="badge">done</span><p>PR #18 已经独立复核并合并至 main。源码、全仓门禁、原生界面验收和日常安装均已完成；当前事实记录随进度页一并更新。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/18">pull 18: 最终源码独立 PASS；合并前全仓检查与本机界面验收通过。</a></li>
+</ul><p>Next: </p></article>
 </section>
 <section id="release-030"><h2>0.3.0 候选发布</h2>
 <article id="release-030-preparation"><h3>候选版已公开发布</h3><span class="badge">done</span><p>v0.3.0-rc.1 已公开发布应用包、网页扩展和 SHA-256 文件。PR #17 已合并；主工作区与非作者独立工作区的全仓检查通过，解压附件的签名、版本、架构、许可证和字节核对通过。公开包不含个人开发凭据配置，使用 ad-hoc 签名，尚未 Apple 公证。</p><ul>
