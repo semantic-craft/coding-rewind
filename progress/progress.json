@@ -192,6 +192,78 @@
   "schema_version": 1,
   "sections": [
     {
+      "id": "release-030-rc2",
+      "title": "0.3.0 第二候选版",
+      "items": [
+        {
+          "id": "rc2-extension-copy",
+          "title": "Chrome 扩展中文同步",
+          "status": "done",
+          "summary": "扩展设置页、右键菜单、保存按钮和提示与桌面统一用语，权限、提取与队列逻辑不变。扩展显示版本 0.3.0-rc.2，内部版本 0.3.0.4；用户已确认在 Chrome 中重载并读到新版。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/manifest.json",
+              "note": "保留现有权限，升级版本与界面名称。"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-14 Chrome 重载确认",
+              "note": "用户确认显示 0.3.0-rc.2；浏览器工具的内部页面策略阻止代理自行进入扩展管理，未绕过限制。"
+            }
+          ],
+          "next": ""
+        },
+        {
+          "id": "rc2-verification",
+          "title": "自动验证与公开包复验",
+          "status": "in_progress",
+          "summary": "scripts/check、34 项扩展测试、隔离 HTTP 设置页的读取连接与同步文案检查通过。应用 build 4 与扩展包已生成，公开应用包不含个人开发凭据配置。正在独立复验。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "scripts/build-app-bundle.sh",
+              "note": "应用版本 0.3.0，build 4。"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-14 rc.2 打包",
+              "note": "已生成两份 ZIP 和 SHA256SUMS.txt，待独立复验及远端读回。"
+            }
+          ],
+          "next": "独立工作区验证精确源码与附件。"
+        },
+        {
+          "id": "rc2-daily-install",
+          "title": "日常应用版本升级",
+          "status": "planned",
+          "summary": "此前功能与中文界面已安装，当前准备升级至 build 4 并保留开发凭据配置。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "2026-11-14 rc.2 日常安装",
+              "note": "build 4 的日常包尚未安装。"
+            }
+          ],
+          "next": "替换安装、启动并读回版本及凭据配置保留情况。"
+        },
+        {
+          "id": "rc2-publication",
+          "title": "发布与公开下载",
+          "status": "in_progress",
+          "summary": "按现有未验范围继续准备候选版 v0.3.0-rc.2。尚未发布。",
+          "evidence": [
+            {
+              "kind": "issue",
+              "ref": 14,
+              "note": "保留剩余实机验收范围，不宣称本轮已经补齐。"
+            }
+          ],
+          "next": "合并已复验源码，发布应用、扩展与校验文件，核对匿名下载和远端 digest。"
+        }
+      ]
+    },
+    {
       "id": "plain-chinese-ui",
       "items": [
         {

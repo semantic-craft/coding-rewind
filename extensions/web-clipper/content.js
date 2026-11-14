@@ -113,7 +113,7 @@
     pillEl.type = "button";
     pillEl.className = "rw-pill";
     pillEl.tabIndex = -1;
-    pillEl.textContent = "存入 Rewind";
+    pillEl.textContent = "保存所选文本";
     pillEl.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();

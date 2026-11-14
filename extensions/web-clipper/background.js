@@ -37,7 +37,7 @@ function setupMenusAndAlarms() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: CONTEXT_MENU_ID,
-      title: "Save to Coding Rewind",
+      title: "保存所选文本到 Coding Rewind",
       contexts: ["selection"]
     });
   });
@@ -84,7 +84,7 @@ async function processClipSave(clip) {
       });
     });
   } catch {
-    return { status: "error", queued: false, toast: "保存失败，未确认存入 Rewind 或离线队列" };
+    return { status: "error", queued: false, toast: "保存失败，未能确认片段已保存到 Memos 或本机" };
   }
 }
 
