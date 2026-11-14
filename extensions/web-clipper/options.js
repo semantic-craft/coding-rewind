@@ -5,7 +5,7 @@ import { normalizeMemosBaseUrl } from "./memos_payload.mjs";
 export async function testMemosConnection({ baseUrl, token, fetchImpl = globalThis.fetch }) {
   const normalized = normalizeMemosBaseUrl(baseUrl);
   if (!normalized) {
-    return { ok: false, message: "请输入合法的 Memos 地址" };
+    return { ok: false, message: "请输入有效的 Memos 服务地址" };
   }
   const headers = {};
   if (token && token.trim()) {
@@ -20,9 +20,9 @@ export async function testMemosConnection({ baseUrl, token, fetchImpl = globalTh
       return { ok: false, status: resp.status, message: `连接失败 (HTTP ${resp.status})` };
     }
     await resp.json();
-    return { ok: true, message: "连接成功 · 已验证读取，尚未验证保存" };
+    return { ok: true, message: "连接成功，可读取片段。尚未验证保存。" };
   } catch (err) {
-    return { ok: false, message: `网络请求失败: ${err?.message || String(err)}` };
+    return { ok: false, message: `网络请求失败：${err?.message || String(err)}` };
   }
 }
 
@@ -55,7 +55,7 @@ function initOptionsPage() {
 
   function renderOutboxCount(outbox) {
     const count = Array.isArray(outbox) ? outbox.length : 0;
-    outboxCountEl.textContent = `离线待同步队列: ${count} 条`;
+    outboxCountEl.textContent = `待同步片段：${count} 条`;
     flushBtn.hidden = count === 0;
   }
 
@@ -80,12 +80,12 @@ function initOptionsPage() {
     event.preventDefault();
     const normalized = normalizeMemosBaseUrl(urlInput.value);
     if (!normalized) {
-      setStatus("请输入合法的 HTTP/HTTPS Memos 地址", "error");
+      setStatus("请输入以 http:// 或 https:// 开头的有效 Memos 服务地址", "error");
       return;
     }
     const granted = await requestOriginPermission(normalized);
     if (!granted) {
-      setStatus("未授予该域名网络访问权限，无法直连 Memos", "error");
+      setStatus("请允许扩展访问此服务地址，才能连接 Memos", "error");
       return;
     }
 
@@ -102,15 +102,15 @@ function initOptionsPage() {
   testBtn?.addEventListener("click", async () => {
     const normalized = normalizeMemosBaseUrl(urlInput.value);
     if (!normalized) {
-      setStatus("请输入合法的 HTTP/HTTPS Memos 地址", "error");
+      setStatus("请输入以 http:// 或 https:// 开头的有效 Memos 服务地址", "error");
       return;
     }
     const granted = await requestOriginPermission(normalized);
     if (!granted) {
-      setStatus("未授予该域名网络访问权限", "error");
+      setStatus("请允许扩展访问此服务地址，才能连接 Memos", "error");
       return;
     }
-    setStatus("正在测试连接…", "info");
+    setStatus("正在检查连接…", "info");
     const res = await testMemosConnection({
       baseUrl: normalized,
       token: tokenInput.value.trim()
@@ -119,12 +119,12 @@ function initOptionsPage() {
   });
 
   flushBtn?.addEventListener("click", async () => {
-    setStatus("正在同步离线队列…", "info");
+    setStatus("正在同步片段…", "info");
     const resp = await chrome.runtime.sendMessage({ type: "REWIND_FLUSH_OUTBOX" });
     if (resp && resp.ok) {
-      setStatus(`已同步 ${resp.flushed} 条，剩余 ${resp.remaining} 条`, resp.remaining === 0 ? "ok" : "info");
+      setStatus(`已同步 ${resp.flushed} 条片段，待同步 ${resp.remaining} 条`, resp.remaining === 0 ? "ok" : "info");
     } else {
-      setStatus("同步失败，请检查网络或配置", "error");
+      setStatus("同步失败，请检查网络、服务地址和访问令牌", "error");
     }
   });
 }

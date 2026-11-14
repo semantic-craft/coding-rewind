@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Coding Rewind Web Clipper 设置</title>
+  <title>Coding Rewind 网页扩展设置</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -137,36 +137,36 @@
 </head>
 <body>
   <main>
-    <h1>Coding Rewind Web Clipper</h1>
-    <p class="subtitle">在 ChatGPT、Claude、Gemini 划选片段，右键或按 Alt+Shift+S 直存 Memos 热池。</p>
+    <h1>Coding Rewind 网页扩展</h1>
+    <p class="subtitle">在 ChatGPT、Claude、Gemini 中选中文字，通过右键菜单或 Alt+Shift+S 保存到 Memos。</p>
 
     <form id="settings-form">
       <div class="field">
-        <label for="memos-url">Memos 地址</label>
-        <input id="memos-url" type="url" autocomplete="url" placeholder="输入自建 Memos HTTPS 地址" required>
+        <label for="memos-url">服务地址</label>
+        <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" required>
       </div>
 
       <div class="field">
-        <label for="memos-token">Access Token</label>
+        <label for="memos-token">访问令牌</label>
         <input id="memos-token" type="password" autocomplete="off" placeholder="输入 Memos 访问令牌">
       </div>
 
       <div class="checkbox-row">
         <input id="show-pill" type="checkbox" checked>
-        <label for="show-pill">划选文本时显示轻量「存入 Rewind」胶囊按钮</label>
+        <label for="show-pill">选中文本时显示保存按钮</label>
       </div>
 
       <div class="actions">
         <button id="save-btn" type="submit" class="primary">保存设置</button>
-        <button id="test-btn" type="button">测试连接</button>
+        <button id="test-btn" type="button">检查连接</button>
       </div>
     </form>
 
     <div id="status" role="status" aria-live="polite"></div>
 
     <div class="meta">
-      <span id="outbox-count">离线待同步队列: 0 条</span>
-      <button id="flush-btn" type="button" hidden>立即同步队列</button>
+      <span id="outbox-count">待同步片段：0 条</span>
+      <button id="flush-btn" type="button" hidden>立即同步</button>
     </div>
   </main>
   <script type="module" src="options.js"></script>

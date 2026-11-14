@@ -895,7 +895,7 @@ test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.j
     }
   });
   assert.equal(conn.ok, true);
-  assert.equal(conn.message, "连接成功 · 已验证读取，尚未验证保存");
+  assert.equal(conn.message, "连接成功，可读取片段。尚未验证保存。");
   assert.equal(seenUrl, "https://memos.internal.test/api/memos?pageSize=1");
   assert.equal(seenAuth, "Bearer tok-abc");
   assert.deepEqual(methods, ["GET"]);
