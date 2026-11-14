@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "dc2d8c70b9c9b10916fd85ef8b0ce31d13211982",
+    "main": "72ad2ae8dc3d965fdd43fa6ffa01afa38d74873c",
     "open_pulls": [],
     "pulls": [
       {
@@ -155,6 +155,14 @@
         "merged": true,
         "number": 20,
         "state": "closed"
+      },
+      {
+        "base": "5340755baf12d28da1d9a2de0ff81982e8d74921",
+        "head": "fc25f54528e94e4c3f68a63e3e86117602edec69",
+        "merge_commit": "72ad2ae8dc3d965fdd43fa6ffa01afa38d74873c",
+        "merged": true,
+        "number": 21,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -171,7 +179,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T01:26:07.139970Z",
+  "observed_at": "2026-11-14T01:42:19.291906Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -185,56 +193,61 @@
   "sections": [
     {
       "id": "plain-chinese-ui",
-      "title": "桌面界面中文用语统一",
       "items": [
         {
-          "id": "plain-chinese-implementation",
-          "title": "常用名称与准确提示",
-          "status": "done",
-          "summary": "设置、浮窗、菜单、快捷键说明、AX 标签及常见提示统一使用片段、最近片段、保存所选文本、AI 已整理、开始对话等常用中文。归档、查询与打开对话按实际状态命名；插件安装不再写成检查。协议、原文、操作流程及提示词模板不变。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/code-quality.md",
-              "note": "维护桌面界面词汇与状态命名约定。"
+              "note": "维护桌面界面词汇与状态命名约定。",
+              "ref": "docs/code-quality.md"
             },
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindCore/AppCoordinator.swift",
-              "note": "按已有状态选择操作名称，不增加持久状态。"
+              "note": "按已有状态选择操作名称，不增加持久状态。",
+              "ref": "Sources/CodingRewindCore/AppCoordinator.swift"
             }
           ],
-          "next": ""
+          "id": "plain-chinese-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "设置、浮窗、菜单、快捷键说明、AX 标签及常见提示统一使用片段、最近片段、保存所选文本、AI 已整理、开始对话等常用中文。归档、查询与打开对话按实际状态命名；插件安装不再写成检查。协议、原文、操作流程及提示词模板不变。",
+          "title": "常用名称与准确提示"
         },
         {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "本地示例片段、隔离服务与签名应用；未修改系统权限或创建真实宿主对话。",
+              "ref": "2026-11-14 桌面中文验收"
+            }
+          ],
           "id": "plain-chinese-verification",
-          "title": "语义审查与原生显示核对",
+          "next": "",
           "status": "done",
           "summary": "全仓门禁与独立审查通过。实际查看四页设置、440 点窄浮窗及操作菜单，主名称、说明和筛选状态完整显示；既有菜单快照断言已更新。恢复发送、归档和打开对话的名称对照现有分支复核。",
-          "evidence": [
-            {
-              "kind": "note",
-              "ref": "2026-11-14 桌面中文验收",
-              "note": "本地示例片段、隔离服务与签名应用；未修改系统权限或创建真实宿主对话。"
-            }
-          ],
-          "next": ""
+          "title": "语义审查与原生显示核对"
         },
         {
-          "id": "plain-chinese-delivery",
-          "title": "安装与源码交付",
-          "status": "in_progress",
-          "summary": "日常应用已替换并重新启动，实际浮窗与设置读回保存所选文本、插件与权限等新名称。安装签名、既有开发凭据配置及二进制 SHA-256 与交付包一致，隔离 QA 进程与启动注册已清理。源码待 PR 合并。",
           "evidence": [
             {
               "kind": "note",
-              "ref": "2026-11-14 中文界面交付",
-              "note": "安装二进制 SHA-256 06ec067cbb246eff06eee69c15a83791486545cd9c5a34dce9a7b9d1c67acf01；实际 HUD 与设置已读回新名称。"
+              "note": "安装二进制 SHA-256 06ec067cbb246eff06eee69c15a83791486545cd9c5a34dce9a7b9d1c67acf01；实际 HUD 与设置已读回新名称。",
+              "ref": "2026-11-14 中文界面交付"
+            },
+            {
+              "kind": "pull",
+              "note": "中文文案、现有快照断言、术语规范、原生显示验收与日常安装已完成。",
+              "ref": 21
             }
           ],
-          "next": "完成 QA 临时包清理、PR 合并及远端事实更新。"
+          "id": "plain-chinese-delivery",
+          "next": "",
+          "status": "done",
+          "summary": "日常应用已替换并重新启动，实际浮窗与设置读回保存所选文本、插件与权限等新名称。安装签名、既有开发凭据配置及二进制 SHA-256 与交付包一致；隔离 QA 进程、注册、偏好、包与数据已清理。PR #21 经独立审查后合并至 main。",
+          "title": "日常安装与源码交付完成"
         }
-      ]
+      ],
+      "title": "桌面界面中文用语统一"
     },
     {
       "id": "hud-launch-state",
@@ -1095,7 +1108,8 @@
       17,
       18,
       19,
-      20
+      20,
+      21
     ]
   }
 }
