@@ -537,7 +537,7 @@ public final class SettingsWindowController: NSWindowController {
         self.onRequestAccessibility = onRequestAccessibility
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 520),
+            contentRect: NSRect(origin: .zero, size: SettingsLayout.contentSize),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -558,7 +558,7 @@ public final class SettingsWindowController: NSWindowController {
 
         self.hostingView.rootView = makeRootView()
         window.contentView = self.hostingView
-        window.setContentSize(NSSize(width: 580, height: 520))
+        window.setContentSize(SettingsLayout.contentSize)
     }
 
     @available(*, unavailable)
