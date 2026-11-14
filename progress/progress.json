@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "b2ca0d6a33a770057e3de8b6c422abc4dedb0002",
+    "main": "dc2d8c70b9c9b10916fd85ef8b0ce31d13211982",
     "open_pulls": [],
     "pulls": [
       {
@@ -147,6 +147,14 @@
         "merged": true,
         "number": 19,
         "state": "closed"
+      },
+      {
+        "base": "29821c54e99ab91d7f2f891afb25f10ecfb86cba",
+        "head": "f1680b80a5bf9c34dd6d604465e1a611d95d7ccc",
+        "merge_commit": "dc2d8c70b9c9b10916fd85ef8b0ce31d13211982",
+        "merged": true,
+        "number": 20,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -163,7 +171,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T01:11:27.186549Z",
+  "observed_at": "2026-11-14T01:26:07.139970Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -177,56 +185,61 @@
   "sections": [
     {
       "id": "hud-launch-state",
-      "title": "开聊按钮状态",
       "items": [
         {
-          "id": "hud-launch-implementation",
-          "title": "选中后启用并保持蓝色",
-          "status": "done",
-          "summary": "未选卡片或正在接聊时，浮窗开聊按钮灰色禁用；勾选后蓝底白字，非激活窗口仍显示蓝色。样式从 isEnabled 派生，沿用原生 Button、快捷键、AX 标识及已有接聊流程。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindApp/RewindUI.swift",
-              "note": "HUD 专用样式，不改变设置页主按钮。"
+              "note": "HUD 专用样式，不改变设置页主按钮。",
+              "ref": "Sources/CodingRewindApp/RewindUI.swift"
             },
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift",
-              "note": "空选集和接聊中禁用。"
+              "note": "空选集和接聊中禁用。",
+              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift"
             }
           ],
-          "next": ""
+          "id": "hud-launch-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "未选卡片或正在接聊时，浮窗开聊按钮灰色禁用；勾选后蓝底白字，非激活窗口仍显示蓝色。样式从 isEnabled 派生，沿用原生 Button、快捷键、AX 标识及已有接聊流程。",
+          "title": "选中后启用并保持蓝色"
         },
         {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "截图、AX enabled 与外部前台进程读回证明非激活状态；没有创建真实宿主会话。",
+              "ref": "2026-11-14 开聊按钮验收"
+            }
+          ],
           "id": "hud-launch-verification",
-          "title": "自动检查与真实浮窗验证",
+          "next": "",
           "status": "done",
           "summary": "scripts/check 与签名打包通过。隔离原生应用先复现空选可点击、已选未激活仍灰色；修复后验证零选灰色禁用、已选蓝色启用、取消选择恢复禁用及禁用按钮点击无变化。启用按钮实际触发原有隔离插件检查。",
-          "evidence": [
-            {
-              "kind": "note",
-              "ref": "2026-11-14 开聊按钮验收",
-              "note": "截图、AX enabled 与外部前台进程读回证明非激活状态；没有创建真实宿主会话。"
-            }
-          ],
-          "next": ""
+          "title": "自动检查与真实浮窗验证"
         },
         {
-          "id": "hud-launch-delivery",
-          "title": "安装与源码交付",
-          "status": "in_progress",
-          "summary": "正常日常包已替换并启动，实际浮窗读回零选中时开聊按钮 disabled。安装签名、现有开发配置与二进制 SHA-256 均已核对；隔离 QA 进程、注册、偏好与包已清理。源码待 PR 合并。",
           "evidence": [
             {
               "kind": "note",
-              "ref": "2026-11-14 开聊按钮交付",
-              "note": "安装二进制 SHA-256 5a9902904e30fb9a3cb31c9847f8217c3d0f13c45f74e57b57ff8eb5931c9320；实际 hud.launch enabled=false。"
+              "note": "安装二进制 SHA-256 5a9902904e30fb9a3cb31c9847f8217c3d0f13c45f74e57b57ff8eb5931c9320；实际 hud.launch enabled=false。",
+              "ref": "2026-11-14 开聊按钮交付"
+            },
+            {
+              "kind": "pull",
+              "note": "真实浮窗修复、独立审查、全仓门禁与本机安装已完成。",
+              "ref": 20
             }
           ],
-          "next": "完成 PR 合并并更新远端事实。"
+          "id": "hud-launch-delivery",
+          "next": "",
+          "status": "done",
+          "summary": "正常日常包已替换并启动，实际浮窗读回零选中时开聊按钮 disabled。安装签名、现有开发配置与二进制 SHA-256 均已核对；隔离 QA 进程、注册、偏好与包已清理。PR #20 经独立审查后合并至 main。",
+          "title": "日常安装与源码交付完成"
         }
-      ]
+      ],
+      "title": "开聊按钮状态"
     },
     {
       "id": "bright-native-colors",
@@ -1028,7 +1041,8 @@
       15,
       17,
       18,
-      19
+      19,
+      20
     ]
   }
 }

@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T01:11:27.186549Z</p>
-<p>Main: <code>main: b2ca0d6a33a770057e3de8b6c422abc4dedb0002</code></p>
+<p>Observed: 2026-11-14T01:26:07.139970Z</p>
+<p>Main: <code>main: dc2d8c70b9c9b10916fd85ef8b0ce31d13211982</code></p>
 <section id="hud-launch-state"><h2>开聊按钮状态</h2>
 <article id="hud-launch-implementation"><h3>选中后启用并保持蓝色</h3><span class="badge">done</span><p>未选卡片或正在接聊时，浮窗开聊按钮灰色禁用；勾选后蓝底白字，非激活窗口仍显示蓝色。样式从 isEnabled 派生，沿用原生 Button、快捷键、AX 标识及已有接聊流程。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/RewindUI.swift">file Sources/CodingRewindApp/RewindUI.swift: HUD 专用样式，不改变设置页主按钮。</a></li>
@@ -13,9 +13,10 @@
 <article id="hud-launch-verification"><h3>自动检查与真实浮窗验证</h3><span class="badge">done</span><p>scripts/check 与签名打包通过。隔离原生应用先复现空选可点击、已选未激活仍灰色；修复后验证零选灰色禁用、已选蓝色启用、取消选择恢复禁用及禁用按钮点击无变化。启用按钮实际触发原有隔离插件检查。</p><ul>
 <li>note 2026-11-14 开聊按钮验收: 截图、AX enabled 与外部前台进程读回证明非激活状态；没有创建真实宿主会话。</li>
 </ul><p>Next: </p></article>
-<article id="hud-launch-delivery"><h3>安装与源码交付</h3><span class="badge">in_progress</span><p>正常日常包已替换并启动，实际浮窗读回零选中时开聊按钮 disabled。安装签名、现有开发配置与二进制 SHA-256 均已核对；隔离 QA 进程、注册、偏好与包已清理。源码待 PR 合并。</p><ul>
+<article id="hud-launch-delivery"><h3>日常安装与源码交付完成</h3><span class="badge">done</span><p>正常日常包已替换并启动，实际浮窗读回零选中时开聊按钮 disabled。安装签名、现有开发配置与二进制 SHA-256 均已核对；隔离 QA 进程、注册、偏好与包已清理。PR #20 经独立审查后合并至 main。</p><ul>
 <li>note 2026-11-14 开聊按钮交付: 安装二进制 SHA-256 5a9902904e30fb9a3cb31c9847f8217c3d0f13c45f74e57b57ff8eb5931c9320；实际 hud.launch enabled=false。</li>
-</ul><p>Next: 完成 PR 合并并更新远端事实。</p></article>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/20">pull 20: 真实浮窗修复、独立审查、全仓门禁与本机安装已完成。</a></li>
+</ul><p>Next: </p></article>
 </section>
 <section id="bright-native-colors"><h2>明亮原生配色</h2>
 <article id="bright-native-implementation"><h3>内容底色与蓝色强调</h3><span class="badge">done</span><p>设置详情与未选热卡改用自适应内容底色；主按钮、时钟与空状态图标使用蓝色，选中卡片采用更轻的强调色。保留既有布局、原生材质及系统明暗适配。</p><ul>
