@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "72ad2ae8dc3d965fdd43fa6ffa01afa38d74873c",
+    "main": "a78a0595c662a1e97e9a8f6350369f7ace915964",
     "open_pulls": [],
     "pulls": [
       {
@@ -163,9 +163,24 @@
         "merged": true,
         "number": 21,
         "state": "closed"
+      },
+      {
+        "base": "c93d80d5db7f4763d4f877205828e8a24ea33e9c",
+        "head": "ba277d8178058b737f50160dd2429f8eca08057a",
+        "merge_commit": "a78a0595c662a1e97e9a8f6350369f7ace915964",
+        "merged": true,
+        "number": 22,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 444939503,
+        "prerelease": true,
+        "published_at": "2026-11-14T02:01:27Z",
+        "tag": "v0.3.0-rc.2"
+      },
       {
         "draft": false,
         "id": 444857926,
@@ -179,7 +194,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T01:42:19.291906Z",
+  "observed_at": "2026-11-14T02:05:20.885846Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -193,75 +208,90 @@
   "sections": [
     {
       "id": "release-030-rc2",
-      "title": "0.3.0 第二候选版",
       "items": [
         {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "保留现有权限，升级版本与界面名称。",
+              "ref": "extensions/web-clipper/manifest.json"
+            },
+            {
+              "kind": "note",
+              "note": "用户确认显示 0.3.0-rc.2；浏览器工具的内部页面策略阻止代理自行进入扩展管理，未绕过限制。",
+              "ref": "2026-11-14 Chrome 重载确认"
+            }
+          ],
           "id": "rc2-extension-copy",
-          "title": "Chrome 扩展中文同步",
+          "next": "",
           "status": "done",
           "summary": "扩展设置页、右键菜单、保存按钮和提示与桌面统一用语，权限、提取与队列逻辑不变。扩展显示版本 0.3.0-rc.2，内部版本 0.3.0.4；用户已确认在 Chrome 中重载并读到新版。",
+          "title": "Chrome 扩展中文同步"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "extensions/web-clipper/manifest.json",
-              "note": "保留现有权限，升级版本与界面名称。"
+              "note": "应用版本 0.3.0，build 4。",
+              "ref": "scripts/build-app-bundle.sh"
             },
             {
               "kind": "note",
-              "ref": "2026-11-14 Chrome 重载确认",
-              "note": "用户确认显示 0.3.0-rc.2；浏览器工具的内部页面策略阻止代理自行进入扩展管理，未绕过限制。"
+              "note": "已生成两份 ZIP 和 SHA256SUMS.txt，待独立复验及远端读回。",
+              "ref": "2026-11-14 rc.2 打包"
+            },
+            {
+              "kind": "pull",
+              "note": "独立复验精确head ba277d8178058b737f50160dd2429f8eca08057a，已发布并读回验收评论。",
+              "ref": 22
             }
           ],
-          "next": ""
-        },
-        {
           "id": "rc2-verification",
-          "title": "自动验证与公开包复验",
-          "status": "in_progress",
-          "summary": "scripts/check、34 项扩展测试、隔离 HTTP 设置页的读取连接与同步文案检查通过。应用 build 4 与扩展包已生成，公开应用包不含个人开发凭据配置。正在独立复验。",
-          "evidence": [
-            {
-              "kind": "file",
-              "ref": "scripts/build-app-bundle.sh",
-              "note": "应用版本 0.3.0，build 4。"
-            },
-            {
-              "kind": "note",
-              "ref": "2026-11-14 rc.2 打包",
-              "note": "已生成两份 ZIP 和 SHA256SUMS.txt，待独立复验及远端读回。"
-            }
-          ],
-          "next": "独立工作区验证精确源码与附件。"
+          "next": "",
+          "status": "done",
+          "summary": "主工作区与独立 detached worktree 全仓门禁通过，扩展34项检查通过。实际发布ZIP的哈希、许可证、版本、arm64架构、签名和隐私排除通过；独立代理从解压应用隔离启动，核对浮窗选择状态与中文设置，结论PASS+NOTES。Chrome运行和生命周期仍按原范围单列。",
+          "title": "自动验证与公开包复验"
         },
         {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "安装与凭据配置保留通过，首次认证未完成后，经用户解锁重启读回成功。",
+              "ref": "2026-11-14 rc.2 日常安装"
+            }
+          ],
           "id": "rc2-daily-install",
-          "title": "日常应用版本升级",
-          "status": "planned",
-          "summary": "此前功能与中文界面已安装，当前准备升级至 build 4 并保留开发凭据配置。",
-          "evidence": [
-            {
-              "kind": "note",
-              "ref": "2026-11-14 rc.2 日常安装",
-              "note": "build 4 的日常包尚未安装。"
-            }
-          ],
-          "next": "替换安装、启动并读回版本及凭据配置保留情况。"
+          "next": "",
+          "status": "done",
+          "summary": "日常应用已升级至0.3.0 build4，签名、原有开发凭据配置及二进制一致。用户解锁1Password后重启成功，实际浮窗、设置名称及由启动配置提供且禁用的令牌字段均已读回。",
+          "title": "日常应用版本升级"
         },
         {
-          "id": "rc2-publication",
-          "title": "发布与公开下载",
-          "status": "in_progress",
-          "summary": "按现有未验范围继续准备候选版 v0.3.0-rc.2。尚未发布。",
           "evidence": [
             {
               "kind": "issue",
-              "ref": 14,
-              "note": "保留剩余实机验收范围，不宣称本轮已经补齐。"
+              "note": "保留剩余实机验收范围，不宣称本轮已经补齐。",
+              "ref": 14
+            },
+            {
+              "kind": "pull",
+              "note": "精确head独立PASS+NOTES后合并。",
+              "ref": 22
+            },
+            {
+              "kind": "release",
+              "ref": "v0.3.0-rc.2",
+              "note": "三个发布附件均已匿名下载并逐字节哈希核对。"
             }
           ],
-          "next": "合并已复验源码，发布应用、扩展与校验文件，核对匿名下载和远端 digest。"
+          "id": "rc2-publication",
+          "next": "",
+          "status": "done",
+          "summary": "PR #22 已独立复验并合并；v0.3.0-rc.2 已公开发布应用、Chrome扩展与SHA256SUMS.txt。三个附件均匿名下载，大小和SHA-256与本地及远端digest一致。",
+          "title": "发布与公开下载"
         }
-      ]
+      ],
+      "title": "0.3.0 第二候选版"
     },
     {
       "id": "plain-chinese-ui",
@@ -1181,7 +1211,8 @@
       18,
       19,
       20,
-      21
+      21,
+      22
     ]
   }
 }

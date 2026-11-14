@@ -3,23 +3,26 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T01:42:19.291906Z</p>
-<p>Main: <code>main: 72ad2ae8dc3d965fdd43fa6ffa01afa38d74873c</code></p>
+<p>Observed: 2026-11-14T02:05:20.885846Z</p>
+<p>Main: <code>main: a78a0595c662a1e97e9a8f6350369f7ace915964</code></p>
 <section id="release-030-rc2"><h2>0.3.0 第二候选版</h2>
 <article id="rc2-extension-copy"><h3>Chrome 扩展中文同步</h3><span class="badge">done</span><p>扩展设置页、右键菜单、保存按钮和提示与桌面统一用语，权限、提取与队列逻辑不变。扩展显示版本 0.3.0-rc.2，内部版本 0.3.0.4；用户已确认在 Chrome 中重载并读到新版。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/manifest.json">file extensions/web-clipper/manifest.json: 保留现有权限，升级版本与界面名称。</a></li>
 <li>note 2026-11-14 Chrome 重载确认: 用户确认显示 0.3.0-rc.2；浏览器工具的内部页面策略阻止代理自行进入扩展管理，未绕过限制。</li>
 </ul><p>Next: </p></article>
-<article id="rc2-verification"><h3>自动验证与公开包复验</h3><span class="badge">in_progress</span><p>scripts/check、34 项扩展测试、隔离 HTTP 设置页的读取连接与同步文案检查通过。应用 build 4 与扩展包已生成，公开应用包不含个人开发凭据配置。正在独立复验。</p><ul>
+<article id="rc2-verification"><h3>自动验证与公开包复验</h3><span class="badge">done</span><p>主工作区与独立 detached worktree 全仓门禁通过，扩展34项检查通过。实际发布ZIP的哈希、许可证、版本、arm64架构、签名和隐私排除通过；独立代理从解压应用隔离启动，核对浮窗选择状态与中文设置，结论PASS+NOTES。Chrome运行和生命周期仍按原范围单列。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/build-app-bundle.sh">file scripts/build-app-bundle.sh: 应用版本 0.3.0，build 4。</a></li>
 <li>note 2026-11-14 rc.2 打包: 已生成两份 ZIP 和 SHA256SUMS.txt，待独立复验及远端读回。</li>
-</ul><p>Next: 独立工作区验证精确源码与附件。</p></article>
-<article id="rc2-daily-install"><h3>日常应用版本升级</h3><span class="badge">planned</span><p>此前功能与中文界面已安装，当前准备升级至 build 4 并保留开发凭据配置。</p><ul>
-<li>note 2026-11-14 rc.2 日常安装: build 4 的日常包尚未安装。</li>
-</ul><p>Next: 替换安装、启动并读回版本及凭据配置保留情况。</p></article>
-<article id="rc2-publication"><h3>发布与公开下载</h3><span class="badge">in_progress</span><p>按现有未验范围继续准备候选版 v0.3.0-rc.2。尚未发布。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/22">pull 22: 独立复验精确head ba277d8178058b737f50160dd2429f8eca08057a，已发布并读回验收评论。</a></li>
+</ul><p>Next: </p></article>
+<article id="rc2-daily-install"><h3>日常应用版本升级</h3><span class="badge">done</span><p>日常应用已升级至0.3.0 build4，签名、原有开发凭据配置及二进制一致。用户解锁1Password后重启成功，实际浮窗、设置名称及由启动配置提供且禁用的令牌字段均已读回。</p><ul>
+<li>note 2026-11-14 rc.2 日常安装: 安装与凭据配置保留通过，首次认证未完成后，经用户解锁重启读回成功。</li>
+</ul><p>Next: </p></article>
+<article id="rc2-publication"><h3>发布与公开下载</h3><span class="badge">done</span><p>PR #22 已独立复验并合并；v0.3.0-rc.2 已公开发布应用、Chrome扩展与SHA256SUMS.txt。三个附件均匿名下载，大小和SHA-256与本地及远端digest一致。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 保留剩余实机验收范围，不宣称本轮已经补齐。</a></li>
-</ul><p>Next: 合并已复验源码，发布应用、扩展与校验文件，核对匿名下载和远端 digest。</p></article>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/22">pull 22: 精确head独立PASS+NOTES后合并。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.2">release v0.3.0-rc.2: 三个发布附件均已匿名下载并逐字节哈希核对。</a></li>
+</ul><p>Next: </p></article>
 </section>
 <section id="plain-chinese-ui"><h2>桌面界面中文用语统一</h2>
 <article id="plain-chinese-implementation"><h3>常用名称与准确提示</h3><span class="badge">done</span><p>设置、浮窗、菜单、快捷键说明、AX 标签及常见提示统一使用片段、最近片段、保存所选文本、AI 已整理、开始对话等常用中文。归档、查询与打开对话按实际状态命名；插件安装不再写成检查。协议、原文、操作流程及提示词模板不变。</p><ul>
@@ -222,5 +225,6 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.2">v0.3.0-rc.2</a> 2026-11-14T02:01:27Z (draft: False, prerelease: True)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.1">v0.3.0-rc.1</a> 2026-11-13T23:53:51Z (draft: False, prerelease: True)</li>
 </ul></section></html>
