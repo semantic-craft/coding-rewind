@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "7cd37a9616f858c64a1299bd7c2f20341cea05f0",
+    "main": "73c6413e388eff867e70d35eefa463cca6515a72",
     "open_pulls": [],
     "pulls": [
       {
@@ -179,9 +179,24 @@
         "merged": true,
         "number": 23,
         "state": "closed"
+      },
+      {
+        "base": "126fed8802d7cfd1b2c0a62a13c2a6e2194bc981",
+        "head": "b047f59e0fdcc90989530b8bbc59a37ef09b4910",
+        "merge_commit": "73c6413e388eff867e70d35eefa463cca6515a72",
+        "merged": true,
+        "number": 24,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 444959170,
+        "prerelease": true,
+        "published_at": "2026-11-14T02:37:43Z",
+        "tag": "v0.3.0-rc.3"
+      },
       {
         "draft": false,
         "id": 444939503,
@@ -202,7 +217,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T02:29:35.259926Z",
+  "observed_at": "2026-11-14T02:38:12.653401Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -220,23 +235,29 @@
         {
           "evidence": [
             {
-              "kind": "file",
-              "note": "仅提升扩展版本字段，权限与内容脚本配置不变。",
-              "ref": "extensions/web-clipper/manifest.json"
+              "kind": "pull",
+              "note": "精确 head b047f59e0fdcc90989530b8bbc59a37ef09b4910 已独立复验，已读回合并至 main。",
+              "ref": 24
             }
           ],
           "id": "rc3-preparation",
-          "next": "检查完整发布包与精确源码一致，再经非作者独立复验。",
-          "status": "in_progress",
-          "summary": "扩展版本已提升为显示 0.3.0-rc.3、内部 0.3.0.5，准备把已合并的单页设置、选区按钮和保存提示新样式打包。桌面应用继续使用 rc.2 build 4；本次不更改桌面签名、安装或凭据。",
+          "next": "",
+          "status": "done",
+          "summary": "扩展候选版显示 0.3.0-rc.3、内部 0.3.0.5。实际 ZIP 的12个文件及 MIT 许可证逐字节对应发布源码，权限与运行逻辑不变。PR #24 经非作者独立包验收 PASS+NOTES 后合并。扩展34/34、实际包界面14项断言和10张截图通过；全仓首跑在未改动的 Vendor 时序测试失败一次，单例及全仓复跑均通过，原始失败已记录。桌面应用继续 rc.2 build4，本次未改安装、签名或凭据。",
           "title": "扩展版本与发布包"
         },
         {
-          "evidence": [],
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "公开候选发布；ZIP 与校验文件已匿名下载核对。",
+              "ref": "v0.3.0-rc.3"
+            }
+          ],
           "id": "rc3-publication",
-          "next": "合并发布准备 PR 后，创建候选发布并匿名下载核对。",
-          "status": "planned",
-          "summary": "尚未公开发布 rc.3。计划提供扩展 ZIP 与 SHA-256 校验文件，不重复上传桌面应用。",
+          "next": "",
+          "status": "done",
+          "summary": "v0.3.0-rc.3 已公开发布扩展 ZIP 与 SHA256SUMS.txt。两个附件均已匿名下载，字节、大小与 GitHub digest 和本地独立验收文件一致；公开 ZIP 解包的12个文件与标签 73c6413e388eff867e70d35eefa463cca6515a72 的源码一致。扩展 ZIP 为42956字节，SHA-256 ad07bf7b32f4e164e15d74a8bf9835fed2e2b33b98ffeb404ddbfe82a1709e3d。未重复上传桌面包，升级说明链接 rc.2 桌面版并要求沿用原扩展目录。",
           "title": "公开下载与校验"
         }
       ],
@@ -289,12 +310,17 @@
               "kind": "pull",
               "note": "独立复验覆盖精确 head 2257ae0013664c6f2abbfda4f279a9ab00288e17；已读回 MERGED，base 为 main。",
               "ref": 23
+            },
+            {
+              "kind": "release",
+              "note": "新样式已进入公开 ZIP，匿名下载已核对。",
+              "ref": "v0.3.0-rc.3"
             }
           ],
           "id": "extension-bright-delivery",
           "next": "",
           "status": "done",
-          "summary": "PR #23 经非作者独立工作区复验 PASS+NOTES 后合并至 main，合并结果与被测源码一致。源码已交付；当前公开 rc.2 附件未重新发布，日常 Chrome 重载另验。",
+          "summary": "PR #23 经非作者独立工作区复验 PASS+NOTES 后合并至 main，合并结果与被测源码一致。新样式已随扩展 v0.3.0-rc.3 公开发布；桌面应用继续使用 rc.2 build4，日常 Chrome 重载另验。",
           "title": "源码交付"
         },
         {
@@ -1315,7 +1341,8 @@
       20,
       21,
       22,
-      23
+      23,
+      24
     ]
   }
 }

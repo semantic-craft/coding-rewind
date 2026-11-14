@@ -3,14 +3,15 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T02:29:35.259926Z</p>
-<p>Main: <code>main: 7cd37a9616f858c64a1299bd7c2f20341cea05f0</code></p>
+<p>Observed: 2026-11-14T02:38:12.653401Z</p>
+<p>Main: <code>main: 73c6413e388eff867e70d35eefa463cca6515a72</code></p>
 <section id="release-030-rc3"><h2>网页扩展 0.3.0 第三候选版</h2>
-<article id="rc3-preparation"><h3>扩展版本与发布包</h3><span class="badge">in_progress</span><p>扩展版本已提升为显示 0.3.0-rc.3、内部 0.3.0.5，准备把已合并的单页设置、选区按钮和保存提示新样式打包。桌面应用继续使用 rc.2 build 4；本次不更改桌面签名、安装或凭据。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/manifest.json">file extensions/web-clipper/manifest.json: 仅提升扩展版本字段，权限与内容脚本配置不变。</a></li>
-</ul><p>Next: 检查完整发布包与精确源码一致，再经非作者独立复验。</p></article>
-<article id="rc3-publication"><h3>公开下载与校验</h3><span class="badge">planned</span><p>尚未公开发布 rc.3。计划提供扩展 ZIP 与 SHA-256 校验文件，不重复上传桌面应用。</p><ul>
-</ul><p>Next: 合并发布准备 PR 后，创建候选发布并匿名下载核对。</p></article>
+<article id="rc3-preparation"><h3>扩展版本与发布包</h3><span class="badge">done</span><p>扩展候选版显示 0.3.0-rc.3、内部 0.3.0.5。实际 ZIP 的12个文件及 MIT 许可证逐字节对应发布源码，权限与运行逻辑不变。PR #24 经非作者独立包验收 PASS+NOTES 后合并。扩展34/34、实际包界面14项断言和10张截图通过；全仓首跑在未改动的 Vendor 时序测试失败一次，单例及全仓复跑均通过，原始失败已记录。桌面应用继续 rc.2 build4，本次未改安装、签名或凭据。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/24">pull 24: 精确 head b047f59e0fdcc90989530b8bbc59a37ef09b4910 已独立复验，已读回合并至 main。</a></li>
+</ul><p>Next: </p></article>
+<article id="rc3-publication"><h3>公开下载与校验</h3><span class="badge">done</span><p>v0.3.0-rc.3 已公开发布扩展 ZIP 与 SHA256SUMS.txt。两个附件均已匿名下载，字节、大小与 GitHub digest 和本地独立验收文件一致；公开 ZIP 解包的12个文件与标签 73c6413e388eff867e70d35eefa463cca6515a72 的源码一致。扩展 ZIP 为42956字节，SHA-256 ad07bf7b32f4e164e15d74a8bf9835fed2e2b33b98ffeb404ddbfe82a1709e3d。未重复上传桌面包，升级说明链接 rc.2 桌面版并要求沿用原扩展目录。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.3">release v0.3.0-rc.3: 公开候选发布；ZIP 与校验文件已匿名下载核对。</a></li>
+</ul><p>Next: </p></article>
 </section>
 <section id="extension-bright-preferences"><h2>网页扩展单页偏好与明亮样式</h2>
 <article id="extension-bright-implementation"><h3>单页设置与页面内组件</h3><span class="badge">done</span><p>按用户选定稿把设置集中为 Memos 连接、保存偏好和页脚操作。设置页与页面内保存按钮、保存提示统一使用明亮表面、蓝色强调、细边框和轻阴影，并适配深色。保留原有配置字段、权限流程、队列、原文提取及消息协议。</p><ul>
@@ -21,8 +22,9 @@
 <li>note 2026-11-14 扩展样式浏览器验收: 本地示例数据；实际 options.js 与 content.js 在隔离 Chrome API 边界运行。未读取个人配置或连接真实 Memos。</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/23">pull 23: 独立工作区执行扩展 34/34、进度检查及源码浏览器 14 项断言，通过后查看 10 张截图；不代表已安装扩展集成。</a></li>
 </ul><p>Next: </p></article>
-<article id="extension-bright-delivery"><h3>源码交付</h3><span class="badge">done</span><p>PR #23 经非作者独立工作区复验 PASS+NOTES 后合并至 main，合并结果与被测源码一致。源码已交付；当前公开 rc.2 附件未重新发布，日常 Chrome 重载另验。</p><ul>
+<article id="extension-bright-delivery"><h3>源码交付</h3><span class="badge">done</span><p>PR #23 经非作者独立工作区复验 PASS+NOTES 后合并至 main，合并结果与被测源码一致。新样式已随扩展 v0.3.0-rc.3 公开发布；桌面应用继续使用 rc.2 build4，日常 Chrome 重载另验。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/23">pull 23: 独立复验覆盖精确 head 2257ae0013664c6f2abbfda4f279a9ab00288e17；已读回 MERGED，base 为 main。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.3">release v0.3.0-rc.3: 新样式已进入公开 ZIP，匿名下载已核对。</a></li>
 </ul><p>Next: </p></article>
 <article id="extension-bright-installed"><h3>日常 Chrome 重载</h3><span class="badge">unverified</span><p>未操作日常 Chrome 的扩展管理页；已安装扩展的重载与页面刷新尚未确认。</p><ul>
 </ul><p>Next: 在 Chrome 扩展管理页重新加载 Coding Rewind，刷新聊天页并核对设置、选区按钮和保存提示。</p></article>
@@ -247,6 +249,7 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.3">v0.3.0-rc.3</a> 2026-11-14T02:37:43Z (draft: False, prerelease: True)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.2">v0.3.0-rc.2</a> 2026-11-14T02:01:27Z (draft: False, prerelease: True)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.0-rc.1">v0.3.0-rc.1</a> 2026-11-13T23:53:51Z (draft: False, prerelease: True)</li>
 </ul></section></html>
