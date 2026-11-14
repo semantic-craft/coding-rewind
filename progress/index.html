@@ -5,6 +5,18 @@
 <h1>Coding Rewind 开发进度</h1>
 <p>Observed: 2026-11-14T00:51:26.067575Z</p>
 <p>Main: <code>main: e07c132cbe840163a2fb88e65367ff1de5e38251</code></p>
+<section id="bright-native-colors"><h2>明亮原生配色</h2>
+<article id="bright-native-implementation"><h3>内容底色与蓝色强调</h3><span class="badge">done</span><p>设置详情与未选热卡改用自适应内容底色；主按钮、时钟与空状态图标使用蓝色，选中卡片采用更轻的强调色。保留既有布局、原生材质及系统明暗适配。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/QuickPeekHUDViews.swift">file Sources/CodingRewindApp/QuickPeekHUDViews.swift: 仅改变颜色，数据与动作未变。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/SettingsViews.swift">file Sources/CodingRewindApp/SettingsViews.swift: 设置详情使用 controlBackgroundColor。</a></li>
+</ul><p>Next: </p></article>
+<article id="bright-native-verification"><h3>门禁与原生明暗核对</h3><span class="badge">done</span><p>全仓 scripts/check、签名打包及独立审查通过。隔离示例卡片的浮窗、设置浅色与深色窗口均已查看；深色诊断包临时指定外观，生产源码已恢复。</p><ul>
+<li>note 2026-11-14 明亮配色验收: 实际原生窗口截图及全仓日志已核对，复用此前未变的行为验收。</li>
+</ul><p>Next: </p></article>
+<article id="bright-native-delivery"><h3>安装与源码交付</h3><span class="badge">in_progress</span><p>本机日常包已替换并启动，实际设置窗口读回白色正文与原生侧栏。签名、现有开发配置及二进制 SHA-256 与交付包一致；隔离测试进程、启动注册与偏好已清理。源码待 PR 合并。</p><ul>
+<li>note 2026-11-14 日常包替换: 二进制 SHA-256 1aa2fb56b80df039b5bda49cf8a24e3719e6cd64ff77eb3a3edb874e60a1e7fa。</li>
+</ul><p>Next: 完成 PR 合并并更新远端事实。</p></article>
+</section>
 <section id="native-ui-unification"><h2>浮窗与设置风格统一</h2>
 <article id="native-ui-shape"><h3>共用原生控件层级与侧栏设置</h3><span class="badge">done</span><p>四页设置改为原生侧栏与偏好行、字段行两类布局，去掉嵌套表单边框及重复底栏。HUD 使用共用主次按钮样式、独立搜索与轻量筛选、状态圆点，以及相邻的宿主菜单和开聊按钮。业务状态仍由原协调器、显示偏好和快捷键模型拥有。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/RewindUI.swift">file Sources/CodingRewindApp/RewindUI.swift: 三个原生按钮角色，不新增主题引擎或依赖。</a></li>

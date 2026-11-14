@@ -166,7 +166,7 @@ public struct QuickPeekHUDRootView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
+                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.blue)
                 Text("Coding Rewind").font(.system(size: 13, weight: .bold))
                 Spacer()
                 Button {
@@ -335,7 +335,7 @@ public struct QuickPeekHUDRootView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles.rectangle.stack")
                     .font(.system(size: 20))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.blue)
                 Text(coordinator.cards.isEmpty ? "近 72 小时热池暂无灵感卡片" : "没有匹配当前筛选条件的卡片")
                     .font(.system(size: 13, weight: .semibold))
             }
@@ -405,6 +405,6 @@ public struct QuickPeekHUDRootView: View {
             coordinator.focusedCardID = card.id
             coordinator.toggleCheck(for: card.id)
         }
-        .background(RoundedRectangle(cornerRadius: 8).fill(checked ? Color.accentColor.opacity(0.14) : Color.primary.opacity(0.05)))
+        .background(RoundedRectangle(cornerRadius: 8).fill(checked ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor)))
     }
 }
