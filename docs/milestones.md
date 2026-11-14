@@ -34,7 +34,7 @@
 
 **可执行验收**
 
-1. 桌面端按下 `⌃⌥S` 时优先经 `kAXSelectedTextAttribute` 读取选区，回退模拟 `⌘C` 时校验 `changeCount` 递增并在 `defer` 完整恢复全部 `NSPasteboardItem`，无选区时不误存旧剪贴板。
+1. 桌面端点击选区“暂存”胶囊或按下默认捕获快捷键 `⌃⌥⇧⌘S`（`Hyper+S`）时优先经 `kAXSelectedTextAttribute` 读取选区，回退模拟 `⌘C` 时校验 `changeCount` 递增并在 `defer` 完整恢复全部 `NSPasteboardItem`，无选区时不误存旧剪贴板；划词探测阶段保持纯只读，不触碰剪贴板也不投递按键事件。
 2. Antigravity 捕获按选区所属聊天页面确认会话编号，只读取该会话的官方 transcript。切换 A、B 会话后，从 A 选旧回复仍使用 A 对应提问，最多附带截止所选消息的四个用户轮，不含后续提问。无法唯一定位时保留原文与已确认出处，省略上下文。
 3. 浏览器扩展 `extensions/web-clipper` 从 ChatGPT、Claude、Gemini 页面提取选区 Markdown、清洗后的会话标题、前序提问与最近 4 轮对话，由后台直连 `POST /api/memos?memoId=<clientClipId>` 与评论接口，右上角显示 2.2 秒轻提示且不抢焦点、不弹协议确认框。
 4. 目标不可达时，桌面端写入 `outbox.jsonl`、网页端写入 `chrome.storage.local` 离线队列，恢复连接后通过相同 `memoId` 幂等冲刷且不产生重复记录。

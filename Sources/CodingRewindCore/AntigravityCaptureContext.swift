@@ -7,10 +7,17 @@ public struct AntigravityConversationID: Equatable, Sendable {
 
     package init?(webAreaURL: URL) {
         guard let components = URLComponents(url: webAreaURL, resolvingAgainstBaseURL: false),
-              components.scheme == "http", components.host == "127.0.0.1",
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host == "127.0.0.1",
               components.user == nil, components.password == nil,
-              components.percentEncodedPath.hasPrefix("/c/"),
-              let uuid = UUID(uuidString: String(components.percentEncodedPath.dropFirst(3))) else {
+              components.percentEncodedPath.hasPrefix("/c/") else {
+            return nil
+        }
+        let afterPrefix = components.percentEncodedPath.dropFirst(3)
+        guard !afterPrefix.hasPrefix("/") else { return nil }
+        let rawUUID = afterPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !rawUUID.contains("/"), let uuid = UUID(uuidString: rawUUID) else {
             return nil
         }
         self.uuid = uuid
