@@ -10,7 +10,7 @@ public enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case toggleHUD
 
     public var id: String { rawValue }
-    public var title: String { self == .captureSelection ? "捕获当前选段" : "切换速览浮窗" }
+    public var title: String { self == .captureSelection ? "保存所选文本" : "显示或隐藏片段浮窗" }
     public var defaultShortcut: KeyboardShortcuts.Shortcut {
         .init(self == .captureSelection ? .s : .r, modifiers: [.control, .option])
     }
@@ -87,8 +87,8 @@ public final class AppShortcuts {
         let value = shortcut(for: action).map(String.init(describing:)) ?? ""
         switch state(for: action) {
         case .active: return value
-        case .paused: return value.isEmpty ? "已关闭" : "\(value)（暂停）"
-        case .unassigned: return "已关闭"
+        case .paused: return value.isEmpty ? "已停用" : "\(value)（暂停）"
+        case .unassigned: return "已停用"
         case .failed: return "\(value)（未生效）"
         }
     }
@@ -97,20 +97,20 @@ public final class AppShortcuts {
         switch state(for: action) {
         case .active:
             return action == .captureSelection
-                ? "选中文本后按 \(hint(for: action))，即可暂存选段"
-                : "按 \(hint(for: action)) 速览近 72 小时热流卡片"
-        case .unassigned: return "\(action.title)快捷键已关闭，可在设置中开启"
-        case .paused: return "\(action.title)快捷键录制期间暂停"
-        case .failed: return "\(action.title)快捷键未生效，请在设置中重试或改键"
+                ? "选中文本后按 \(hint(for: action)) 即可保存"
+                : "按 \(hint(for: action)) 查看近 72 小时保存的片段"
+        case .unassigned: return "“\(action.title)”的快捷键已停用，可在设置中重新指定"
+        case .paused: return "设置快捷键期间，“\(action.title)”暂时停用"
+        case .failed: return "“\(action.title)”的快捷键未生效，请在设置中重试或更换组合键"
         }
     }
 
     public func statusText(for action: ShortcutAction) -> String {
         switch state(for: action) {
         case .active: return "已生效"
-        case .unassigned: return "已关闭"
+        case .unassigned: return "已停用"
         case .paused: return "录制期间暂停"
-        case .failed(let status): return "未生效 · 系统注册失败（\(status)），请释放冲突后重试或改键"
+        case .failed(let status): return "快捷键未生效（错误代码 \(status)）。请重试或更换组合键"
         }
     }
 

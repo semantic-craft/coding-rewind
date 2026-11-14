@@ -173,13 +173,13 @@ public struct QuickPeekHUDRootView: View {
                     Task { await coordinator.captureSelection() }
                 } label: {
                     HStack(spacing: 5) {
-                        Label("抓选段", systemImage: "plus.viewfinder")
+                        Label("保存所选文本", systemImage: "plus.viewfinder")
                         Text(shortcuts.hint(for: .captureSelection))
                             .foregroundStyle(.secondary)
                     }
                 }
                 .rewindButtonRole(.secondary)
-                .accessibilityLabel("抓选段")
+                .accessibilityLabel("保存所选文本")
                 .accessibilityIdentifier("hud.capture")
                 .help(shortcuts.instruction(for: .captureSelection))
                 Button {
@@ -188,9 +188,9 @@ public struct QuickPeekHUDRootView: View {
                     Image(systemName: "arrow.clockwise").frame(width: 22, height: 22)
                 }
                 .rewindButtonRole(.toolbar)
-                .accessibilityLabel("立即同步热流")
+                .accessibilityLabel("立即同步")
                 .accessibilityIdentifier("hud.refresh")
-                .help("立即同步热流 (⌘R)")
+                .help("立即同步 (⌘R)")
                 Button {
                     onOpenSettings()
                 } label: {
@@ -205,9 +205,9 @@ public struct QuickPeekHUDRootView: View {
                 }
                 .keyboardShortcut(.cancelAction)
                 .rewindButtonRole(.toolbar)
-                .accessibilityLabel("关闭速览")
+                .accessibilityLabel("关闭片段浮窗")
                 .accessibilityIdentifier("hud.close")
-                .help("关闭速览 (Esc)")
+                .help("关闭片段浮窗 (Esc)")
             }
             if let msg = coordinator.bannerMessage {
                 HStack(spacing: 6) {
@@ -227,11 +227,11 @@ public struct QuickPeekHUDRootView: View {
             }
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜索标题、上下文或选中原文…", text: $coordinator.searchText)
+                TextField("搜索标题、摘要或原文…", text: $coordinator.searchText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
                     .focused($isSearchFocused)
-                    .accessibilityLabel("搜索标题、上下文或选中原文")
+                    .accessibilityLabel("搜索标题、摘要或原文")
                     .accessibilityIdentifier("hud.search")
             }
             .padding(.horizontal, 8)
@@ -261,34 +261,35 @@ public struct QuickPeekHUDRootView: View {
             }
 
             if coordinator.canEndUnarchivedConversation {
-                Button("结束接聊，保留未归档卡片") {
+                Button("暂不归档，保留片段") {
                     coordinator.endUnarchivedConversation()
                 }
                 .rewindButtonRole(.secondary)
             }
             if coordinator.canEndUnconfirmedConversation {
-                Button("已核对 \(coordinator.effectiveConversationHost.displayName)，结束本次请求") {
+                Button("已检查 \(coordinator.effectiveConversationHost.displayName)，清除待确认请求") {
                     coordinator.endUnconfirmedConversation()
                 }
                 .rewindButtonRole(.secondary)
             }
             if coordinator.confirmedConversation?.host == .codex {
-                Button("打开已发送的 Codex 会话") { coordinator.reopenConfirmedConversation() }
+                Button("打开 Codex 对话") { coordinator.reopenConfirmedConversation() }
                     .rewindButtonRole(.secondary)
             }
             Divider()
             HStack(spacing: 12) {
-                Text("已选 \(coordinator.checkedCardIDs.count) 张")
+                Text("已选 \(coordinator.checkedCardIDs.count) 条")
                     .font(.system(size: 11, weight: .medium))
-                Toggle("开聊后归档", isOn: $coordinator.markSynthesizedOnLaunch)
+                Toggle("发送后归档", isOn: $coordinator.markSynthesizedOnLaunch)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 11))
                     .accessibilityIdentifier("hud.archiveOnLaunch")
+                    .help("成功发送后，将所选片段从最近片段列表中移除。原文仍保留在 Memos 中。")
                 Spacer()
             }
             HStack(spacing: 8) {
                 Spacer()
-                Picker("接聊应用", selection: Binding(
+                Picker("对话应用", selection: Binding(
                     get: { coordinator.effectiveConversationHost },
                     set: { coordinator.conversationHost = $0 }
                 )) {
@@ -300,20 +301,20 @@ public struct QuickPeekHUDRootView: View {
                 .controlSize(.small)
                 .fixedSize()
                 .labelsHidden()
-                .accessibilityLabel("接聊应用")
+                .accessibilityLabel("对话应用")
                 .accessibilityIdentifier("hud.conversationHost")
                 .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
                 Button {
                     Task { await coordinator.launchChecked() }
                 } label: {
                     HStack(spacing: 6) {
-                        Text(coordinator.isLaunchingConversation ? "正在接聊…" : "开聊")
+                        Text(coordinator.conversationActionTitle)
                         Text("⌘↵")
                     }
                 }
                 .buttonStyle(RewindLaunchButtonStyle())
                 .keyboardShortcut(.return, modifiers: [.command])
-                .accessibilityLabel(coordinator.isLaunchingConversation ? "正在接聊…" : coordinator.conversationActionTitle)
+                .accessibilityLabel(coordinator.conversationActionTitle)
                 .accessibilityIdentifier("hud.launch")
                 .disabled(coordinator.checkedCardIDs.isEmpty || coordinator.isLaunchingConversation)
             }
@@ -336,13 +337,13 @@ public struct QuickPeekHUDRootView: View {
                 Image(systemName: "sparkles.rectangle.stack")
                     .font(.system(size: 20))
                     .foregroundStyle(.blue)
-                Text(coordinator.cards.isEmpty ? "近 72 小时热池暂无灵感卡片" : "没有匹配当前筛选条件的卡片")
+                Text(coordinator.cards.isEmpty ? "近 72 小时没有保存的片段" : "没有符合筛选条件的片段")
                     .font(.system(size: 13, weight: .semibold))
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("• \(shortcuts.instruction(for: .captureSelection))")
-                Text("• \(shortcuts.instruction(for: .toggleHUD))，勾选后按 ⌘↵ 拉起新对话")
-                Text("• 打开 设置… (⌘,) 配置 Memos 地址与令牌即可云端同步（离线可先暂存）")
+                Text("• \(shortcuts.instruction(for: .toggleHUD))，勾选片段后按 ⌘↵ 开始对话")
+                Text("• 在设置中填写 Memos 服务地址和访问令牌后可同步，离线时也可保存片段")
             }
             .font(.system(size: 11.5))
             .foregroundStyle(.secondary)
@@ -382,11 +383,11 @@ public struct QuickPeekHUDRootView: View {
                     .foregroundStyle(.secondary)
                 Text("#\(card.sourcePlatform)").font(.system(size: 10)).foregroundStyle(.secondary)
                 if card.isOfflinePending {
-                    Text("离线待同步").font(.system(size: 10)).foregroundStyle(.orange)
+                    Text("待同步").font(.system(size: 10)).foregroundStyle(.orange)
                 }
                 Spacer()
                 if let url = card.reopenURL {
-                    Button("原出处 ↗") { coordinator.onOpenURL?(url) }
+                    Button("查看来源 ↗") { coordinator.onOpenURL?(url) }
                         .rewindButtonRole(.toolbar)
                         .font(.system(size: 10))
                 }

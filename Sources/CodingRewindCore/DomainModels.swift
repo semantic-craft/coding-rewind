@@ -18,23 +18,23 @@ public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     public var errorDescription: String? {
         switch self {
         case .emptySelection:
-            return "未选中非空文本，请先高亮内容再按快捷键。"
+            return "请先选中要保存的文本，再按快捷键。"
         case .accessibilityPermissionDenied:
-            return "未获得辅助功能权限，请在系统设置中授权 CodingRewind。"
+            return "请在系统设置的“辅助功能”中允许 Coding Rewind 读取所选文本。"
         case .noFrontmostApplication:
-            return "未检测到前台应用窗口。"
+            return "未找到当前应用的窗口。"
         case .invalidClipID(let id):
-            return "无效片段标识: \(id)"
+            return "片段编号无效：\(id)"
         case .invalidMemosURL(let raw):
-            return "无效的 Memos 地址: \(raw)"
+            return "Memos 服务地址无效：\(raw)"
         case .missingCredentials:
-            return "尚未配置 Memos 地址或访问令牌，已暂存至本地离线队列。"
+            return "尚未设置 Memos 服务地址或访问令牌。"
         case .httpError(let code, let body):
-            return "Memos 请求失败 (HTTP \(code)): \(body.prefix(120))"
+            return "Memos 请求失败（HTTP \(code)）：\(body.prefix(120))"
         case .ioError(let detail):
-            return "本地读写失败: \(detail)"
+            return "本机文件读写失败：\(detail)"
         case .keychainError(let status):
-            return "钥匙串访问失败 (OSStatus \(status))"
+            return "无法访问 macOS 钥匙串（错误代码 \(status)）"
         }
     }
 }
@@ -348,8 +348,8 @@ public enum CardStatus: String, Codable, Equatable, Hashable, Sendable {
 
     public var badgeText: String {
         switch self {
-        case .pending: return "待分析"
-        case .ready: return "AI 已定锚"
+        case .pending: return "待整理"
+        case .ready: return "AI 已整理"
         }
     }
 }

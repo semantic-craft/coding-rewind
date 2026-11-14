@@ -29,7 +29,7 @@ public final class AppAppearancePreferences {
 
     public func setShowsDockIcon(_ visible: Bool) {
         guard applyPolicy(visible ? .regular : .accessory) else {
-            errorMessage = "无法更改 Dock 显示，请重新打开应用后再试。"
+            errorMessage = "无法更改 Dock 图标的显示状态，请重新打开应用后再试。"
             return
         }
         showsDockIcon = visible

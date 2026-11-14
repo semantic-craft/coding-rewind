@@ -205,37 +205,37 @@ public enum AntigravityIntegration {
         if let pData = try? Data(contentsOf: pluginJSONURL),
            let pObj = try? JSONSerialization.jsonObject(with: pData) as? [String: Any] {
             if !Set(pObj.keys).isSubset(of: allowedPluginKeys) {
-                reasons.append("plugin.json contains unsupported fields")
+                reasons.append("插件配置中有不支持的设置")
             }
             if pObj["name"] as? String != pluginName {
-                reasons.append("plugin.json name mismatch")
+                reasons.append("插件配置中的名称不匹配")
             }
             if pObj["version"] as? String != pluginVersion {
-                reasons.append("plugin.json version mismatch")
+                reasons.append("插件配置中的版本不匹配")
             }
             if let prompts = pObj["suggestedPrompts"] as? [String], prompts.count == 3, prompts.allSatisfy({ !$0.isEmpty }) {
             } else {
-                reasons.append("plugin.json suggestedPrompts must be 3 non-empty strings")
+                reasons.append("插件的三条建议提示词缺失或格式不正确")
             }
         } else {
-            reasons.append("plugin.json missing or invalid")
+            reasons.append("插件配置缺失或格式不正确")
         }
 
         if hooksWithoutLegacyCapture(at: hooksJSONURL, dataDirectory: resolvedData) != nil {
-            reasons.append("仍配置了旧的对话快照 Hook")
+            reasons.append("仍保留旧版对话记录配置，需要修复")
         }
 
         if let skillText = try? String(contentsOf: skillURL, encoding: .utf8) {
             if !skillText.contains("memo_list_memos") || !skillText.contains("conversation://") {
-                reasons.append("SKILL.md missing Memos MCP guidance")
+                reasons.append("插件说明缺少 Memos 连接指引")
             }
         } else {
-            reasons.append("skills/rewind/SKILL.md missing")
+            reasons.append("未找到插件说明文件")
         }
 
         let expectedSidecar = stableSidecarBinaryURL(in: resolvedData)
         if !FileManager.default.isExecutableFile(atPath: expectedSidecar.path) {
-            reasons.append("接聊 sidecar 尚未安装")
+            reasons.append("对话发送组件尚未安装")
         }
         let sidecarURL = pluginDir.appendingPathComponent("sidecars/launcher/sidecar.json")
         if let data = try? Data(contentsOf: sidecarURL),
@@ -244,14 +244,14 @@ public enum AntigravityIntegration {
            definition["args"] as? [String] == ["--data-dir", resolvedData.path],
            definition["restart_policy"] as? String == "always" {
         } else {
-            reasons.append("接聊 sidecar 配置缺失或不匹配")
+            reasons.append("对话发送组件的配置缺失或不匹配")
         }
         if let data = try? Data(contentsOf: configDirectoryURL.appendingPathComponent("config.json")),
            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let sidecars = config["sidecars"] as? [String: Any],
            let launcher = sidecars["coding-rewind/launcher"] as? [String: Any], launcher["enabled"] as? Bool == true {
         } else {
-            reasons.append("接聊 sidecar 尚未启用")
+            reasons.append("对话发送组件尚未启用")
         }
 
         return reasons.isEmpty
