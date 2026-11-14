@@ -3,8 +3,24 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T03:59:19.538045Z</p>
-<p>Main: <code>main: 0d7dfde90edcc68f3e168f2ac48efb46dbf163e4</code></p>
+<p>Observed: 2026-11-14T06:19:55.144012Z</p>
+<p>Main: <code>main: d630e736dfe872599847cdcd2aa3aa4a83968a7b</code></p>
+<section id="selection-popup-hyper-s"><h2>划词暂存胶囊与 Hyper+S 快捷键</h2>
+<article id="selection-popup-implementation"><h3>三端暂存胶囊与默认快捷键</h3><span class="badge">done</span><p>桌面端新增 SelectionPopupController，在 Antigravity 与 Gemini 桌面端完成拖拽、多击或 Shift 选词后，通过只读 AX 几何探针弹出非激活 +暂存 胶囊，不读改剪贴板、不注入按键，排除输入框与内嵌外部网页。Antigravity 会话 ID 兼容 https 回环地址与末尾斜杠；保存入队失败时回滚乐观热卡。网页扩展升级为 32px 跑道形 +暂存 胶囊并原地变为已暂存或待同步，网页内快捷键仅拦截 Hyper+S 以免与扩展命令 Alt+Shift+S 重复写入。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/SelectionPopupController.swift">file Sources/CodingRewindApp/SelectionPopupController.swift: Antigravity 与 Gemini 桌面端只读 AX 划词探测、非激活毛玻璃胶囊与原地状态反馈。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/AppShortcuts.swift">file Sources/CodingRewindApp/AppShortcuts.swift: 默认保存快捷键改为 Hyper+S，旧默认值升迁至 schema v2 并保留自定义快捷键。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/content.js">file extensions/web-clipper/content.js: 网页端 32px 跑道形暂存胶囊、Hyper+S 单次保存与原地已暂存反馈。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/25">pull 25: 桌面端与网页扩展划词暂存胶囊、Hyper+S 快捷键及双模型审查修复已合并至 main。</a></li>
+</ul><p>Next: </p></article>
+<article id="selection-popup-verification"><h3>全仓门禁、对抗审查与隔离包验证</h3><span class="badge">done</span><p>scripts/check 全部 6 道门禁通过，含 Swift 单元与界面测试、Python enricher 10 项测试、网页扩展 38/38 测试（含 vm 沙箱驱动真实 content.js）、Shell 语法与图标校验。双模型对抗审查检出的 Alt+Shift+S 双重保存、双击穿透、宿主重激活误关胶囊、内嵌第三方 WebView 误判与多显示器翻转边界均已修复。CODING_REWIND_QA=1 隔离签名包后台启动通过，实测读回 Hyper+S 默认值与 schema 2，测试进程与隔离目录已清理。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/25">pull 25: 精确 head 8ef530f691a45fd8a34da526c14ba8d00450677e 全仓 6 道门禁通过。</a></li>
+<li>note 2026-11-14 隔离 QA 包与对抗审查: 双模型独立审查发现的 9 项竞态与边界缺陷全部修复并补齐测试；隔离 QA 包启动与偏好读回通过，临时产物已清理。</li>
+</ul><p>Next: </p></article>
+<article id="selection-popup-daily-install"><h3>日常应用包升级与实机待验边界</h3><span class="badge">unverified</span><p>已从 main 构建并替换 ~/Applications/CodingRewind.app，保留既有 DeveloperCredentials.plist 且未读取明文，签名校验与二进制 SHA-256 一致，日常偏好已同步为 Hyper+S。首次后台启动在等待 1Password 解锁后正常退出，未重复弹窗；ad-hoc 重签后的辅助功能权限确认、日常 Chrome 扩展管理页重载，以及 Antigravity、Gemini App、Gemini Web 三端真实划词保存留待用户解锁与重载后实测。</p><ul>
+<li>note 2026-11-14 日常安装升级: 安装二进制 SHA-256 8069448b0037fc0919c108b4a7d8398ee80c2b12565b46fcfa19e9f0381d1980；签名与开发凭据配置保留通过，本机偏好已写入 Hyper+S。</li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 真实宿主辅助功能授权、1Password 解锁后运行与日常 Chrome 重载仍需用户本人操作确认。</a></li>
+</ul><p>Next: 解锁 1Password 启动 CodingRewind 并在系统设置确认辅助功能授权，同时在 chrome://extensions 重载解包扩展后实测三端划词暂存。</p></article>
+</section>
 <section id="release-030-rc3"><h2>网页扩展 0.3.0 第三候选版</h2>
 <article id="rc3-preparation"><h3>扩展版本与发布包</h3><span class="badge">done</span><p>扩展候选版显示 0.3.0-rc.3、内部 0.3.0.5。实际 ZIP 的12个文件及 MIT 许可证逐字节对应发布源码，权限与运行逻辑不变。PR #24 经非作者独立包验收 PASS+NOTES 后合并。扩展34/34、实际包界面14项断言和10张截图通过；全仓首跑在未改动的 Vendor 时序测试失败一次，单例及全仓复跑均通过，原始失败已记录。桌面应用继续 rc.2 build4，本次未改安装、签名或凭据。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/24">pull 24: 精确 head b047f59e0fdcc90989530b8bbc59a37ef09b4910 已独立复验，已读回合并至 main。</a></li>
