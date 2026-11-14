@@ -5,6 +5,18 @@
 <h1>Coding Rewind 开发进度</h1>
 <p>Observed: 2026-11-14T01:26:07.139970Z</p>
 <p>Main: <code>main: dc2d8c70b9c9b10916fd85ef8b0ce31d13211982</code></p>
+<section id="plain-chinese-ui"><h2>桌面界面中文用语统一</h2>
+<article id="plain-chinese-implementation"><h3>常用名称与准确提示</h3><span class="badge">done</span><p>设置、浮窗、菜单、快捷键说明、AX 标签及常见提示统一使用片段、最近片段、保存所选文本、AI 已整理、开始对话等常用中文。归档、查询与打开对话按实际状态命名；插件安装不再写成检查。协议、原文、操作流程及提示词模板不变。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/code-quality.md">file docs/code-quality.md: 维护桌面界面词汇与状态命名约定。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/AppCoordinator.swift">file Sources/CodingRewindCore/AppCoordinator.swift: 按已有状态选择操作名称，不增加持久状态。</a></li>
+</ul><p>Next: </p></article>
+<article id="plain-chinese-verification"><h3>语义审查与原生显示核对</h3><span class="badge">done</span><p>全仓门禁与独立审查通过。实际查看四页设置、440 点窄浮窗及操作菜单，主名称、说明和筛选状态完整显示；既有菜单快照断言已更新。恢复发送、归档和打开对话的名称对照现有分支复核。</p><ul>
+<li>note 2026-11-14 桌面中文验收: 本地示例片段、隔离服务与签名应用；未修改系统权限或创建真实宿主对话。</li>
+</ul><p>Next: </p></article>
+<article id="plain-chinese-delivery"><h3>安装与源码交付</h3><span class="badge">in_progress</span><p>日常应用已替换并重新启动，实际浮窗与设置读回保存所选文本、插件与权限等新名称。安装签名、既有开发凭据配置及二进制 SHA-256 与交付包一致，隔离 QA 进程与启动注册已清理。源码待 PR 合并。</p><ul>
+<li>note 2026-11-14 中文界面交付: 安装二进制 SHA-256 06ec067cbb246eff06eee69c15a83791486545cd9c5a34dce9a7b9d1c67acf01；实际 HUD 与设置已读回新名称。</li>
+</ul><p>Next: 完成 QA 临时包清理、PR 合并及远端事实更新。</p></article>
+</section>
 <section id="hud-launch-state"><h2>开聊按钮状态</h2>
 <article id="hud-launch-implementation"><h3>选中后启用并保持蓝色</h3><span class="badge">done</span><p>未选卡片或正在接聊时，浮窗开聊按钮灰色禁用；勾选后蓝底白字，非激活窗口仍显示蓝色。样式从 isEnabled 派生，沿用原生 Button、快捷键、AX 标识及已有接聊流程。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/RewindUI.swift">file Sources/CodingRewindApp/RewindUI.swift: HUD 专用样式，不改变设置页主按钮。</a></li>

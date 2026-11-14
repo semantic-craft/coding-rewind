@@ -75,7 +75,7 @@ public enum MainMenuBuilder {
         appMenu.addItem(makeCommandMenuItem(title: "关于 Coding Rewind", command: .showAbout, handler: onCommand))
         appMenu.addItem(.separator())
         appMenu.addItem(makeCommandMenuItem(title: "设置…", command: .openSettings, keyEquivalent: ",", handler: onCommand))
-        appMenu.addItem(makeCommandMenuItem(title: "安装或检查 Antigravity 插件", command: .installOrRepairPlugin, handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: "安装或修复 Antigravity 插件", command: .installOrRepairPlugin, handler: onCommand))
         appMenu.addItem(.separator())
 
         let hideItem = NSMenuItem(title: "隐藏 Coding Rewind", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -96,15 +96,15 @@ public enum MainMenuBuilder {
 
         let actionsMenuItem = NSMenuItem(title: "操作", action: nil, keyEquivalent: "")
         let actionsMenu = NSMenu(title: "操作")
-        let toggleItem = makeCommandMenuItem(title: "切换 Rewind 浮窗", command: .toggleHUD, handler: onCommand)
+        let toggleItem = makeCommandMenuItem(title: "显示或隐藏片段浮窗", command: .toggleHUD, handler: onCommand)
         shortcuts.bindMenuItem(toggleItem, to: .toggleHUD)
         actionsMenu.addItem(toggleItem)
-        let captureItem = makeCommandMenuItem(title: "捕获当前选段", command: .captureSelectionFromMenu, handler: onCommand)
+        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelectionFromMenu, handler: onCommand)
         shortcuts.bindMenuItem(captureItem, to: .captureSelection)
         actionsMenu.addItem(captureItem)
         actionsMenu.addItem(
             makeCommandMenuItem(
-                title: "在所选应用开聊",
+                title: "在所选应用中开始对话",
                 command: .launchConversation,
                 keyEquivalent: "\r",
                 modifiers: [.command],
@@ -113,14 +113,14 @@ public enum MainMenuBuilder {
         )
         for host in ConversationHost.allCases {
             actionsMenu.addItem(makeCommandMenuItem(
-                title: "在 \(host.displayName) 开聊",
+                title: "在 \(host.displayName) 中开始对话",
                 command: .launchIn(host),
                 handler: onCommand
             ))
         }
         actionsMenu.addItem(
             makeCommandMenuItem(
-                title: "立即同步热流",
+                title: "立即同步",
                 command: .refreshHotStream,
                 keyEquivalent: "r",
                 modifiers: [.command],
@@ -324,7 +324,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
         if let button = statusItem.button {
             button.setAccessibilityLabel("Coding Rewind")
-            button.toolTip = "Coding Rewind — 左键打开菜单，右键或 ⌥点击切换浮窗"
+            button.toolTip = "Coding Rewind，左键打开菜单，右键或 ⌥点击显示或隐藏片段浮窗"
             button.target = self
             button.action = #selector(handleStatusButtonClick(_:))
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
@@ -400,7 +400,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         let toggleItem = makeCommandMenuItem(title: snapshot.toggleHUDTitle, command: .toggleHUD, handler: onCommand)
         shortcuts.applyMenuShortcut(to: toggleItem, for: .toggleHUD)
         menu.addItem(toggleItem)
-        let captureItem = makeCommandMenuItem(title: "捕获当前选段", command: .captureSelectionFromMenu, handler: onCommand)
+        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelectionFromMenu, handler: onCommand)
         shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
         menu.addItem(captureItem)
         menu.addItem(
@@ -414,14 +414,14 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         for host in ConversationHost.allCases {
             menu.addItem(makeCommandMenuItem(
-                title: "在 \(host.displayName) 开聊",
+                title: "在 \(host.displayName) 中开始对话",
                 command: .launchIn(host),
                 handler: onCommand
             ))
         }
         menu.addItem(
             makeCommandMenuItem(
-                title: "立即同步热流",
+                title: "立即同步",
                 command: .refreshHotStream,
                 keyEquivalent: "r",
                 modifiers: [.command],
@@ -430,8 +430,8 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
 
         if !snapshot.recentCards.isEmpty {
-            let recentRoot = NSMenuItem(title: "近期热卡", action: nil, keyEquivalent: "")
-            let recentMenu = NSMenu(title: "近期热卡")
+            let recentRoot = NSMenuItem(title: "最近片段", action: nil, keyEquivalent: "")
+            let recentMenu = NSMenu(title: "最近片段")
             recentMenu.autoenablesItems = false
             for card in snapshot.recentCards.prefix(5) {
                 recentMenu.addItem(
@@ -463,7 +463,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
-                title: snapshot.isPluginReady ? "Antigravity 插件：已就绪（点击重检）" : "安装 Antigravity 插件…",
+                title: "安装或修复 Antigravity 插件",
                 command: .installOrRepairPlugin,
                 state: snapshot.isPluginReady ? .on : .off,
                 handler: onCommand
@@ -471,7 +471,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
-                title: snapshot.isAccessibilityTrusted ? "辅助功能权限：已授权" : "辅助功能权限：点击授权…",
+                title: snapshot.isAccessibilityTrusted ? "辅助功能权限：已授权" : "辅助功能权限：前往系统设置…",
                 command: .requestAccessibility,
                 state: snapshot.isAccessibilityTrusted ? .on : .off,
                 handler: onCommand

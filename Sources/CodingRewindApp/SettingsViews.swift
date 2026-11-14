@@ -16,9 +16,9 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "通用"
-        case .connection: "连接"
+        case .connection: "Memos 连接"
         case .keyboard: "快捷键"
-        case .integrations: "集成与权限"
+        case .integrations: "插件与权限"
         }
     }
 
@@ -123,8 +123,8 @@ public struct SettingsFormView: View {
 
     private var general: some View {
         Group {
-            SettingsSection("应用入口") {
-                SettingsRow("在 Dock 中显示", help: "修改立即保存。点击 Dock 图标或从 Finder 重新打开应用，可唤出速览浮窗。") {
+            SettingsSection("Dock 图标") {
+                SettingsRow("在 Dock 中显示", help: "点击 Dock 图标或从 Finder 打开应用，会显示片段浮窗。") {
                     Toggle("在 Dock 中显示", isOn: Binding(
                         get: { appearance.showsDockIcon },
                         set: { appearance.setShowsDockIcon($0) }
@@ -138,7 +138,7 @@ public struct SettingsFormView: View {
                 }
             }
             SettingsSection("菜单栏") {
-                SettingsRow("图标与入口", help: "菜单栏图标提供速览、捕获选段与设置入口。找不到图标时，请在系统设置的“菜单栏”中允许 CodingRewind。") {
+                SettingsRow("菜单栏图标", help: "点击图标可查看最近片段、保存所选文本或打开设置。若图标未显示，请在系统菜单栏设置中允许 Coding Rewind。") {
                     Button("打开系统菜单栏设置…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
                             NSWorkspace.shared.open(url)
@@ -154,7 +154,7 @@ public struct SettingsFormView: View {
         Group {
             SettingsSection("Memos 服务") {
                 SettingsRow("服务地址", layout: .field, help: coordinator.connectionSettings.isURLManaged
-                            ? "地址由启动环境管理，请在启动配置中修改。" : nil) {
+                            ? "服务地址由启动配置提供，不能在此修改。" : nil) {
                     TextField("服务地址", text: $urlDraft, prompt: Text("https://memos.example.com"))
                         .textFieldStyle(.roundedBorder)
                         .disabled(coordinator.connectionSettings.isURLManaged)
@@ -162,8 +162,8 @@ public struct SettingsFormView: View {
                 }
                 Divider()
                 SettingsRow("访问令牌", layout: .field, help: coordinator.connectionSettings.isTokenManaged
-                            ? "令牌由启动环境提供，此处不会读取或改写。"
-                            : "新令牌保存到 macOS 钥匙串，不写入配置文件。") {
+                            ? "访问令牌由启动配置提供，不能在此修改。"
+                            : "请填写在 Memos 中生成的访问令牌。令牌保存在 macOS 钥匙串中。") {
                     SecureField("访问令牌", text: $tokenDraft, prompt: Text("留空则保留现有令牌"))
                         .textFieldStyle(.roundedBorder)
                         .disabled(coordinator.connectionSettings.isTokenManaged)
@@ -181,12 +181,12 @@ public struct SettingsFormView: View {
                         .textSelection(.enabled)
                 }
             }
-            SettingsSection("最近操作") {
-                SettingsRow("连接检查") {
+            SettingsSection("同步与提示") {
+                SettingsRow("同步片段") {
                     Button("立即同步") { Task { await coordinator.refresh() } }
                         .rewindButtonRole(.secondary)
                 }
-                Text(coordinator.bannerMessage ?? "点击立即同步检查连接。")
+                Text(coordinator.bannerMessage ?? "从 Memos 获取最新片段，并上传本机待同步的片段。")
                     .font(.callout)
                     .foregroundStyle(coordinator.isErrorBanner ? Color.orange : Color.secondary)
                     .textSelection(.enabled)
@@ -196,7 +196,7 @@ public struct SettingsFormView: View {
 
     private var keyboard: some View {
         SettingsSection("全局快捷键") {
-            Text("修改立即生效并保存；清空即关闭。Hyper = ⌃⌥⇧⌘。")
+            Text("点击快捷键可修改，清空后停用。⌃ 是 Control，⌥ 是 Option，⇧ 是 Shift，⌘ 是 Command。")
                 .font(.callout).foregroundStyle(.secondary)
             ForEach(ShortcutAction.allCases) { action in
                 Divider()
@@ -221,7 +221,7 @@ public struct SettingsFormView: View {
         Group {
             SettingsSection("Antigravity 插件") {
                 SettingsRow("插件状态", help: coordinator.pluginStatusText) {
-                    Button("安装或检查插件") {
+                    Button("安装或修复插件") {
                         onInstallPlugin()
                         coordinator.refreshPluginStatus()
                     }
@@ -229,15 +229,15 @@ public struct SettingsFormView: View {
                 }
             }
             SettingsSection("辅助功能") {
-                SettingsRow("选区读取") {
-                    Button("检查或开启权限…") {
+                SettingsRow("读取所选文本") {
+                    Button(isAccessibilityTrusted ? "检查权限" : "前往系统设置…") {
                         onRequestAccessibility()
                         isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
                     }
                     .rewindButtonRole(.secondary)
-                    .accessibilityLabel("检查或开启辅助功能权限")
+                    .accessibilityLabel(isAccessibilityTrusted ? "检查辅助功能权限" : "前往系统设置，允许读取所选文本")
                 }
-                Text(isAccessibilityTrusted ? "已授权，可读取前台选区。" : "未授权，捕获其他应用选区前需要开启。")
+                Text(isAccessibilityTrusted ? "已授权，可读取其他应用中所选的文本。" : "未授权，需要在“辅助功能”中允许读取其他应用的所选文本。")
                     .font(.callout)
                     .foregroundStyle(isAccessibilityTrusted ? Color.secondary : Color.orange)
             }
@@ -249,7 +249,7 @@ public struct SettingsFormView: View {
             try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
             tokenDraft = ""
             saveFailed = false
-            saveMessage = "已保存。可点击立即同步检查连接。"
+            saveMessage = "连接设置已保存，尚未确认同步成功。请点击“立即同步”检查。"
         } catch {
             saveFailed = true
             saveMessage = error.localizedDescription
