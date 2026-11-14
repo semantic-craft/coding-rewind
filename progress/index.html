@@ -16,10 +16,9 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/25">pull 25: 精确 head 8ef530f691a45fd8a34da526c14ba8d00450677e 全仓 6 道门禁通过。</a></li>
 <li>note 2026-11-14 隔离 QA 包与对抗审查: 双模型独立审查发现的 9 项竞态与边界缺陷全部修复并补齐测试；隔离 QA 包启动与偏好读回通过，临时产物已清理。</li>
 </ul><p>Next: </p></article>
-<article id="selection-popup-daily-install"><h3>日常应用包升级与实机待验边界</h3><span class="badge">unverified</span><p>已从 main 构建并替换 ~/Applications/CodingRewind.app，保留既有 DeveloperCredentials.plist 且未读取明文，签名校验与二进制 SHA-256 一致，日常偏好已同步为 Hyper+S。首次后台启动在等待 1Password 解锁后正常退出，未重复弹窗；ad-hoc 重签后的辅助功能权限确认、日常 Chrome 扩展管理页重载，以及 Antigravity、Gemini App、Gemini Web 三端真实划词保存留待用户解锁与重载后实测。</p><ul>
-<li>note 2026-11-14 日常安装升级: 安装二进制 SHA-256 8069448b0037fc0919c108b4a7d8398ee80c2b12565b46fcfa19e9f0381d1980；签名与开发凭据配置保留通过，本机偏好已写入 Hyper+S。</li>
-<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 真实宿主辅助功能授权、1Password 解锁后运行与日常 Chrome 重载仍需用户本人操作确认。</a></li>
-</ul><p>Next: 解锁 1Password 启动 CodingRewind 并在系统设置确认辅助功能授权，同时在 chrome://extensions 重载解包扩展后实测三端划词暂存。</p></article>
+<article id="selection-popup-daily-install"><h3>标准目录安装与实机划词验证</h3><span class="badge">done</span><p>已清理旧副本的 LaunchServices 注册并将日常包统一迁至标准目录 /Applications/CodingRewind.app，保留既有 DeveloperCredentials.plist 且未读取明文，签名校验、CDHash 与二进制 SHA-256 一致。设置页实测读回辅助功能已授权、划词暂存开关开启、全局快捷键 ⌃⌥⇧⌘S 已生效，Chrome 扩展页显示 0.3.0-rc.3。在 Gemini 桌面端无敏感测试会话中实机拖拽选词后，300ms 内于选区正上方 8pt 处弹出非激活 124x34 胶囊窗口（layer 101，selectionPopup.stash）。</p><ul>
+<li>note 2026-11-14 标准目录安装与实机划词读回: 安装路径已迁至标准 /Applications/CodingRewind.app，二进制 SHA-256 8069448b0037fc0919c108b4a7d8398ee80c2b12565b46fcfa19e9f0381d1980，CDHash c5d5c113a0e6a3fc4d9ee06fe6928423f4d350f5；辅助功能已授权与 Gemini App 划词弹出 124x34 暂存胶囊均已实机读回。</li>
+</ul><p>Next: </p></article>
 </section>
 <section id="release-030-rc3"><h2>网页扩展 0.3.0 第三候选版</h2>
 <article id="rc3-preparation"><h3>扩展版本与发布包</h3><span class="badge">done</span><p>扩展候选版显示 0.3.0-rc.3、内部 0.3.0.5。实际 ZIP 的12个文件及 MIT 许可证逐字节对应发布源码，权限与运行逻辑不变。PR #24 经非作者独立包验收 PASS+NOTES 后合并。扩展34/34、实际包界面14项断言和10张截图通过；全仓首跑在未改动的 Vendor 时序测试失败一次，单例及全仓复跑均通过，原始失败已记录。桌面应用继续 rc.2 build4，本次未改安装、签名或凭据。</p><ul>
