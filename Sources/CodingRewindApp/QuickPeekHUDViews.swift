@@ -308,14 +308,14 @@ public struct QuickPeekHUDRootView: View {
                 } label: {
                     HStack(spacing: 6) {
                         Text(coordinator.isLaunchingConversation ? "正在接聊…" : "开聊")
-                        Text("⌘↵").foregroundStyle(.secondary)
+                        Text("⌘↵")
                     }
                 }
-                .rewindButtonRole(.primary)
+                .buttonStyle(RewindLaunchButtonStyle())
                 .keyboardShortcut(.return, modifiers: [.command])
                 .accessibilityLabel(coordinator.isLaunchingConversation ? "正在接聊…" : coordinator.conversationActionTitle)
                 .accessibilityIdentifier("hud.launch")
-                .disabled(coordinator.isLaunchingConversation)
+                .disabled(coordinator.checkedCardIDs.isEmpty || coordinator.isLaunchingConversation)
             }
         }
         .padding(.top, 24)
