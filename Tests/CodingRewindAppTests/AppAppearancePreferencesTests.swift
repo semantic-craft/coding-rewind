@@ -60,11 +60,11 @@ struct AppAppearancePreferencesTests {
     @Test func qaAppearanceDoesNotEscapeDataDirectory() {
         let root = URL(fileURLWithPath: "/qa/appearance/\(UUID().uuidString)")
         let env = ["CODING_REWIND_QA": "1"]
-        let first = AppShortcuts.preferences(environment: env, dataDirectory: root)
-        let second = AppShortcuts.preferences(environment: env, dataDirectory: root.appendingPathComponent("other"))
+        let first = AppPreferences.userDefaults(environment: env, dataDirectory: root)
+        let second = AppPreferences.userDefaults(environment: env, dataDirectory: root.appendingPathComponent("other"))
         defer {
             for path in [root, root.appendingPathComponent("other")] {
-                first.removePersistentDomain(forName: AppShortcuts.preferencesSuite(environment: env, dataDirectory: path)!)
+                first.removePersistentDomain(forName: AppPreferences.preferencesSuite(environment: env, dataDirectory: path)!)
             }
         }
         AppAppearancePreferences(defaults: first) { _ in true }.setShowsDockIcon(false)

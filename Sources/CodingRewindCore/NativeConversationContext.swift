@@ -64,34 +64,50 @@ public enum NativeConversationContext {
     public static func resolve(
         selectedText: String, snapshot: NativeConversationSnapshot, sessionTitle: String
     ) -> CaptureContext? {
-        let selection = selectedText.replacingOccurrences(of: "\r\n", with: "\n")
-        guard !selection.isEmpty else { return nil }
-        let matches = snapshot.entries.indices.filter { index in
-            guard case .message(let message) = snapshot.entries[index] else { return false }
-            return message.renderedText.replacingOccurrences(of: "\r\n", with: "\n")
-                .range(of: selection, options: .literal) != nil
-        }
-        let anchor: Int
-        switch snapshot.anchor {
-        case .message(let index):
-            guard matches.contains(index) else { return nil }
-            anchor = index
-        case .uniqueText:
-            guard matches.count == 1, let index = matches.first else { return nil }
-            anchor = index
-        }
-        let intervalStart = snapshot.entries[..<anchor].lastIndex(of: .gap).map { $0 + 1 } ?? 0
-        let messages = snapshot.entries[intervalStart...anchor].compactMap { entry -> NativeConversationSnapshot.Message? in
+        let indexedMessages: [(entryIndex: Int, message: ConversationContextSlicer.Message)] = snapshot.entries.enumerated().compactMap { index, entry in
             guard case .message(let message) = entry else { return nil }
-            return message
+            let role: ConversationContextSlicer.Role = message.role == .user ? .user : .assistant
+            return (
+                index,
+                ConversationContextSlicer.Message(
+                    role: role,
+                    matchText: message.renderedText,
+                    contextText: message.contextText
+                )
+            )
         }
-        let rounds = messages.indices.filter { messages[$0].role == .user }.suffix(4)
-        guard let firstRound = rounds.first, let lastRound = rounds.last else { return nil }
-        let prompt = messages.last?.role == .assistant ? messages[lastRound].contextText : ""
-        return CaptureContext(
-            sessionTitle: sessionTitle,
-            prompt: prompt,
-            recentTurns: messages[firstRound...].map { ConversationTurn(role: $0.role.rawValue, text: $0.contextText) }
+
+        let anchorMode: ConversationContextSlicer.AnchorMode
+        switch snapshot.anchor {
+        case .message(let entryIndex):
+            guard let pos = indexedMessages.firstIndex(where: { $0.entryIndex == entryIndex }) else {
+                return nil
+            }
+            anchorMode = .explicitIndex(pos)
+        case .uniqueText:
+            anchorMode = .uniqueSubstring
+        }
+
+        guard let matchedPos = ConversationContextSlicer.resolveAnchor(
+            selectedText: selectedText,
+            in: indexedMessages.map(\.message),
+            mode: anchorMode
+        ) else {
+            return nil
+        }
+
+        let anchor = indexedMessages[matchedPos].entryIndex
+        let intervalStart = snapshot.entries[..<anchor].lastIndex(of: .gap).map { $0 + 1 } ?? 0
+        let continuousSlice = indexedMessages
+            .filter { $0.entryIndex >= intervalStart && $0.entryIndex <= anchor }
+            .map(\.message)
+        guard !continuousSlice.isEmpty else { return nil }
+
+        return ConversationContextSlicer.slice(
+            selectedText: selectedText,
+            messages: continuousSlice,
+            anchor: .explicitIndex(continuousSlice.count - 1),
+            sessionTitle: sessionTitle
         )
     }
 }

@@ -8,13 +8,16 @@ import KeyboardShortcuts
 import Observation
 import SwiftUI
 
-package enum SelectionPopupHost: String, Equatable, Sendable {
-    case antigravity = "com.google.antigravity"
-    case geminiApp = "com.google.GeminiMacOS"
+package enum SelectionPopupHost: Equatable, Sendable {
+    case antigravity
+    case geminiApp
 
     package init?(bundleIdentifier: String?) {
-        guard let bundleIdentifier else { return nil }
-        self.init(rawValue: bundleIdentifier)
+        switch bundleIdentifier {
+        case AppBundleID.antigravity: self = .antigravity
+        case AppBundleID.gemini: self = .geminiApp
+        default: return nil
+        }
     }
 }
 
@@ -152,35 +155,20 @@ package enum SelectionPopupLayout {
     }
 }
 
-package enum AntigravityWebAreaClassification: Equatable, Sendable {
-    case conversation
-    case childFrame
-    case disallowed
-
-    package static func classify(url: URL?) -> AntigravityWebAreaClassification {
-        guard let url else { return .disallowed }
-        if AntigravityConversationID(webAreaURL: url) != nil {
-            return .conversation
-        }
-        if let scheme = url.scheme?.lowercased(), scheme == "data" || scheme == "about" {
-            return .childFrame
-        }
-        return .disallowed
-    }
-
-    package static func classify(rawURLString: String?) -> AntigravityWebAreaClassification {
-        guard let rawURLString, let url = URL(string: rawURLString) else {
-            return .disallowed
-        }
-        return classify(url: url)
-    }
-}
-
 package enum SelectionPopupPhase: Equatable, Sendable {
     case hidden
     case ready(shortcutHint: String?)
     case saving
     case saved(offline: Bool)
+
+    package var labelText: String {
+        switch self {
+        case .hidden: ""
+        case .ready: "暂存"
+        case .saving: "暂存中…"
+        case .saved(let offline): offline ? "待同步" : "已同步"
+        }
+    }
 
     package struct CaptureResolution: Equatable, Sendable {
         package let nextPhase: SelectionPopupPhase
@@ -215,7 +203,7 @@ enum SelectionPopupAXProbe {
         sample: SelectionGestureEvaluator.Sample,
         primaryScreenHeight: CGFloat
     ) -> Result? {
-        guard MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false) else {
+        guard AXSupport.isTrusted(prompt: false) else {
             return nil
         }
         let appElement = AXUIElementCreateApplication(pid)
@@ -281,18 +269,18 @@ enum SelectionPopupAXProbe {
         primaryScreenHeight: CGFloat
     ) -> Result? {
         _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        let focused = axElement(axValue(appElement, kAXFocusedUIElementAttribute))
+        let focused = AXSupport.focusedElement(appElement)
         guard !hasDisallowedAntigravityAncestor(focused),
               !hasDisallowedAntigravityAncestor(hitUp) else {
             return nil
         }
 
-        let window = axElement(axValue(appElement, kAXFocusedWindowAttribute))
-        let rawHitWebArea = nearestRawWebArea(hitUp)
+        let window = AXSupport.focusedWindow(appElement)
+        let rawHitWebArea = AXSupport.nearestWebArea(hitUp)
         if let rawHitWebArea, !isAllowedAntigravityWebArea(rawHitWebArea, in: window) {
             return nil
         }
-        let rawFocusedWebArea = nearestRawWebArea(focused)
+        let rawFocusedWebArea = AXSupport.nearestWebArea(focused)
         if let rawFocusedWebArea, !isAllowedAntigravityWebArea(rawFocusedWebArea, in: window) {
             return nil
         }
@@ -327,7 +315,7 @@ enum SelectionPopupAXProbe {
         sample: SelectionGestureEvaluator.Sample,
         primaryScreenHeight: CGFloat
     ) -> Result? {
-        let focused = axElement(axValue(appElement, kAXFocusedUIElementAttribute))
+        let focused = AXSupport.focusedElement(appElement)
         guard !hasDisallowedGeminiAncestor(focused),
               !hasDisallowedGeminiAncestor(hitUp) else {
             return nil
@@ -366,17 +354,17 @@ enum SelectionPopupAXProbe {
         var depth = 0
         while let node = current, depth < 48 {
             depth += 1
-            let role = string(node, kAXRoleAttribute) ?? ""
+            let role = AXSupport.role(node) ?? ""
             if [kAXTextAreaRole, kAXTextFieldRole, kAXComboBoxRole].contains(role) {
                 return true
             }
-            if MacOSAccessibilitySelectionCapturer.hasEditableAncestorValue(node) {
+            if AXSupport.hasEditableAncestorValue(node) {
                 return true
             }
             if role == "AXWebArea" {
                 return false
             }
-            current = axElement(axValue(node, kAXParentAttribute))
+            current = AXSupport.parent(node)
         }
         return false
     }
@@ -394,33 +382,15 @@ enum SelectionPopupAXProbe {
         var depth = 0
         while let node = current, depth < 48 {
             depth += 1
-            if let role = string(node, kAXRoleAttribute), rejectedRoles.contains(role) {
+            if let role = AXSupport.role(node), rejectedRoles.contains(role) {
                 return true
             }
-            if MacOSAccessibilitySelectionCapturer.hasEditableAncestorValue(node) {
+            if AXSupport.hasEditableAncestorValue(node) {
                 return true
             }
-            current = axElement(axValue(node, kAXParentAttribute))
+            current = AXSupport.parent(node)
         }
         return false
-    }
-
-    private static func nearestRawWebArea(_ element: AXUIElement?) -> AXUIElement? {
-        var current = element
-        var depth = 0
-        while let node = current, depth < 48 {
-            depth += 1
-            if string(node, kAXRoleAttribute) == "AXWebArea" {
-                return node
-            }
-            current = axElement(axValue(node, kAXParentAttribute))
-        }
-        return nil
-    }
-
-    private static func webAreaURL(of area: AXUIElement) -> URL? {
-        let rawURL = axValue(area, kAXURLAttribute)
-        return (rawURL as? URL) ?? (rawURL as? String).flatMap { URL(string: $0) }
     }
 
     private static func enclosingConversationWebArea(of area: AXUIElement) -> AXUIElement? {
@@ -428,27 +398,27 @@ enum SelectionPopupAXProbe {
         var depth = 0
         while let node = current, depth < 48 {
             depth += 1
-            if string(node, kAXRoleAttribute) == "AXWebArea",
-               AntigravityWebAreaClassification.classify(url: webAreaURL(of: node)) == .conversation {
+            if AXSupport.role(node) == "AXWebArea",
+               AntigravityWebAreaClassification.classify(webArea: node) == .conversation {
                 return node
             }
-            current = axElement(axValue(node, kAXParentAttribute))
+            current = AXSupport.parent(node)
         }
         return nil
     }
 
     private static func containsActiveConversationWebArea(in element: AXUIElement, depth: Int) -> Bool {
         guard depth < 24 else { return false }
-        let role = string(element, kAXRoleAttribute) ?? ""
+        let role = AXSupport.role(element) ?? ""
         if [kAXMenuBarRole, kAXStaticTextRole, kAXImageRole, kAXScrollBarRole, kAXToolbarRole].contains(role) {
             return false
         }
         if role == "AXWebArea",
-           !MacOSAccessibilitySelectionCapturer.hasEditableAncestorValue(element),
-           AntigravityWebAreaClassification.classify(url: webAreaURL(of: element)) == .conversation {
+           !AXSupport.hasEditableAncestorValue(element),
+           AntigravityWebAreaClassification.classify(webArea: element) == .conversation {
             return true
         }
-        for child in children(element) {
+        for child in AXSupport.children(element) {
             if containsActiveConversationWebArea(in: child, depth: depth + 1) {
                 return true
             }
@@ -457,18 +427,18 @@ enum SelectionPopupAXProbe {
     }
 
     private static func isAllowedAntigravityWebArea(_ webArea: AXUIElement, in window: AXUIElement?) -> Bool {
-        switch AntigravityWebAreaClassification.classify(url: webAreaURL(of: webArea)) {
+        switch AntigravityWebAreaClassification.classify(webArea: webArea) {
         case .conversation:
             return true
         case .disallowed:
             return false
         case .childFrame:
-            var parent = axElement(axValue(webArea, kAXParentAttribute))
+            var parent = AXSupport.parent(webArea)
             var depth = 0
             while let node = parent, depth < 48 {
                 depth += 1
-                if string(node, kAXRoleAttribute) == "AXWebArea" {
-                    switch AntigravityWebAreaClassification.classify(url: webAreaURL(of: node)) {
+                if AXSupport.role(node) == "AXWebArea" {
+                    switch AntigravityWebAreaClassification.classify(webArea: node) {
                     case .conversation:
                         return true
                     case .disallowed:
@@ -477,7 +447,7 @@ enum SelectionPopupAXProbe {
                         break
                     }
                 }
-                parent = axElement(axValue(node, kAXParentAttribute))
+                parent = AXSupport.parent(node)
             }
             guard let window else { return false }
             return containsActiveConversationWebArea(in: window, depth: 0)
@@ -485,7 +455,7 @@ enum SelectionPopupAXProbe {
     }
 
     private static func owningWebArea(_ element: AXUIElement?, in window: AXUIElement?) -> AXUIElement? {
-        guard let rawArea = nearestRawWebArea(element),
+        guard let rawArea = AXSupport.nearestWebArea(element),
               isAllowedAntigravityWebArea(rawArea, in: window) else {
             return nil
         }
@@ -505,19 +475,19 @@ enum SelectionPopupAXProbe {
         into matches: inout [AXUIElement]
     ) {
         guard depth < 24, matches.count <= 1 else { return }
-        let role = string(element, kAXRoleAttribute) ?? ""
+        let role = AXSupport.role(element) ?? ""
         if [kAXMenuBarRole, kAXStaticTextRole, kAXImageRole, kAXScrollBarRole, kAXToolbarRole].contains(role) {
             return
         }
         if role == "AXWebArea",
-           !MacOSAccessibilitySelectionCapturer.hasEditableAncestorValue(element),
+           !AXSupport.hasEditableAncestorValue(element),
            isAllowedAntigravityWebArea(element, in: rootWindow),
            hasNonEmptySelectedText(element),
            !matches.contains(where: { CFEqual($0, element) }) {
             matches.append(element)
             if matches.count > 1 { return }
         }
-        for child in children(element) {
+        for child in AXSupport.children(element) {
             collectSelectedWebAreas(in: child, rootWindow: rootWindow, depth: depth + 1, into: &matches)
             if matches.count > 1 { return }
         }
@@ -525,7 +495,7 @@ enum SelectionPopupAXProbe {
 
     private static func hasNonEmptySelectedText(_ element: AXUIElement?) -> Bool {
         guard let element,
-              let text = string(element, kAXSelectedTextAttribute) else {
+              let text = AXSupport.string(element, kAXSelectedTextAttribute) else {
             return false
         }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -536,27 +506,21 @@ enum SelectionPopupAXProbe {
         if hasNonEmptySelectedText(element) {
             return true
         }
-        if let rawRange = axValue(element, kAXSelectedTextRangeAttribute),
-           CFGetTypeID(rawRange) == AXValueGetTypeID() {
-            let axRange = unsafeDowncast(rawRange as AnyObject, to: AXValue.self)
-            var cfRange = CFRange()
-            if AXValueGetType(axRange) == .cfRange,
-               AXValueGetValue(axRange, .cfRange, &cfRange),
-               cfRange.location != kCFNotFound,
-               cfRange.length > 0 {
-                return true
-            }
+        if let cfRange = AXSupport.cfRange(AXSupport.value(element, kAXSelectedTextRangeAttribute)),
+           cfRange.location != kCFNotFound,
+           cfRange.length > 0 {
+            return true
         }
         return false
     }
 
     private static func editMenuCommandStates(in appElement: AXUIElement) -> (cutEnabled: Bool, copyEnabled: Bool) {
-        guard let menuBar = axElement(axValue(appElement, kAXMenuBarAttribute)) else {
+        guard let menuBar = AXSupport.element(appElement, kAXMenuBarAttribute) else {
             return (false, false)
         }
-        let barItems = children(menuBar)
+        let barItems = AXSupport.children(menuBar)
         let editItems = barItems.filter { item in
-            let title = string(item, kAXTitleAttribute) ?? ""
+            let title = AXSupport.title(item) ?? ""
             return title == "Edit" || title == "编辑"
         }
         let candidateBarItems = editItems.isEmpty ? barItems : editItems
@@ -564,12 +528,12 @@ enum SelectionPopupAXProbe {
         var cutEnabled = false
         var copyEnabled = false
         for barItem in candidateBarItems {
-            for menu in children(barItem) {
-                for menuItem in children(menu) {
-                    guard let cmd = string(menuItem, kAXMenuItemCmdCharAttribute)?.uppercased() else { continue }
-                    let mods = (axValue(menuItem, kAXMenuItemCmdModifiersAttribute) as? Int) ?? 0
+            for menu in AXSupport.children(barItem) {
+                for menuItem in AXSupport.children(menu) {
+                    guard let cmd = AXSupport.string(menuItem, kAXMenuItemCmdCharAttribute)?.uppercased() else { continue }
+                    let mods = AXSupport.int(menuItem, kAXMenuItemCmdModifiersAttribute) ?? 0
                     guard mods == 0 else { continue }
-                    let enabled = (axValue(menuItem, kAXEnabledAttribute) as? Bool) ?? false
+                    let enabled = AXSupport.bool(menuItem, kAXEnabledAttribute) ?? false
                     if cmd == "X" && enabled { cutEnabled = true }
                     if cmd == "C" && enabled { copyEnabled = true }
                 }
@@ -593,10 +557,10 @@ enum SelectionPopupAXProbe {
         var depth = 0
         while let node = current, depth < 40 {
             depth += 1
-            let role = string(node, kAXRoleAttribute) ?? ""
-            let identifier = string(node, kAXIdentifierAttribute) ?? ""
-            let title = string(node, kAXTitleAttribute) ?? ""
-            let desc = string(node, kAXDescriptionAttribute) ?? ""
+            let role = AXSupport.role(node) ?? ""
+            let identifier = AXSupport.identifier(node) ?? ""
+            let title = AXSupport.title(node) ?? ""
+            let desc = AXSupport.descriptionText(node) ?? ""
 
             if rejectedIdentifiers.contains(identifier)
                 || rejectedLabels.contains(title)
@@ -604,47 +568,39 @@ enum SelectionPopupAXProbe {
                 return false
             }
             if [kAXButtonRole, kAXMenuButtonRole, kAXPopUpButtonRole].contains(role),
-               !isGeminiCodeAttachment(node) {
+               !AXSupport.isGeminiCodeAttachment(node) {
                 return false
             }
             if role == kAXStaticTextRole,
-               let text = string(node, kAXValueAttribute),
+               let text = AXSupport.string(node, kAXValueAttribute),
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 matchedMessageContent = true
             } else if role == "AXHeading",
                       !desc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 matchedMessageContent = true
-            } else if isGeminiCodeAttachment(node) {
+            } else if AXSupport.isGeminiCodeAttachment(node) {
                 matchedMessageContent = true
             }
 
             if role == kAXRowRole,
-               let parent = axElement(axValue(node, kAXParentAttribute)),
-               children(parent).contains(where: {
-                   string($0, kAXRoleAttribute) == kAXColumnRole && string($0, kAXIdentifierAttribute) == "content"
+               let parent = AXSupport.parent(node),
+               AXSupport.children(parent).contains(where: {
+                   AXSupport.role($0) == kAXColumnRole && AXSupport.identifier($0) == "content"
                }) {
                 insideConversationRow = true
                 break
             }
-            current = axElement(axValue(node, kAXParentAttribute))
+            current = AXSupport.parent(node)
         }
         return matchedMessageContent && insideConversationRow
-    }
-
-    private static func isGeminiCodeAttachment(_ node: AXUIElement) -> Bool {
-        string(node, kAXRoleAttribute) == kAXButtonRole && NativeChatCodeBlock.geminiAttachment(
-            identifier: string(node, kAXIdentifierAttribute),
-            description: string(node, kAXDescriptionAttribute),
-            renderedText: string(node, kAXValueAttribute)
-        ) != nil
     }
 
     private static func markerSelectionBounds(
         on webArea: AXUIElement,
         primaryScreenHeight: CGFloat
     ) -> CGRect? {
-        guard let markerRange = axValue(webArea, "AXSelectedTextMarkerRange"),
-              let boundsRef = parameterizedValue(webArea, "AXBoundsForTextMarkerRange", markerRange) else {
+        guard let markerRange = AXSupport.value(webArea, "AXSelectedTextMarkerRange"),
+              let boundsRef = AXSupport.parameterizedValue(webArea, "AXBoundsForTextMarkerRange", markerRange) else {
             return nil
         }
         return unpackAppKitRect(from: boundsRef, primaryScreenHeight: primaryScreenHeight)
@@ -655,28 +611,18 @@ enum SelectionPopupAXProbe {
         primaryScreenHeight: CGFloat
     ) -> CGRect? {
         guard let element,
-              let rangeValue = axValue(element, kAXSelectedTextRangeAttribute),
-              CFGetTypeID(rangeValue) == AXValueGetTypeID() else {
-            return nil
-        }
-        let axRange = unsafeDowncast(rangeValue as AnyObject, to: AXValue.self)
-        var cfRange = CFRange()
-        guard AXValueGetType(axRange) == .cfRange,
-              AXValueGetValue(axRange, .cfRange, &cfRange),
+              let rangeValue = AXSupport.value(element, kAXSelectedTextRangeAttribute),
+              let cfRange = AXSupport.cfRange(rangeValue),
               cfRange.location != kCFNotFound,
               cfRange.length > 0,
-              let boundsRef = parameterizedValue(element, kAXBoundsForRangeParameterizedAttribute, rangeValue) else {
+              let boundsRef = AXSupport.parameterizedValue(element, kAXBoundsForRangeParameterizedAttribute, rangeValue) else {
             return nil
         }
         return unpackAppKitRect(from: boundsRef, primaryScreenHeight: primaryScreenHeight)
     }
 
     private static func unpackAppKitRect(from ref: CFTypeRef, primaryScreenHeight: CGFloat) -> CGRect? {
-        guard CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
-        let axVal = unsafeDowncast(ref as AnyObject, to: AXValue.self)
-        var quartzRect = CGRect.zero
-        guard AXValueGetType(axVal) == .cgRect,
-              AXValueGetValue(axVal, .cgRect, &quartzRect),
+        guard let quartzRect = AXSupport.cgRect(ref),
               quartzRect.width > 0,
               quartzRect.height > 0,
               quartzRect.origin.x.isFinite,
@@ -684,37 +630,6 @@ enum SelectionPopupAXProbe {
             return nil
         }
         return SelectionPopupLayout.appKitRect(fromQuartz: quartzRect, primaryScreenHeight: primaryScreenHeight)
-    }
-
-    private static func children(_ node: AXUIElement) -> [AXUIElement] {
-        axValue(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    }
-
-    private static func string(_ node: AXUIElement, _ attribute: String) -> String? {
-        axValue(node, attribute) as? String
-    }
-
-    private static func axValue(_ node: AXUIElement, _ attribute: String) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(node, attribute as CFString, &result) == .success else { return nil }
-        return result
-    }
-
-    private static func parameterizedValue(
-        _ node: AXUIElement,
-        _ attribute: String,
-        _ parameter: CFTypeRef
-    ) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(node, attribute as CFString, parameter, &result) == .success else {
-            return nil
-        }
-        return result
-    }
-
-    private static func axElement(_ value: CFTypeRef?) -> AXUIElement? {
-        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return unsafeDowncast(value as AnyObject, to: AXUIElement.self)
     }
 }
 
@@ -795,20 +710,11 @@ struct SelectionPopupView: View {
         return false
     }
 
-    private var labelText: String {
-        switch phase {
-        case .hidden: ""
-        case .ready: "暂存"
-        case .saving: "暂存中…"
-        case .saved(let offline): offline ? "待同步" : "已暂存"
-        }
-    }
-
     var body: some View {
         Button(action: onStash) {
             HStack(spacing: 6) {
                 leadingAccessory
-                Text(labelText)
+                Text(phase.labelText)
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.primary)
                 if case .ready(let hint) = phase, let hint, !hint.isEmpty {
@@ -832,7 +738,7 @@ struct SelectionPopupView: View {
         .disabled(!isInteractive)
         .environment(\.controlActiveState, .key)
         .accessibilityIdentifier("selectionPopup.stash")
-        .accessibilityLabel(labelText)
+        .accessibilityLabel(phase.labelText)
     }
 
     @ViewBuilder
@@ -1000,9 +906,14 @@ public final class SelectionPopupController {
         if outcome == .ignoredBusy {
             return
         }
+        let canShowSaved = isRunning && phase == .saving && appearance.showsSelectionPopup
         let resolution = SelectionPopupPhase.resolveCaptureOutcome(outcome)
         switch resolution.nextPhase {
         case .saved(let offline):
+            guard canShowSaved else {
+                hideImmediately()
+                return
+            }
             setPhase(.saved(offline: offline))
             scheduleHideAfterSavedHold()
         case .saving:

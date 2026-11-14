@@ -8,9 +8,9 @@ import Foundation
 public enum CodexAppIntegration {
     public static func delivery(
         environment: [String: String],
-        applicationURL: URL? = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.openai.codex"),
+        applicationURL: URL? = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.codex),
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-    ) -> (@Sendable (ConversationRequest) -> (ConversationReceipt.State, String?))? {
+    ) -> (@Sendable (ConversationRequest) async -> (ConversationReceipt.State, String?))? {
         let binary: URL?
         if let configured = environment["CODING_REWIND_CODEX_BIN"] {
             let candidate = URL(fileURLWithPath: configured)
@@ -22,15 +22,15 @@ public enum CodexAppIntegration {
             ].compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0.path) }
         }
         guard let binary else { return nil }
-        let childEnvironment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("CODING_REWIND_") }
+        let childEnvironment = ProcessInfo.processInfo.environment
+            .merging(environment) { _, new in new }
+            .filter { !$0.key.hasPrefix("CODING_REWIND_") }
         let client = CodexConversationClient(binaryURL: binary, environment: childEnvironment) { threadID in
-            DispatchQueue.main.sync {
-                MainActor.assumeIsolated {
-                    guard let url = URL(string: "codex://threads/wake/\(threadID.uuidString.lowercased())") else { return false }
-                    return NSWorkspace.shared.open(url)
-                }
+            await MainActor.run {
+                guard let url = URL(string: "codex://threads/wake/\(threadID.uuidString.lowercased())") else { return false }
+                return NSWorkspace.shared.open(url)
             }
         }
-        return { client.deliver($0) }
+        return { await client.deliver($0) }
     }
 }

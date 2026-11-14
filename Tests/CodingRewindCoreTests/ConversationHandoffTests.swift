@@ -99,6 +99,40 @@ struct ConversationHandoffTests {
         #expect(try store.receipt(for: completed.requestId) == nil)
     }
 
+    @Test("Request lifetime outlives the 40-second delivery window so a 35-second in-flight request still dispatches")
+    func lifetimeCoversDeliveryWindow() async throws {
+        #expect(ConversationRequest.lifetime == 45)
+        #expect(ConversationRequest.lifetime > 40)
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: .codex)
+        let submittedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let inFlight = try store.submit(prompt: "35s in-flight prompt", cardIDs: ["memo"], markSynthesized: false, now: submittedAt)
+        let worker = try ConversationSidecarWorker(store: store)
+        let expectedID = UUID().uuidString
+        var dispatchedPrompts: [String] = []
+        try await worker.processPending(now: submittedAt.addingTimeInterval(35)) { request in
+            await Task.yield()
+            #expect((try? store.receipt(for: inFlight.requestId))?.state == .dispatching)
+            dispatchedPrompts.append(request.prompt)
+            return (.succeeded, expectedID)
+        }
+        #expect(dispatchedPrompts == ["35s in-flight prompt"])
+        #expect(try store.receipt(for: inFlight.requestId)?.state == .succeeded)
+        #expect(try store.receipt(for: inFlight.requestId)?.conversationId == expectedID)
+        #expect(try store.pendingRequests().isEmpty)
+
+        try store.clearCurrent(requestId: inFlight.requestId)
+        let pastLifetime = try store.submit(prompt: "46s expired prompt", cardIDs: ["memo"], markSynthesized: false, now: submittedAt)
+        try await worker.processPending(now: submittedAt.addingTimeInterval(46)) { _ in
+            await Task.yield()
+            Issue.record("Request past 45s lifetime must expire without dispatch")
+            return (.unknown, nil)
+        }
+        #expect(try store.receipt(for: pastLifetime.requestId)?.state == .expired)
+        #expect(try store.pendingRequests().isEmpty)
+    }
+
     @Test("A crash between saving current and publishing the request expires without resending")
     func unpublishedCurrentRecovery() throws {
         let root = try directory()
@@ -161,5 +195,63 @@ struct ConversationHandoffTests {
         #expect(SidecarAgentAPI.invoke(prompt: prompt, environment: environment.merging(["BAD": "1"]) { _, new in new }).0 == .unknown)
         #expect(SidecarAgentAPI.invoke(prompt: prompt, environment: environment.merging(["SLOW": "1"]) { _, new in new }, timeout: 0.05).0 == .unknown)
         #expect(SidecarAgentAPI.invoke(prompt: prompt, environment: ["PATH": root.appendingPathComponent("absent").path]).0 == .rejected)
+    }
+
+    @Test("acquireIfUnlocked returns nil on contention, throws on symlink worker.lock, and evaluates fresh timestamps per batch item")
+    func nonBlockingLockAndFreshBatchTimestamps() async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: .codex)
+
+        do {
+            let first = try #require(try ConversationSidecarWorker.acquireIfUnlocked(store: store))
+            #expect(try ConversationSidecarWorker.acquireIfUnlocked(store: store) == nil)
+            _ = first
+        }
+        #expect(try ConversationSidecarWorker.acquireIfUnlocked(store: store) != nil)
+
+        let symlinkRoot = try directory()
+        defer { try? FileManager.default.removeItem(at: symlinkRoot) }
+        let unsafeStore = try ConversationHandoffStore(dataDirectoryURL: symlinkRoot, host: .codex)
+        let victim = symlinkRoot.appendingPathComponent("victim-lock")
+        try AtomicFile.writeUTF8("x", to: victim)
+        try FileManager.default.createSymbolicLink(
+            at: unsafeStore.directory.appendingPathComponent("worker.lock"),
+            withDestinationURL: victim
+        )
+        #expect(throws: RewindError.self) {
+            _ = try ConversationSidecarWorker.acquireIfUnlocked(store: unsafeStore)
+        }
+
+        let batchRoot = try directory()
+        defer { try? FileManager.default.removeItem(at: batchRoot) }
+        let batchStore = try ConversationHandoffStore(dataDirectoryURL: batchRoot, host: .codex)
+        let baseNow = Date()
+        let firstCreated = baseNow.addingTimeInterval(-(ConversationRequest.lifetime - 0.20))
+        let secondCreated = baseNow.addingTimeInterval(-(ConversationRequest.lifetime - 0.25))
+        let firstReq = ConversationRequest(prompt: "first", now: firstCreated)
+        let secondReq = ConversationRequest(prompt: "second", now: secondCreated)
+        let encoder = JSONEncoder()
+        try AtomicFile.writeData(
+            encoder.encode(firstReq),
+            to: batchStore.directory.appendingPathComponent("requests/\(firstReq.requestId.uuidString).json"),
+            permissions: 0o600
+        )
+        try AtomicFile.writeData(
+            encoder.encode(secondReq),
+            to: batchStore.directory.appendingPathComponent("requests/\(secondReq.requestId.uuidString).json"),
+            permissions: 0o600
+        )
+
+        let worker = try ConversationSidecarWorker(store: batchStore)
+        var invokedIDs: [UUID] = []
+        try await worker.processPending { req in
+            invokedIDs.append(req.requestId)
+            try? await Task.sleep(for: .milliseconds(350))
+            return (.succeeded, UUID().uuidString)
+        }
+        #expect(invokedIDs == [firstReq.requestId])
+        #expect(try batchStore.receipt(for: firstReq.requestId)?.state == .succeeded)
+        #expect(try batchStore.receipt(for: secondReq.requestId)?.state == .expired)
     }
 }

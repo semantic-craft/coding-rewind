@@ -73,7 +73,7 @@ for rel in files:
         continue
     text = fpath.read_text(encoding="utf-8", errors="replace")
 
-    if rel.startswith(("Sources/", "Tests/", "deploy/", "extensions/")):
+    if rel.startswith(("Sources/", "Tests/", "deploy/", "extensions/", "scripts/")):
         for lineno, line in enumerate(text.splitlines(), start=1):
             if "/api/v1/memos" in line and not any(tok in line for tok in normalizer_tokens):
                 errors.append(f"{rel}:{lineno}: legacy /api/v1/memos endpoint detected (use /api/memos)")

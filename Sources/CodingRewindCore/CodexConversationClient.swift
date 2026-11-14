@@ -42,13 +42,8 @@ private final class CodexRPCProcess {
     func stop() {
         guard started else { return }
         try? input.fileHandleForWriting.close()
-        let grace = Date().addingTimeInterval(0.3)
-        while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.01) }
-        if process.isRunning { process.terminate() }
-        let terminationDeadline = Date().addingTimeInterval(0.2)
-        while process.isRunning && Date() < terminationDeadline { Thread.sleep(forTimeInterval: 0.01) }
-        if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
-        process.waitUntilExit()
+        process.waitForExit(within: 0.3)
+        process.terminateGracefully()
         started = false
     }
 
@@ -90,23 +85,74 @@ private final class CodexRPCProcess {
 }
 
 public struct CodexConversationClient: Sendable {
+    private enum QueueStep: Sendable {
+        case queued(threadID: UUID, rawThreadID: String, clientID: String)
+        case failed(ConversationReceipt.State)
+    }
+
     private let binaryURL: URL
     private let environment: [String: String]
-    private let wakeThread: @Sendable (UUID) -> Bool
-    private let timeout: TimeInterval
+    private let wakeThread: @Sendable (UUID) async -> Bool
 
-    public init(binaryURL: URL, environment: [String: String], timeout: TimeInterval = 40, wakeThread: @escaping @Sendable (UUID) -> Bool) {
+    public init(
+        binaryURL: URL,
+        environment: [String: String],
+        wakeThread: @escaping @Sendable (UUID) async -> Bool
+    ) {
         self.binaryURL = binaryURL
         self.environment = environment
-        self.timeout = timeout
         self.wakeThread = wakeThread
     }
 
-    public func deliver(_ request: ConversationRequest) -> (ConversationReceipt.State, String?) {
+    public func deliver(_ request: ConversationRequest, timeout: TimeInterval = 40) async -> (ConversationReceipt.State, String?) {
         let deadline = Date().addingTimeInterval(timeout)
+        let binaryURL = self.binaryURL
+        let environment = self.environment
+        let step = await Self.runBlocking {
+            Self.enqueuePrompt(request, binaryURL: binaryURL, environment: environment, deadline: deadline)
+        }
+        let threadID: UUID
+        let rawThreadID: String
+        let clientID: String
+        switch step {
+        case .queued(let id, let raw, let client):
+            threadID = id
+            rawThreadID = raw
+            clientID = client
+        case .failed(let state):
+            return (state, nil)
+        }
+        guard await wakeThread(threadID) else { return (.unknown, nil) }
+        return await Self.runBlocking {
+            Self.confirmFirstTurn(
+                prompt: request.prompt,
+                rawThreadID: rawThreadID,
+                clientID: clientID,
+                binaryURL: binaryURL,
+                environment: environment,
+                deadline: deadline
+            )
+        }
+    }
+
+    private static func runBlocking<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: body())
+            }
+        }
+    }
+
+    private static func enqueuePrompt(
+        _ request: ConversationRequest,
+        binaryURL: URL,
+        environment: [String: String],
+        deadline: Date
+    ) -> QueueStep {
         var attemptedThreadCreation = false
         do {
             let creator = try CodexRPCProcess(binaryURL: binaryURL, environment: environment, deadline: deadline)
+            defer { creator.stop() }
             attemptedThreadCreation = true
             let started = try creator.request("thread/start", parameters: [
                 "cwd": FileManager.default.homeDirectoryForCurrentUser.path,
@@ -124,8 +170,9 @@ public struct CodexConversationClient: Sendable {
             creator.stop()
 
             let reader = try CodexRPCProcess(binaryURL: binaryURL, environment: environment, deadline: deadline)
+            defer { reader.stop() }
             let empty = try reader.request("thread/read", parameters: ["threadId": id, "includeTurns": true])
-            guard Self.isEmptyReleasedThread(empty, id: id) else {
+            guard isEmptyReleasedThread(empty, id: id) else {
                 throw RewindError.ioError("Codex thread was not empty and released")
             }
             let clientID = request.requestId.uuidString.lowercased()
@@ -136,40 +183,54 @@ public struct CodexConversationClient: Sendable {
             guard let submission = queued["queuedSubmission"] as? [String: Any],
                   let submissionID = submission["id"] as? String, !submissionID.isEmpty,
                   submission["clientUserMessageId"] as? String == clientID,
-                  Self.text(in: submission["input"])?.utf8.elementsEqual(request.prompt.utf8) == true else {
+                  text(in: submission["input"])?.utf8.elementsEqual(request.prompt.utf8) == true else {
                 throw RewindError.ioError("Codex did not confirm the queued prompt")
             }
             let queue = try reader.request("thread/queue/list", parameters: ["threadId": id])
             guard let entries = queue["data"] as? [[String: Any]], entries.count == 1,
                   entries[0]["id"] as? String == submissionID,
                   entries[0]["clientUserMessageId"] as? String == clientID,
-                  Self.text(in: entries[0]["input"])?.utf8.elementsEqual(request.prompt.utf8) == true,
+                  text(in: entries[0]["input"])?.utf8.elementsEqual(request.prompt.utf8) == true,
                   queue["nextCursor"] == nil || queue["nextCursor"] is NSNull else {
                 throw RewindError.ioError("Codex queue readback did not match the prompt")
             }
             let queuedThread = try reader.request("thread/read", parameters: ["threadId": id, "includeTurns": true])
-            guard Self.isEmptyReleasedThread(queuedThread, id: id) else {
+            guard isEmptyReleasedThread(queuedThread, id: id) else {
                 throw RewindError.ioError("Codex started the thread before App handoff")
             }
-            reader.stop()
-            guard wakeThread(threadID) else { return (.unknown, nil) }
+            return .queued(threadID: threadID, rawThreadID: id, clientID: clientID)
+        } catch {
+            return .failed(attemptedThreadCreation ? .unknown : .rejected)
+        }
+    }
+
+    private static func confirmFirstTurn(
+        prompt: String,
+        rawThreadID: String,
+        clientID: String,
+        binaryURL: URL,
+        environment: [String: String],
+        deadline: Date
+    ) -> (ConversationReceipt.State, String?) {
+        do {
             let observer = try CodexRPCProcess(binaryURL: binaryURL, environment: environment, deadline: deadline)
+            defer { observer.stop() }
             while Date() < deadline {
-                let readback = try observer.request("thread/read", parameters: ["threadId": id, "includeTurns": true])
-                if let received = readback["thread"] as? [String: Any], received["id"] as? String == id,
+                let readback = try observer.request("thread/read", parameters: ["threadId": rawThreadID, "includeTurns": true])
+                if let received = readback["thread"] as? [String: Any], received["id"] as? String == rawThreadID,
                    let turns = received["turns"] as? [[String: Any]],
                    let firstTurn = turns.first, let turnID = firstTurn["id"] as? String, !turnID.isEmpty,
                    let items = firstTurn["items"] as? [[String: Any]],
                    let user = items.first(where: { $0["type"] as? String == "userMessage" }),
                    user["clientId"] as? String == clientID,
-                   Self.text(in: user["content"])?.utf8.elementsEqual(request.prompt.utf8) == true {
-                    return (.succeeded, id)
+                   text(in: user["content"])?.utf8.elementsEqual(prompt.utf8) == true {
+                    return (.succeeded, rawThreadID)
                 }
                 Thread.sleep(forTimeInterval: 0.2)
             }
             return (.unknown, nil)
         } catch {
-            return (attemptedThreadCreation ? .unknown : .rejected, nil)
+            return (.unknown, nil)
         }
     }
 

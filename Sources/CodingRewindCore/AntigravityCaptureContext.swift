@@ -43,58 +43,54 @@ public struct AntigravityCaptureContext: Sendable {
             .appendingPathComponent(".system_generated/logs/transcript.jsonl", isDirectory: false)
         return await Task.detached {
             guard let messages = try? Self.readMessages(from: transcript) else { return nil }
-            return Self.context(for: selectedText, in: messages, sessionTitle: sessionTitle)
+            return ConversationContextSlicer.slice(
+                selectedText: selectedText,
+                messages: messages,
+                anchor: .uniqueSubstring,
+                sessionTitle: sessionTitle
+            )
         }.value
     }
 
-    private struct Message {
-        enum Role: String {
-            case user = "User"
-            case assistant = "Assistant"
+    private static func parseMessage(record: [String: Any]) throws -> ConversationContextSlicer.Message? {
+        let stepType = (record["type"] as? String) ?? (record["event"] as? [String: Any])?["type"] as? String
+        let userInput = record["userInput"] as? [String: Any]
+        let role: ConversationContextSlicer.Role
+        switch stepType {
+        case "USER_INPUT":
+            let source = (record["source"] as? String) ?? (userInput?["source"] as? String) ?? "USER"
+            guard source == "USER" || source == "USER_EXPLICIT" else { return nil }
+            role = .user
+        case "PLANNER_RESPONSE", "MODEL_OUTPUT":
+            role = .assistant
+        case .some:
+            return nil
+        case nil:
+            throw CocoaError(.fileReadCorruptFile)
         }
 
-        let role: Role
+        let content = record["content"] ?? userInput?["content"] ?? record["text"]
         let text: String
-        let truncatedByHost: Bool
-
-        var excerpt: String {
-            let limit = 800
-            return text.count > limit || truncatedByHost ? String(text.prefix(limit)) + "…" : text
+        switch content {
+        case let string as String:
+            text = string
+        case let parts as [[String: Any]]:
+            text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
+        case nil:
+            guard role == .user else { return nil }
+            text = ""
+        default:
+            throw CocoaError(.fileReadCorruptFile)
         }
-
-        init?(record: [String: Any]) throws {
-            let stepType = (record["type"] as? String) ?? (record["event"] as? [String: Any])?["type"] as? String
-            let userInput = record["userInput"] as? [String: Any]
-            switch stepType {
-            case "USER_INPUT":
-                let source = (record["source"] as? String) ?? (userInput?["source"] as? String) ?? "USER"
-                guard source == "USER" || source == "USER_EXPLICIT" else { return nil }
-                role = .user
-            case "PLANNER_RESPONSE", "MODEL_OUTPUT":
-                role = .assistant
-            case .some:
-                return nil
-            case nil:
-                throw CocoaError(.fileReadCorruptFile)
-            }
-
-            let content = record["content"] ?? userInput?["content"] ?? record["text"]
-            switch content {
-            case let string as String:
-                text = string
-            case let parts as [[String: Any]]:
-                text = parts.compactMap { $0["text"] as? String }.joined(separator: "\n")
-            case nil:
-                guard role == .user else { return nil }
-                text = ""
-            default:
-                throw CocoaError(.fileReadCorruptFile)
-            }
-            truncatedByHost = (record["truncated_fields"] as? [String])?.contains("content") == true
-        }
+        let truncatedByHost = (record["truncated_fields"] as? [String])?.contains("content") == true
+        return ConversationContextSlicer.Message(
+            role: role,
+            matchText: text,
+            truncatedByHost: truncatedByHost
+        )
     }
 
-    private static func readMessages(from transcript: URL) throws -> [Message] {
+    private static func readMessages(from transcript: URL) throws -> [ConversationContextSlicer.Message] {
         let handle = try FileHandle(forReadingFrom: transcript)
         defer { try? handle.close() }
         let size = Int(try handle.seekToEnd())
@@ -108,33 +104,7 @@ public struct AntigravityCaptureContext: Sendable {
             guard let record = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else {
                 throw CocoaError(.fileReadCorruptFile)
             }
-            return try Message(record: record)
+            return try parseMessage(record: record)
         }
-    }
-
-    private static func context(for selectedText: String, in messages: [Message], sessionTitle: String) -> CaptureContext? {
-        let selection = selectedText.replacingOccurrences(of: "\r\n", with: "\n")
-        guard !selection.isEmpty else { return nil }
-        var anchor: Int?
-        for (index, message) in messages.enumerated() {
-            let text = message.text.replacingOccurrences(of: "\r\n", with: "\n")
-            guard text.range(of: selection, options: .literal) != nil else { continue }
-            guard anchor == nil else { return nil }
-            anchor = index
-        }
-        guard let anchor else { return nil }
-
-        let throughAnchor = messages[...anchor]
-        let roundStarts = throughAnchor.indices.filter { messages[$0].role == .user }.suffix(4)
-        let prompt: String
-        if messages[anchor].role == .assistant, let start = roundStarts.last {
-            prompt = messages[start].excerpt
-        } else {
-            prompt = ""
-        }
-        let context = throughAnchor[(roundStarts.first ?? anchor)...].map {
-            ConversationTurn(role: $0.role.rawValue, text: $0.excerpt)
-        }
-        return CaptureContext(sessionTitle: sessionTitle, prompt: prompt, recentTurns: context)
     }
 }

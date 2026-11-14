@@ -52,14 +52,16 @@ struct AppShortcutsTests {
         let launch = try #require(operations.items.first { $0.keyEquivalent == "\r" })
         let action = try #require(launch.action)
         let persistedIntent: Bool = await withCheckedContinuation { continuation in
-            coordinator.onOpenAntigravityApp = {
+            coordinator.onWakeHost = { host in
+                #expect(host == .antigravity)
                 do {
-                    guard let current = try coordinator.handoff.current() else {
+                    let store = coordinator.handoffStore(for: host)
+                    guard let current = try store.current() else {
                         Issue.record("Menu launch did not persist a handoff")
                         continuation.resume(returning: !archive)
                         return
                     }
-                    try coordinator.handoff.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
+                    try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
                     continuation.resume(returning: current.markSynthesized)
                 } catch {
                     Issue.record(error)
@@ -69,19 +71,19 @@ struct AppShortcutsTests {
             #expect(NSApplication.shared.sendAction(action, to: launch.target, from: launch))
         }
         #expect(persistedIntent == archive)
-        #expect(try coordinator.handoff.current()?.markSynthesized == archive)
+        #expect(try coordinator.handoffStore(for: .antigravity).current()?.markSynthesized == archive)
         #expect(coordinator.cards == [card])
     }
 
     @Test func qaPreferencesAreStableAndGated() {
         let data = URL(fileURLWithPath: "/qa/shortcuts")
-        #expect(AppShortcuts.preferencesSuite(environment: [:], dataDirectory: data) == nil)
-        #expect(AppShortcuts.preferencesSuite(environment: ["CODING_REWIND_SHORTCUTS_SUITE": "dev.codingrewind.qa.override"], dataDirectory: data) == nil)
+        #expect(AppPreferences.preferencesSuite(environment: [:], dataDirectory: data) == nil)
+        #expect(AppPreferences.preferencesSuite(environment: ["CODING_REWIND_SHORTCUTS_SUITE": "dev.codingrewind.qa.override"], dataDirectory: data) == nil)
         let env = ["CODING_REWIND_QA": "1"]
-        let suite = AppShortcuts.preferencesSuite(environment: env, dataDirectory: data)
-        #expect(suite == AppShortcuts.preferencesSuite(environment: env, dataDirectory: data))
-        #expect(suite != AppShortcuts.preferencesSuite(environment: env, dataDirectory: data.appendingPathComponent("other")))
-        #expect(AppShortcuts.preferencesSuite(environment: ["CODING_REWIND_QA": "1", "CODING_REWIND_SHORTCUTS_SUITE": "dev.codingrewind.app"], dataDirectory: data) == suite)
+        let suite = AppPreferences.preferencesSuite(environment: env, dataDirectory: data)
+        #expect(suite == AppPreferences.preferencesSuite(environment: env, dataDirectory: data))
+        #expect(suite != AppPreferences.preferencesSuite(environment: env, dataDirectory: data.appendingPathComponent("other")))
+        #expect(AppPreferences.preferencesSuite(environment: ["CODING_REWIND_QA": "1", "CODING_REWIND_SHORTCUTS_SUITE": "dev.codingrewind.app"], dataDirectory: data) == suite)
     }
 
     @Test func hyperValidationRejectsTypingAndDuplicateActions() {
@@ -365,6 +367,230 @@ struct AppShortcutsTests {
         try await Task.sleep(for: .milliseconds(25))
         #expect(popup.phase == .ready(shortcutHint: nil))
         popup.hideImmediately()
+    }
+
+    @Test func hudAndMenuCaptureRouteThroughUnifiedDelegateAndHideVisiblePopup() async throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("dist/test-data/unified-capture-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let appearance = AppAppearancePreferences(defaults: Self.defaults, applyPolicy: { _ in true })
+        let capturer = ImmediateAppSelectionCapturer()
+        let coord = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: capturer)
+        let delegate = CodingRewindAppDelegate()
+        delegate.coordinator = coord
+
+        let shortcuts = AppShortcuts { delegate.perform($0) }
+        defer { shortcuts.stop() }
+
+        let popup = SelectionPopupController(
+            appearance: appearance,
+            shortcuts: shortcuts,
+            onTriggerCapture: { .ignoredBusy },
+            onPresentErrorHUD: {}
+        )
+        defer { popup.stop() }
+        delegate.selectionPopupController = popup
+
+        let panel = QuickPeekHUDPanel(coordinator: coord, shortcuts: shortcuts) { delegate.perform($0) }
+        defer { panel.orderOut(nil) }
+        delegate.hudPanel = panel
+
+        let menu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts) { delegate.perform($0) }
+        let windowMenu = try #require(menu.items.first { $0.title == "窗口" }?.submenu)
+        let presentHUDItem = try #require(windowMenu.items.first { $0.title == "前置片段浮窗" })
+        #expect(!windowMenu.items.contains { $0.title == "前置 Rewind 浮窗" })
+        #expect(NSApplication.shared.sendAction(try #require(presentHUDItem.action), to: presentHUDItem.target, from: presentHUDItem))
+        #expect(panel.isVisible)
+        panel.orderOut(nil)
+
+        popup.showForTesting(anchorPID: 4242)
+        #expect(popup.isVisible)
+        let operationsMenu = try #require(menu.items.first { $0.title == "操作" }?.submenu)
+        let menuCaptureItem = try #require(operationsMenu.items.first { $0.title == "保存所选文本" })
+        #expect(NSApplication.shared.sendAction(try #require(menuCaptureItem.action), to: menuCaptureItem.target, from: menuCaptureItem))
+        #expect(popup.phase == .hidden)
+        #expect(!popup.isVisible)
+        for _ in 0..<30 where coord.cards.count < 1 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(coord.cards.count == 1)
+        #expect(panel.isVisible)
+
+        popup.showForTesting(anchorPID: 4242)
+        #expect(popup.isVisible)
+        let hudView = QuickPeekHUDRootView(
+            coordinator: coord,
+            shortcuts: shortcuts,
+            onClose: { panel.orderOut(nil) },
+            onCommand: { delegate.perform($0) }
+        )
+        hudView.onCommand(.captureSelection)
+        #expect(popup.phase == .hidden)
+        #expect(!popup.isVisible)
+        for _ in 0..<30 where coord.cards.count < 2 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(coord.cards.count == 2)
+    }
+
+    @Test func selectionPopupRefusesSavedResurrectionAndProtectsInFlightSavingFromMenuCapture() async throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("dist/test-data/popup-resurrection-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let appearance = AppAppearancePreferences(defaults: Self.defaults, applyPolicy: { _ in true })
+        appearance.setShowsSelectionPopup(true)
+        let shortcuts = AppShortcuts { _ in }
+        defer { shortcuts.stop() }
+
+        var errorHUDCount = 0
+        let popup = SelectionPopupController(
+            appearance: appearance,
+            shortcuts: shortcuts,
+            onTriggerCapture: { .ignoredBusy },
+            onPresentErrorHUD: { errorHUDCount += 1 }
+        )
+        popup.start()
+        defer { popup.stop() }
+
+        popup.applyInPlaceCaptureOutcome(.saved(cardID: "rw-ghost", sourceTitle: "Gemini"))
+        #expect(popup.phase == .hidden)
+        #expect(!popup.isVisible)
+
+        popup.showForTesting(anchorPID: 4242)
+        popup.beginSavingInPlace()
+        popup.hideImmediately()
+        popup.applyInPlaceCaptureOutcome(.saved(cardID: "rw-hidden", sourceTitle: "Gemini"))
+        #expect(popup.phase == .hidden)
+        #expect(!popup.isVisible)
+
+        popup.showForTesting(anchorPID: 4242)
+        popup.beginSavingInPlace()
+        appearance.setShowsSelectionPopup(false)
+        popup.applyInPlaceCaptureOutcome(.queuedOffline(cardID: "rw-disabled"))
+        #expect(popup.phase == .hidden)
+        #expect(!popup.isVisible)
+
+        popup.applyInPlaceCaptureOutcome(.failed(.ioError("Accessibility failure")))
+        #expect(popup.phase == .hidden)
+        #expect(errorHUDCount == 1)
+
+        appearance.setShowsSelectionPopup(true)
+        let capturer = BlockingAppSelectionCapturer()
+        let coord = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: capturer)
+        let delegate = CodingRewindAppDelegate()
+        delegate.coordinator = coord
+        delegate.selectionPopupController = popup
+
+        popup.showForTesting(anchorPID: 4242)
+        delegate.perform(.captureSelectionHotkey)
+        #expect(popup.phase == .saving)
+        await capturer.waitUntilStarted()
+
+        delegate.perform(.captureSelection)
+        #expect(popup.phase == .saving)
+        #expect(popup.isVisible)
+
+        await capturer.finish()
+        for _ in 0..<30 where popup.phase == .saving {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(popup.phase == .saved(offline: true))
+    }
+
+    @Test func settingsWindowSyncsNormalizedURLResetsClosedDraftAndSuppressesPluginHUDPop() async throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("dist/test-data/settings-draft-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let appearance = AppAppearancePreferences(defaults: Self.defaults, applyPolicy: { _ in true })
+        let card = try #require(MemosWireFormat.parseMemo(
+            id: "menu-err-card",
+            rawContent: "#rewind/ready #source/macos\n\nBody",
+            createdAt: Date()
+        ))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
+        let coord = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            capturer: UnusedSelectionCapturer(),
+            codexDelivery: { _ in (.unknown, nil) }
+        )
+        let delegate = CodingRewindAppDelegate()
+        delegate.coordinator = coord
+        let shortcuts = AppShortcuts { delegate.perform($0) }
+        defer { shortcuts.stop() }
+        let hud = QuickPeekHUDPanel(coordinator: coord, shortcuts: shortcuts) { delegate.perform($0) }
+        defer { hud.orderOut(nil) }
+        delegate.hudPanel = hud
+
+        @MainActor final class FlagBox { var value = false }
+        let trustedFlag = FlagBox()
+        let permissionState = AccessibilityPermissionState { trustedFlag.value }
+        let settings = SettingsWindowController(
+            coordinator: coord,
+            appearance: appearance,
+            shortcuts: shortcuts,
+            permissionState: permissionState,
+            onCommand: { delegate.perform($0) }
+        )
+        defer { settings.window?.close() }
+        delegate.settingsWindowController = settings
+
+        settings.show()
+        #expect(settings.window?.isVisible == true)
+
+        settings.connectionDraft.urlDraft = "https://memos.example.com/api/memos/"
+        settings.connectionDraft.save(using: coord)
+        #expect(settings.connectionDraft.urlDraft == "https://memos.example.com")
+        #expect(settings.connectionDraft.saveFailed == false)
+
+        settings.connectionDraft.urlDraft = "https://unsaved-draft.example.com"
+        trustedFlag.value = true
+        settings.windowDidBecomeKey(Notification(name: NSWindow.didBecomeKeyNotification, object: settings.window))
+        #expect(permissionState.isTrusted)
+        #expect(settings.connectionDraft.urlDraft == "https://unsaved-draft.example.com")
+
+        delegate.perform(.installOrRepairPlugin)
+        #expect(!hud.isVisible)
+
+        settings.window?.close()
+        #expect(settings.window?.isVisible != true)
+        settings.show()
+        #expect(settings.connectionDraft.urlDraft == "https://memos.example.com")
+        #expect(settings.connectionDraft.saveMessage == nil)
+        settings.window?.close()
+
+        coord.checkedCardIDs = [card.id]
+        delegate.perform(.launchIn(.codex))
+        for _ in 0..<40 where !hud.isVisible {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(hud.isVisible)
+        #expect(coord.isErrorBanner)
+    }
+}
+
+private actor ImmediateAppSelectionCapturer: SelectionCapturing {
+    private var counter = 0
+
+    func captureFrontmostSelection() async throws -> CapturedSelection {
+        counter += 1
+        return CapturedSelection(
+            text: "Captured snippet \(counter)",
+            bundleIdentifier: "com.google.GeminiMacOS",
+            appName: "Gemini"
+        )
     }
 }
 

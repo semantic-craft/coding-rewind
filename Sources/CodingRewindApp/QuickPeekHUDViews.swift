@@ -11,8 +11,7 @@ public final class QuickPeekHUDPanel: NSPanel {
     public init(
         coordinator: AppCoordinator,
         shortcuts: AppShortcuts,
-        onInstallPlugin: @escaping @MainActor () -> Void,
-        onOpenSettings: @escaping @MainActor () -> Void
+        onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
         let rect = NSRect(x: 0, y: 0, width: 480, height: 560)
         super.init(
@@ -45,8 +44,7 @@ public final class QuickPeekHUDPanel: NSPanel {
                 coordinator: coordinator,
                 shortcuts: shortcuts,
                 onClose: { [weak self] in self?.orderOut(nil) },
-                onInstallPlugin: onInstallPlugin,
-                onOpenSettings: onOpenSettings
+                onCommand: onCommand
             )
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -111,10 +109,6 @@ public final class QuickPeekHUDPanel: NSPanel {
         )
     }
 
-    public func positionNearTopRight() {
-        position(relativeTo: nil)
-    }
-
     public func presentNonActivating(anchorFrame: NSRect? = nil) {
         if !isVisible {
             position(relativeTo: anchorFrame)
@@ -144,8 +138,7 @@ public struct QuickPeekHUDRootView: View {
     @Bindable public var coordinator: AppCoordinator
     @Bindable public var shortcuts: AppShortcuts
     public let onClose: @MainActor () -> Void
-    public let onInstallPlugin: @MainActor () -> Void
-    public let onOpenSettings: @MainActor () -> Void
+    public let onCommand: @MainActor (AppCommand) -> Void
 
     @FocusState private var isSearchFocused: Bool
 
@@ -153,14 +146,12 @@ public struct QuickPeekHUDRootView: View {
         coordinator: AppCoordinator,
         shortcuts: AppShortcuts,
         onClose: @escaping @MainActor () -> Void,
-        onInstallPlugin: @escaping @MainActor () -> Void,
-        onOpenSettings: @escaping @MainActor () -> Void
+        onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
         self.coordinator = coordinator
         self.shortcuts = shortcuts
         self.onClose = onClose
-        self.onInstallPlugin = onInstallPlugin
-        self.onOpenSettings = onOpenSettings
+        self.onCommand = onCommand
     }
 
     public var body: some View {
@@ -170,7 +161,7 @@ public struct QuickPeekHUDRootView: View {
                 Text("Coding Rewind").font(.system(size: 13, weight: .bold))
                 Spacer()
                 Button {
-                    Task { await coordinator.captureSelection() }
+                    onCommand(.captureSelection)
                 } label: {
                     HStack(spacing: 5) {
                         Label("保存所选文本", systemImage: "plus.viewfinder")
@@ -183,7 +174,7 @@ public struct QuickPeekHUDRootView: View {
                 .accessibilityIdentifier("hud.capture")
                 .help(shortcuts.instruction(for: .captureSelection))
                 Button {
-                    Task { await coordinator.refresh() }
+                    onCommand(.refreshHotStream)
                 } label: {
                     Image(systemName: "arrow.clockwise").frame(width: 22, height: 22)
                 }
@@ -192,7 +183,7 @@ public struct QuickPeekHUDRootView: View {
                 .accessibilityIdentifier("hud.refresh")
                 .help("立即同步 (⌘R)")
                 Button {
-                    onOpenSettings()
+                    onCommand(.openSettings)
                 } label: {
                     Image(systemName: "gearshape").frame(width: 22, height: 22)
                 }
@@ -305,7 +296,7 @@ public struct QuickPeekHUDRootView: View {
                 .accessibilityIdentifier("hud.conversationHost")
                 .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
                 Button {
-                    Task { await coordinator.launchChecked() }
+                    onCommand(.launchConversation)
                 } label: {
                     HStack(spacing: 6) {
                         Text(coordinator.conversationActionTitle)
@@ -349,7 +340,7 @@ public struct QuickPeekHUDRootView: View {
             .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                Button("设置… (⌘,)") { onOpenSettings() }
+                Button("设置… (⌘,)") { onCommand(.openSettings) }
                     .rewindButtonRole(.secondary)
                 if !coordinator.cards.isEmpty {
                     Button("清除筛选") {

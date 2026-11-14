@@ -114,4 +114,38 @@ struct NativeConversationContextTests {
         #expect(!entry.memoContent.contains("#rewind/has-ctx"))
         #expect(coordinator.cards.first?.sourceURL == native.backlink?.absoluteString)
     }
+
+    @Test("Native context matches full text past 800 chars before applying 800-char turn truncation and assistant-first matching")
+    func truncationAfterFullTextMatchAndAssistantPriority() throws {
+        let longPrompt = String(repeating: "p", count: 825)
+        let longRendered = String(repeating: "r", count: 820) + "\nunique-tail-anchor"
+        let longMarkdown = String(repeating: "m", count: 820) + "\n`unique-tail-anchor`"
+        let entries = [
+            message(.user, longPrompt),
+            message(.assistant, longRendered, context: longMarkdown)
+        ]
+
+        let resolved = try #require(NativeConversationContext.resolve(
+            selectedText: "unique-tail-anchor",
+            snapshot: .init(entries: entries),
+            sessionTitle: "Long native chat"
+        ))
+        #expect(resolved.prompt == String(repeating: "p", count: 800) + "…")
+        #expect(resolved.recentTurns == [
+            ConversationTurn(role: "User", text: String(repeating: "p", count: 800) + "…"),
+            ConversationTurn(role: "Assistant", text: String(repeating: "m", count: 800) + "…")
+        ])
+
+        let echoed = [
+            message(.user, "Explain ECONNRESET handling"),
+            message(.assistant, "ECONNRESET occurs when the peer resets the TCP socket.")
+        ]
+        let assistantPreferred = try #require(NativeConversationContext.resolve(
+            selectedText: "ECONNRESET",
+            snapshot: .init(entries: echoed),
+            sessionTitle: "Echoed"
+        ))
+        #expect(assistantPreferred.prompt == "Explain ECONNRESET handling")
+        #expect(assistantPreferred.recentTurns.count == 2)
+    }
 }

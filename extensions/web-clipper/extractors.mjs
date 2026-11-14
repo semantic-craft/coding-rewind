@@ -50,39 +50,6 @@ export function detectPlatform(url) {
   return "web";
 }
 
-export function isHyperCaptureShortcutEvent(event) {
-  return Boolean(
-    event &&
-      !event.repeat &&
-      event.code === "KeyS" &&
-      event.ctrlKey &&
-      event.altKey &&
-      event.shiftKey &&
-      event.metaKey
-  );
-}
-
-export function computePillPosition({ rect, pillWidth, pillHeight, viewportWidth, viewportHeight }) {
-  const width = Number(pillWidth) || 0;
-  const height = Number(pillHeight) || 0;
-  const vw = Number(viewportWidth) || 0;
-  const vh = Number(viewportHeight) || 0;
-  const rectLeft = Number(rect?.left) || 0;
-  const rectTop = Number(rect?.top) || 0;
-  const rectWidth = Number(rect?.width) || 0;
-  const rectBottom = typeof rect?.bottom === "number" ? rect.bottom : rectTop + (Number(rect?.height) || 0);
-
-  const maxLeft = Math.max(8, vw - width - 8);
-  const left = Math.round(Math.min(maxLeft, Math.max(8, rectLeft + rectWidth / 2 - width / 2)));
-
-  let top = rectTop - height - 8;
-  if (top < 8) {
-    const maxTop = Math.max(8, vh - height - 8);
-    top = Math.min(maxTop, rectBottom + 8);
-  }
-  return { left, top: Math.round(Math.max(8, top)) };
-}
-
 export function cleanSessionTitle(rawTitle) {
   if (!rawTitle || typeof rawTitle !== "string") return "";
   let cleaned = rawTitle
@@ -563,7 +530,12 @@ function normalizeMarkdownSpacing(md) {
 
 export function htmlToMarkdown(nodeOrHtml, options = {}) {
   if (!nodeOrHtml) return "";
-  const root = typeof nodeOrHtml === "string" ? parseHtmlDocument(nodeOrHtml).body : nodeOrHtml;
+  if (typeof nodeOrHtml === "string" && typeof globalThis.DOMParser !== "function") {
+    return normalizeMarkdownSpacing(String(nodeOrHtml));
+  }
+  const root = typeof nodeOrHtml === "string"
+    ? new globalThis.DOMParser().parseFromString(nodeOrHtml, "text/html").body
+    : nodeOrHtml;
   const raw = convertNode(root, { baseUrl: options.baseUrl || "", listDepth: 0, lineBreakModes: options.lineBreakModes });
   return normalizeMarkdownSpacing(raw);
 }
@@ -613,7 +585,9 @@ function hasMarkdownStructure(node) {
 }
 
 export function selectionToMarkdown(selectionOrRange, baseUrl = "", capturedText = null) {
-  if (!selectionOrRange) return "";
+  if (!selectionOrRange) {
+    return typeof capturedText === "string" && capturedText.trim() ? capturedText : "";
+  }
 
   let range = null;
   let plainFallback = "";
@@ -875,6 +849,18 @@ export function formatRecentTurns(turnsSlice, maxChars = 4000) {
   return truncateCleanly(joinEntries(trimmed), maxChars);
 }
 
+export function buildFallbackClip({ selectedMarkdown, sourceUrl = "", title = "" } = {}) {
+  const normalizedUrl = String(sourceUrl || "").trim();
+  return {
+    selectedMarkdown: String(selectedMarkdown ?? ""),
+    sourcePlatform: detectPlatform(normalizedUrl),
+    sessionTitle: cleanSessionTitle(title),
+    prompt: "",
+    recentTurns: "",
+    sourceUrl: normalizedUrl
+  };
+}
+
 export function extractClipContext({
   doc,
   selectionRange = null,
@@ -884,351 +870,18 @@ export function extractClipContext({
   maxRecentChars = 4000
 } = {}) {
   const sourceUrl = String(url || (doc && doc.location && doc.location.href) || "").trim();
-  const sourcePlatform = detectPlatform(sourceUrl);
   const selectedMarkdown = selectionToMarkdown(selectionRange, sourceUrl, selectedText);
-  const sessionTitle = extractSessionTitle(doc, sourceUrl, sourcePlatform);
+  const base = buildFallbackClip({ selectedMarkdown, sourceUrl, title: doc?.title || "" });
+  if (!doc) return base;
 
-  const messages = extractConversationTurns(doc, sourcePlatform, sourceUrl);
+  const sessionTitle = extractSessionTitle(doc, sourceUrl, base.sourcePlatform);
+  const messages = extractConversationTurns(doc, base.sourcePlatform, sourceUrl);
   const context = contextThroughSelection(messages, selectionRange, maxRecentRounds);
 
   return {
-    selectedMarkdown,
-    sourcePlatform,
+    ...base,
     sessionTitle,
     prompt: context ? truncateCleanly(context.prompt.trim(), 1500) : "",
-    recentTurns: context ? formatRecentTurns(context.messages, maxRecentChars) : "",
-    sourceUrl
+    recentTurns: context ? formatRecentTurns(context.messages, maxRecentChars) : ""
   };
-}
-
-function decodeHtmlEntities(str) {
-  if (!str || !str.includes("&")) return str;
-  const map = {
-    "&amp;": "&",
-    "&lt;": "<",
-    "&gt;": ">",
-    "&quot;": "\"",
-    "&#39;": "'",
-    "&apos;": "'",
-    "&nbsp;": " "
-  };
-  return str.replace(/&(?:#x([0-9a-fA-F]+)|#([0-9]+)|[a-zA-Z0-9]+);/g, (m, hex, dec) => {
-    if (hex) return String.fromCodePoint(parseInt(hex, 16));
-    if (dec) return String.fromCodePoint(parseInt(dec, 10));
-    return map[m] ?? m;
-  });
-}
-
-function matchesSimpleSelector(el, compound) {
-  if (!el || el.nodeType !== ELEMENT_NODE) return false;
-  let rest = compound.trim();
-  if (!rest || rest === "*") return true;
-
-  const tagMatch = rest.match(/^[a-zA-Z][a-zA-Z0-9-]*/);
-  if (tagMatch) {
-    if (getTagName(el) !== tagMatch[0].toLowerCase()) return false;
-    rest = rest.slice(tagMatch[0].length);
-  }
-
-  const tokenRegex = /#([a-zA-Z0-9_-]+)|\.([a-zA-Z0-9_-]+)|\[\s*([a-zA-Z0-9_:-]+)\s*(?:([~|^$*]?=)\s*(?:"([^"]*)"|'([^']*)'|([^\]]*?)))?\s*\]/g;
-  let pos = 0;
-  let match;
-  while ((match = tokenRegex.exec(rest)) !== null) {
-    if (match.index !== pos) return false;
-    pos = tokenRegex.lastIndex;
-    if (match[1]) {
-      if (getAttr(el, "id") !== match[1]) return false;
-    } else if (match[2]) {
-      if (!hasClass(el, match[2])) return false;
-    } else if (match[3]) {
-      const attrVal = getAttr(el, match[3]);
-      if (attrVal === null || attrVal === undefined) return false;
-      if (match[4]) {
-        const expected = match[5] ?? match[6] ?? (match[7] || "").trim();
-        const op = match[4];
-        if (op === "=" && attrVal !== expected) return false;
-        if (op === "^=" && !attrVal.startsWith(expected)) return false;
-        if (op === "$=" && !attrVal.endsWith(expected)) return false;
-        if (op === "*=" && !attrVal.includes(expected)) return false;
-        if (op === "~=" && !attrVal.split(/\s+/).includes(expected)) return false;
-        if (op === "|=" && attrVal !== expected && !attrVal.startsWith(`${expected}-`)) return false;
-      }
-    }
-  }
-  return pos === rest.length;
-}
-
-function matchesSelectorChain(el, chainParts) {
-  if (!matchesSimpleSelector(el, chainParts[chainParts.length - 1])) return false;
-  let cur = el.parentNode;
-  for (let i = chainParts.length - 2; i >= 0; i -= 1) {
-    while (cur && cur.nodeType === ELEMENT_NODE && !matchesSimpleSelector(cur, chainParts[i])) {
-      cur = cur.parentNode;
-    }
-    if (!cur || cur.nodeType !== ELEMENT_NODE) return false;
-    cur = cur.parentNode;
-  }
-  return true;
-}
-
-function splitSelectorChain(selector) {
-  const parts = [];
-  let buf = "";
-  let inBracket = 0;
-  let quote = "";
-  for (const ch of selector.trim()) {
-    if (quote) {
-      buf += ch;
-      if (ch === quote) quote = "";
-      continue;
-    }
-    if (ch === "\"" || ch === "'") {
-      quote = ch;
-      buf += ch;
-    } else if (ch === "[") {
-      inBracket += 1;
-      buf += ch;
-    } else if (ch === "]") {
-      inBracket = Math.max(0, inBracket - 1);
-      buf += ch;
-    } else if (/\s/.test(ch) && inBracket === 0) {
-      if (buf) {
-        parts.push(buf);
-        buf = "";
-      }
-    } else {
-      buf += ch;
-    }
-  }
-  if (buf) parts.push(buf);
-  return parts;
-}
-
-function splitSelectorGroup(selectorList) {
-  const groups = [];
-  let buf = "";
-  let inBracket = 0;
-  let quote = "";
-  for (const ch of selectorList) {
-    if (quote) {
-      buf += ch;
-      if (ch === quote) quote = "";
-    } else if (ch === "\"" || ch === "'") {
-      quote = ch;
-      buf += ch;
-    } else if (ch === "[") {
-      inBracket += 1;
-      buf += ch;
-    } else if (ch === "]") {
-      inBracket = Math.max(0, inBracket - 1);
-      buf += ch;
-    } else if (ch === "," && inBracket === 0) {
-      if (buf.trim()) groups.push(buf.trim());
-      buf = "";
-    } else {
-      buf += ch;
-    }
-  }
-  if (buf.trim()) groups.push(buf.trim());
-  return groups;
-}
-
-class MiniNode {
-  constructor(nodeType, nodeName) {
-    this.nodeType = nodeType;
-    this.nodeName = nodeName;
-    this.parentNode = null;
-    this.childNodes = [];
-  }
-
-  get parentElement() {
-    return this.parentNode && this.parentNode.nodeType === ELEMENT_NODE ? this.parentNode : null;
-  }
-
-  get children() {
-    return this.childNodes.filter((c) => c.nodeType === ELEMENT_NODE);
-  }
-
-  appendChild(child) {
-    child.parentNode = this;
-    this.childNodes.push(child);
-    return child;
-  }
-
-  contains(other) {
-    let cur = other;
-    while (cur) {
-      if (cur === this) return true;
-      cur = cur.parentNode;
-    }
-    return false;
-  }
-
-  cloneNode(deep = false) {
-    const copy = new MiniNode(this.nodeType, this.nodeName);
-    if (deep) {
-      for (const c of this.childNodes) copy.appendChild(c.cloneNode(true));
-    }
-    return copy;
-  }
-
-  get textContent() {
-    return this.childNodes.map((c) => c.textContent).join("");
-  }
-
-  querySelectorAll(selectorList) {
-    const chains = splitSelectorGroup(selectorList).map(splitSelectorChain).filter((c) => c.length > 0);
-    const matches = [];
-    const visit = (node) => {
-      for (const child of node.childNodes) {
-        if (child.nodeType === ELEMENT_NODE) {
-          if (chains.some((chain) => matchesSelectorChain(child, chain))) {
-            matches.push(child);
-          }
-          visit(child);
-        }
-      }
-    };
-    visit(this);
-    return matches;
-  }
-
-  querySelector(selectorList) {
-    return this.querySelectorAll(selectorList)[0] || null;
-  }
-}
-
-class MiniText extends MiniNode {
-  constructor(value) {
-    super(TEXT_NODE, "#text");
-    this.nodeValue = value;
-  }
-
-  get textContent() {
-    return this.nodeValue;
-  }
-
-  cloneNode() {
-    return new MiniText(this.nodeValue);
-  }
-}
-
-class MiniElement extends MiniNode {
-  constructor(tagName, attributes = {}) {
-    super(ELEMENT_NODE, tagName.toUpperCase());
-    this.tagName = tagName.toUpperCase();
-    this.attributes = attributes;
-  }
-
-  get className() {
-    return this.attributes.class || "";
-  }
-
-  get id() {
-    return this.attributes.id || "";
-  }
-
-  getAttribute(name) {
-    const key = String(name).toLowerCase();
-    return Object.prototype.hasOwnProperty.call(this.attributes, key) ? this.attributes[key] : null;
-  }
-
-  cloneNode(deep = false) {
-    const copy = new MiniElement(this.tagName, { ...this.attributes });
-    if (deep) {
-      for (const c of this.childNodes) copy.appendChild(c.cloneNode(true));
-    }
-    return copy;
-  }
-}
-
-export function parseHtmlDocument(html, { url = "" } = {}) {
-  const doc = new MiniNode(DOCUMENT_NODE, "#document");
-  doc.location = { href: url };
-  const root = new MiniElement("body");
-  doc.body = root;
-  doc.appendChild(root);
-
-  const stack = [root];
-  const tagRegex = /<!--[\s\S]*?-->|<\/?([a-zA-Z][a-zA-Z0-9-]*)(\s[^>]*)?>/g;
-  let lastIndex = 0;
-  let match;
-
-  const parseAttrs = (rawAttrs) => {
-    const attrs = {};
-    if (!rawAttrs) return attrs;
-    const attrRegex = /([a-zA-Z0-9_:-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-    let m;
-    while ((m = attrRegex.exec(rawAttrs)) !== null) {
-      const k = m[1].toLowerCase();
-      const v = decodeHtmlEntities(m[2] ?? m[3] ?? m[4] ?? "");
-      attrs[k] = v;
-    }
-    return attrs;
-  };
-
-  while ((match = tagRegex.exec(html)) !== null) {
-    if (match.index > lastIndex) {
-      const rawText = html.slice(lastIndex, match.index);
-      const decoded = decodeHtmlEntities(rawText);
-      if (decoded) stack[stack.length - 1].appendChild(new MiniText(decoded));
-    }
-    lastIndex = tagRegex.lastIndex;
-
-    const fullToken = match[0];
-    if (fullToken.startsWith("<!--")) continue;
-
-    const tagName = match[1].toLowerCase();
-    const isClosing = fullToken.startsWith("</");
-    const isSelfClosing = fullToken.endsWith("/>") || VOID_TAGS.has(tagName);
-
-    if (isClosing) {
-      for (let i = stack.length - 1; i > 0; i -= 1) {
-        if (getTagName(stack[i]) === tagName) {
-          stack.length = i;
-          break;
-        }
-      }
-    } else {
-      const el = new MiniElement(tagName, parseAttrs(match[2]));
-      stack[stack.length - 1].appendChild(el);
-      if (!isSelfClosing) {
-        stack.push(el);
-      }
-    }
-  }
-
-  if (lastIndex < html.length) {
-    const tail = decodeHtmlEntities(html.slice(lastIndex));
-    if (tail) stack[stack.length - 1].appendChild(new MiniText(tail));
-  }
-
-  const titleEl = doc.querySelector("title");
-  doc.title = titleEl ? titleEl.textContent : "";
-
-  doc.createRangeFromNode = (targetNode) => ({
-    startContainer: targetNode,
-    startOffset: 0,
-    endContainer: targetNode,
-    endOffset: targetNode.nodeType === TEXT_NODE ? targetNode.nodeValue.length : targetNode.childNodes.length,
-    commonAncestorContainer: targetNode,
-    intersectsNode(node) {
-      return targetNode.contains(node);
-    },
-    cloneContents() {
-      const frag = new MiniNode(DOCUMENT_FRAGMENT_NODE, "#document-fragment");
-      for (const child of targetNode.childNodes || []) {
-        frag.appendChild(child.cloneNode(true));
-      }
-      if ((targetNode.childNodes || []).length === 0 && targetNode.nodeType === TEXT_NODE) {
-        frag.appendChild(targetNode.cloneNode(true));
-      }
-      return frag;
-    },
-    toString() {
-      return targetNode.textContent || "";
-    }
-  });
-
-  return doc;
 }

@@ -13,11 +13,11 @@ enum NativeChatBacklink {
 
     static func capture(host: NativeChatHost, application: AXUIElement, window: AXUIElement) async -> URL? {
         let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!)
-        let usesChrome = browser.flatMap { Bundle(url: $0)?.bundleIdentifier } == "com.google.Chrome"
+        let usesChrome = browser.flatMap { Bundle(url: $0)?.bundleIdentifier } == AppBundleID.chrome
         guard host == .chatGPT || usesChrome else { return nil }
         let before = usesChrome ? browserTabs() : []
         guard let before else { return nil }
-        let originalWebAreas = descendants(window).filter { string($0, kAXRoleAttribute) == "AXWebArea" }
+        let originalWebAreas = descendants(window).filter { AXSupport.role($0) == "AXWebArea" }
         let originalCloseButtons = descendants(window).filter(isCloseTabButton)
         let previousIDs = Set(before.map(\.id))
         var pid: pid_t = 0
@@ -26,10 +26,10 @@ enum NativeChatBacklink {
         let button: AXUIElement?
         switch host {
         case .gemini:
-            button = descendants(window).first { string($0, "AXIdentifier") == "more_button" }
+            button = descendants(window).first { AXSupport.identifier($0) == "more_button" }
         case .chatGPT:
             button = descendants(window).first {
-                string($0, "AXRole") == "AXPopUpButton" && string($0, "AXTitle") == "Chat actions" && !isSidebarElement($0, window: window)
+                AXSupport.role($0) == "AXPopUpButton" && AXSupport.title($0) == "Chat actions" && !isSidebarElement($0, window: window)
             }
         }
         guard let button else { return nil }
@@ -38,7 +38,7 @@ enum NativeChatBacklink {
         AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, window)
         defer {
             if let front = NSWorkspace.shared.frontmostApplication,
-               front.processIdentifier == pid || front.bundleIdentifier == "com.google.Chrome" {
+               front.processIdentifier == pid || front.bundleIdentifier == AppBundleID.chrome {
                 source.activate()
                 AXUIElementPerformAction(window, kAXRaiseAction as CFString)
                 AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, window)
@@ -48,12 +48,16 @@ enum NativeChatBacklink {
         let labels = host == .gemini ? ["在浏览器中打开", "Open in browser"] : ["Open on chatgpt.com"]
         var item: AXUIElement?
         for _ in 0..<10 {
-            item = menuElements(application: application, window: window).first { string($0, "AXRole") == "AXMenuItem" && labels.contains(string($0, "AXTitle") ?? "") }
+            item = menuElements(application: application, window: window).first {
+                AXSupport.role($0) == "AXMenuItem" && labels.contains(AXSupport.title($0) ?? "")
+            }
             if item != nil { break }
             try? await Task.sleep(for: .milliseconds(50))
         }
         guard let item else {
-            if let menu = menuElements(application: application, window: window).first(where: { string($0, "AXRole") == "AXMenu" && !children($0).isEmpty }) {
+            if let menu = menuElements(application: application, window: window).first(where: {
+                AXSupport.role($0) == "AXMenu" && !AXSupport.children($0).isEmpty
+            }) {
                 AXUIElementPerformAction(menu, kAXCancelAction as CFString)
             }
             return nil
@@ -64,11 +68,10 @@ enum NativeChatBacklink {
             if host == .chatGPT {
                 let nodes = descendants(window)
                 let opened = nodes.filter { node in
-                    string(node, kAXRoleAttribute) == "AXWebArea" && !originalWebAreas.contains { CFEqual($0, node) }
+                    AXSupport.role(node) == "AXWebArea" && !originalWebAreas.contains { CFEqual($0, node) }
                 }
                 let urls = opened.compactMap { node -> URL? in
-                    let raw = (value(node, kAXURLAttribute) as? URL)?.absoluteString ?? string(node, kAXURLAttribute) ?? ""
-                    return conversationURL(raw, host: host)
+                    conversationURL(AXSupport.urlString(node) ?? "", host: host)
                 }
                 if urls.count == 1 {
                     let closeButtons = nodes.filter { node in isCloseTabButton(node) && !originalCloseButtons.contains { CFEqual($0, node) } }
@@ -87,7 +90,7 @@ enum NativeChatBacklink {
                 AXUIElementSetAttributeValue(application, kAXFocusedWindowAttribute as CFString, window)
                 for _ in 0..<10 {
                     if NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
-                       let focused = element(value(application, kAXFocusedWindowAttribute)), CFEqual(focused, window) { break }
+                       let focused = AXSupport.focusedWindow(application), CFEqual(focused, window) { break }
                     try? await Task.sleep(for: .milliseconds(50))
                 }
                 return url
@@ -97,13 +100,13 @@ enum NativeChatBacklink {
     }
 
     private static func isCloseTabButton(_ node: AXUIElement) -> Bool {
-        guard string(node, kAXRoleAttribute) == "AXButton", let title = string(node, kAXTitleAttribute) else { return false }
+        guard AXSupport.role(node) == "AXButton", let title = AXSupport.title(node) else { return false }
         return title.hasPrefix("Close ") && title.hasSuffix(" tab")
     }
 
     private static func menuElements(application: AXUIElement, window: AXUIElement) -> [AXUIElement] {
-        children(application).filter {
-            string($0, kAXRoleAttribute) != kAXWindowRole || CFEqual($0, window)
+        AXSupport.children(application).filter {
+            AXSupport.role($0) != kAXWindowRole || CFEqual($0, window)
         }.flatMap(descendants)
     }
 
@@ -123,9 +126,9 @@ enum NativeChatBacklink {
     }
 
     private static func browserTabs() -> [BrowserTab]? {
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.Chrome").first != nil else { return [] }
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: AppBundleID.chrome).first != nil else { return [] }
         let script = """
-        tell application id "com.google.Chrome"
+        tell application id "\(AppBundleID.chrome)"
             set resultRows to {}
             repeat with w in windows
                 repeat with t in tabs of w
@@ -147,7 +150,7 @@ enum NativeChatBacklink {
     private static func close(_ tab: BrowserTab) {
         let escapedURL = tab.url.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
-        tell application id "com.google.Chrome"
+        tell application id "\(AppBundleID.chrome)"
             repeat with w in windows
                 repeat with t in tabs of w
                     if id of t is \(tab.id) and URL of t is "\(escapedURL)" then
@@ -163,35 +166,19 @@ enum NativeChatBacklink {
     }
 
     private static func isSidebarElement(_ node: AXUIElement, window: AXUIElement) -> Bool {
-        var parent = element(value(node, kAXParentAttribute))
+        var parent = AXSupport.parent(node)
         while let current = parent, !CFEqual(current, window) {
-            if ["AXList", "AXOutline", "AXButton"].contains(string(current, kAXRoleAttribute) ?? "") ||
-                (string(current, kAXSubroleAttribute)?.lowercased().contains("navigation") == true) ||
-                string(current, "AXDOMIdentifier") == "app-shell-sidebar" || string(current, kAXSubroleAttribute) == "AXLandmarkComplementary" { return true }
-            parent = element(value(current, kAXParentAttribute))
+            if ["AXList", "AXOutline", "AXButton"].contains(AXSupport.role(current) ?? "") ||
+                (AXSupport.subrole(current)?.lowercased().contains("navigation") == true) ||
+                AXSupport.string(current, "AXDOMIdentifier") == "app-shell-sidebar" ||
+                AXSupport.subrole(current) == "AXLandmarkComplementary" { return true }
+            parent = AXSupport.parent(current)
         }
         return false
     }
 
     private static func descendants(_ root: AXUIElement) -> [AXUIElement] {
-        if string(root, kAXRoleAttribute) == kAXMenuBarRole { return [] }
-        return [root] + children(root).flatMap(descendants)
-    }
-
-    private static func children(_ node: AXUIElement) -> [AXUIElement] {
-        value(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    }
-
-    private static func string(_ node: AXUIElement, _ key: String) -> String? { value(node, key) as? String }
-
-    private static func value(_ node: AXUIElement, _ key: String) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(node, key as CFString, &value) == .success else { return nil }
-        return value
-    }
-
-    private static func element(_ value: CFTypeRef?) -> AXUIElement? {
-        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return unsafeDowncast(value as AnyObject, to: AXUIElement.self)
+        if AXSupport.role(root) == kAXMenuBarRole { return [] }
+        return [root] + AXSupport.children(root).flatMap(descendants)
     }
 }

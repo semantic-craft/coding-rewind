@@ -55,7 +55,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     private func start(environment: [String: String]) {
         do {
             let paths = try StoragePaths.resolve(environment: environment)
-            let appearance = AppAppearancePreferences(defaults: AppShortcuts.preferences(
+            let appearance = AppAppearancePreferences(defaults: AppPreferences.userDefaults(
                 environment: environment, dataDirectory: paths.dataDirectoryURL
             ))
             self.appearance = appearance
@@ -67,9 +67,14 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
             }
-            coord.onOpenAntigravityApp = {
-                if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: CapturedSelection.antigravityBundleIdentifier) {
-                    NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+            coord.onWakeHost = { host in
+                switch host {
+                case .antigravity:
+                    if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.antigravity) {
+                        NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
+                    }
+                case .codex:
+                    break
                 }
             }
             coord.onOpenConversation = { reference in
@@ -86,19 +91,20 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            AppShortcuts.configurePreferences(environment: coord.environment, dataDirectory: paths.dataDirectoryURL)
-            let shortcuts = AppShortcuts { [weak self] command in self?.perform(command) }
-            self.shortcuts = shortcuts
-
-            NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts) { [weak self] command in
+            let dispatchCommand: @MainActor (AppCommand) -> Void = { [weak self] command in
                 self?.perform(command)
             }
+
+            AppShortcuts.configurePreferences(environment: coord.environment, dataDirectory: paths.dataDirectoryURL)
+            let shortcuts = AppShortcuts(onCommand: dispatchCommand)
+            self.shortcuts = shortcuts
+
+            NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts, onCommand: dispatchCommand)
 
             let panel = QuickPeekHUDPanel(
                 coordinator: coord,
                 shortcuts: shortcuts,
-                onInstallPlugin: { [weak self] in self?.perform(.installOrRepairPlugin) },
-                onOpenSettings: { [weak self] in self?.perform(.openSettings) }
+                onCommand: dispatchCommand
             )
             self.hudPanel = panel
 
@@ -106,8 +112,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 coordinator: coord,
                 appearance: appearance,
                 shortcuts: shortcuts,
-                onInstallPlugin: { [weak self] in self?.perform(.installOrRepairPlugin) },
-                onRequestAccessibility: { [weak self] in self?.perform(.requestAccessibility) }
+                onCommand: dispatchCommand
             )
             self.settingsWindowController = settings
 
@@ -129,12 +134,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                     }
                     return coord.menuStatusSnapshot(
                         isHUDVisible: self.hudPanel?.isVisible ?? false,
-                        isAccessibilityTrusted: MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
+                        isAccessibilityTrusted: AXSupport.isTrusted(prompt: false)
                     )
                 },
-                onCommand: { [weak self] command in
-                    self?.perform(command)
-                }
+                onCommand: dispatchCommand
             )
             self.statusItemController = statusController
 
@@ -142,14 +145,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 appearance: appearance,
                 shortcuts: shortcuts,
                 onTriggerCapture: { [weak self] in
-                    guard let self, let coord = self.coordinator else { return .ignoredBusy }
-                    let outcome = await coord.captureSelection()
-                    self.statusItemController?.refreshIcon()
-                    return outcome
+                    await self?.captureSelectionAndRefreshStatus() ?? .ignoredBusy
                 },
                 onPresentErrorHUD: { [weak self] in
-                    guard let self else { return }
-                    self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
+                    self?.presentHUDNonActivating()
                 }
             )
             selectionPopup.start()
@@ -187,37 +186,11 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .presentHUDAndFocus:
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
         case .captureSelectionHotkey:
-            guard let coord = coordinator else { return }
-            if selectionPopupController?.phase == .saving { return }
-            let wasPopupVisible = selectionPopupController?.isVisible == true
-            if wasPopupVisible {
-                selectionPopupController?.beginSavingInPlace()
-                Task { @MainActor [weak self] in
-                    let outcome = await coord.captureSelection()
-                    guard let self else { return }
-                    self.statusItemController?.refreshIcon()
-                    self.selectionPopupController?.applyInPlaceCaptureOutcome(outcome)
-                }
-            } else {
-                selectionPopupController?.hideImmediately()
-                Task { @MainActor [weak self] in
-                    _ = await coord.captureSelection()
-                    guard let self else { return }
-                    self.statusItemController?.refreshIcon()
-                    self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
-                }
-            }
-        case .captureSelectionFromMenu:
-            guard let coord = coordinator else { return }
-            selectionPopupController?.hideImmediately()
-            Task { @MainActor [weak self] in
-                _ = await coord.captureSelection()
-                guard let self else { return }
-                self.statusItemController?.refreshIcon()
-                self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
-            }
+            triggerCapture(preferInPlacePopup: true)
+        case .captureSelection:
+            triggerCapture(preferInPlacePopup: false)
         case .launchConversation, .launchIn:
-            guard let coord = coordinator else { return }
+            guard let coord = coordinator, !coord.isLaunchingConversation else { return }
             if coord.cards.isEmpty {
                 hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
             }
@@ -227,8 +200,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 let outcome = await coord.launchChecked(in: host)
                 guard let self else { return }
                 self.statusItemController?.refreshIcon()
-                if outcome == nil {
-                    self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
+                if outcome == nil || coord.isErrorBanner {
+                    self.presentHUDNonActivating()
                 }
             }
         case .refreshHotStream:
@@ -247,9 +220,11 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .installOrRepairPlugin:
             installPlugin()
             statusItemController?.refreshIcon()
-            hudPanel?.presentNonActivating(anchorFrame: statusItemController?.anchorFrame)
+            if settingsWindowController?.window?.isVisible != true {
+                presentHUDNonActivating()
+            }
         case .requestAccessibility:
-            let trusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: true)
+            let trusted = AXSupport.isTrusted(prompt: true)
             if !trusted,
                let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                 NSWorkspace.shared.open(url)
@@ -260,14 +235,45 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             coordinator?.focusAndCheckCard(id: cardID)
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
         case .showAbout:
+            let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.3.1"
             NSApplication.shared.activate(ignoringOtherApps: true)
             NSApplication.shared.orderFrontStandardAboutPanel(options: [
                 .applicationName: "Coding Rewind",
-                .applicationVersion: "0.2.0"
+                .applicationVersion: version
             ])
         case .quit:
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private func triggerCapture(preferInPlacePopup: Bool) {
+        guard coordinator != nil, selectionPopupController?.phase != .saving else { return }
+        let useInPlacePopup = preferInPlacePopup && selectionPopupController?.isVisible == true
+        if useInPlacePopup {
+            selectionPopupController?.beginSavingInPlace()
+        } else {
+            selectionPopupController?.hideImmediately()
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let outcome = await self.captureSelectionAndRefreshStatus()
+            if useInPlacePopup {
+                self.selectionPopupController?.applyInPlaceCaptureOutcome(outcome)
+            } else {
+                self.presentHUDNonActivating()
+            }
+        }
+    }
+
+    private func captureSelectionAndRefreshStatus() async -> SelectionCaptureOutcome {
+        guard let coord = coordinator else { return .ignoredBusy }
+        let outcome = await coord.captureSelection()
+        statusItemController?.refreshIcon()
+        return outcome
+    }
+
+    private func presentHUDNonActivating() {
+        hudPanel?.presentNonActivating(anchorFrame: statusItemController?.anchorFrame)
     }
 
     public func installPlugin() {
@@ -286,8 +292,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     private func recordFrontmostExternalApp(_ app: NSRunningApplication?) {
         guard let app,
               !app.isTerminated,
-              app.bundleIdentifier != Bundle.main.bundleIdentifier,
-              app.bundleIdentifier != "dev.codingrewind.app" else {
+              !AppBundleID.isSelf(app.bundleIdentifier) else {
             return
         }
         lastExternalApplication = app

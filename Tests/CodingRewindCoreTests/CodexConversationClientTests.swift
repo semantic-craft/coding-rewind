@@ -7,8 +7,9 @@ import Testing
 
 @Suite("Codex receipt verification")
 struct CodexConversationClientTests {
-    @Test("Only a real matching first user turn confirms delivery", arguments: ["success", "changed-text", "wrong-client", "queue-only", "disconnect-after-queue"])
-    func verifyDelivery(mode: String) throws {
+    @Test("Only a real matching first user turn confirms delivery, including MainActor wake callbacks", arguments: ["success", "changed-text", "wrong-client", "queue-only", "disconnect-after-queue"])
+    @MainActor
+    func verifyDelivery(mode: String) async throws {
         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let directory = repository.appendingPathComponent("dist/test-data/codex-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -20,15 +21,17 @@ struct CodexConversationClientTests {
         var environment = ProcessInfo.processInfo.environment
         environment["CODEX_FIXTURE_STATE"] = stateURL.path
         environment["CODEX_FIXTURE_MODE"] = mode
-        let client = CodexConversationClient(binaryURL: fixture, environment: environment, timeout: 2) { _ in
-            do {
-                guard var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any] else { return false }
-                state["woken"] = true
-                try JSONSerialization.data(withJSONObject: state).write(to: stateURL)
-                return true
-            } catch { Issue.record(error); return false }
+        let client = CodexConversationClient(binaryURL: fixture, environment: environment) { _ in
+            await MainActor.run {
+                do {
+                    guard var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any] else { return false }
+                    state["woken"] = true
+                    try JSONSerialization.data(withJSONObject: state).write(to: stateURL)
+                    return true
+                } catch { Issue.record(error); return false }
+            }
         }
-        let (result, threadID) = client.deliver(request)
+        let (result, threadID) = await client.deliver(request, timeout: 2)
         #expect(result == (mode == "success" ? .succeeded : .unknown))
         #expect(threadID == (mode == "success" ? "01a1d60a-b26a-7930-b8c8-e312607a60ea" : nil))
         let state = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as? [String: Any])
@@ -44,11 +47,11 @@ struct CodexConversationClientTests {
     }
 
     @Test("An unavailable executable rejects before creating a thread")
-    func missingBinary() {
+    func missingBinary() async {
         let client = CodexConversationClient(binaryURL: URL(fileURLWithPath: "/nonexistent/coding-rewind-codex"), environment: [:]) { _ in
             Issue.record("A missing executable cannot wake a thread")
             return false
         }
-        #expect(client.deliver(ConversationRequest(prompt: "private")).0 == .rejected)
+        #expect(await client.deliver(ConversationRequest(prompt: "private")).0 == .rejected)
     }
 }

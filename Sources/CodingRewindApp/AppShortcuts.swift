@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
-import CryptoKit
 import KeyboardShortcuts
 import Observation
 
@@ -31,26 +30,8 @@ public final class AppShortcuts {
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var menuItems: [ShortcutAction: [NSMenuItem]] = [:]
 
-    public static func preferencesSuite(environment: [String: String], dataDirectory: URL) -> String? {
-        guard environment["CODING_REWIND_QA"] == "1" else { return nil }
-        if let suite = environment["CODING_REWIND_SHORTCUTS_SUITE"], suite.hasPrefix("dev.codingrewind.qa."), suite.count > 20 {
-            return suite
-        }
-        let digest = SHA256.hash(data: Data(dataDirectory.standardizedFileURL.path.utf8))
-            .map { String(format: "%02x", $0) }.joined().prefix(16)
-        return "dev.codingrewind.qa.shortcuts.\(digest)"
-    }
-
-    public static func preferences(environment: [String: String], dataDirectory: URL) -> UserDefaults {
-        if let suite = preferencesSuite(environment: environment, dataDirectory: dataDirectory) {
-            guard let defaults = UserDefaults(suiteName: suite) else { preconditionFailure("Invalid QA preferences suite") }
-            return defaults
-        }
-        return .standard
-    }
-
     public static func configurePreferences(environment: [String: String], dataDirectory: URL) {
-        KeyboardShortcuts.configure(userDefaults: preferences(environment: environment, dataDirectory: dataDirectory))
+        KeyboardShortcuts.configure(userDefaults: AppPreferences.userDefaults(environment: environment, dataDirectory: dataDirectory))
     }
 
     private static let captureSelectionSchemaKey = "CodingRewind.captureSelectionShortcutSchemaVersion"

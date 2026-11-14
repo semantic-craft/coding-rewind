@@ -25,7 +25,7 @@ enum NativeChatAXCapture {
         }
 
         func result(app: AXUIElement, selectedText: String, backlink: URL? = nil) -> NativeChatCapture {
-            guard let currentWindow = element(value(app, kAXFocusedWindowAttribute)), CFEqual(window, currentWindow),
+            guard let currentWindow = AXSupport.focusedWindow(app), CFEqual(window, currentWindow),
                   let current = read(host: host, window: currentWindow),
                   messages.map(\.entry) == current.map(\.entry) else { return NativeChatCapture(host: host, title: title) }
             let metadata = NativeChatCapture(host: host, title: title, backlink: backlink)
@@ -62,17 +62,17 @@ enum NativeChatAXCapture {
 
     static func observe(app: AXUIElement, bundleIdentifier: String, windowTitle: String?, focused: AXUIElement?) -> Observation? {
         guard let host = host(bundleIdentifier: bundleIdentifier),
-              let window = element(value(app, kAXFocusedWindowAttribute)) else { return nil }
+              let window = AXSupport.focusedWindow(app) else { return nil }
         let selectedCode = host == .chatGPT ? focused.flatMap(renderedCodeEditor(owning:)) : nil
         var ancestor = focused
         while let node = ancestor {
-            let role = string(node, kAXRoleAttribute) ?? ""
+            let role = AXSupport.role(node) ?? ""
             if ([kAXTextAreaRole, kAXTextFieldRole, kAXOutlineRole].contains(role) &&
                 !(selectedCode.map { CFEqual(node, $0) } ?? false)) ||
                 (host == .chatGPT && role == "AXWebArea" && !isChatGPTShell(node)) {
                 return Observation(host: host, title: title(host: host, windowTitle: windowTitle), window: window, messages: [])
             }
-            ancestor = element(value(node, kAXParentAttribute))
+            ancestor = AXSupport.parent(node)
         }
         return Observation(host: host, title: title(host: host, windowTitle: windowTitle), window: window,
             messages: read(host: host, window: window) ?? [])
@@ -80,8 +80,8 @@ enum NativeChatAXCapture {
 
     static func host(bundleIdentifier: String) -> NativeChatHost? {
         switch bundleIdentifier {
-        case "com.openai.codex": .chatGPT
-        case "com.google.GeminiMacOS": .gemini
+        case AppBundleID.codex: .chatGPT
+        case AppBundleID.gemini: .gemini
         default: nil
         }
     }
@@ -103,10 +103,10 @@ enum NativeChatAXCapture {
 
     private static func chatGPTMessages(window: AXUIElement) -> [ObservedEntry]? {
         guard let area = descendants(window).first(where: isChatGPTShell),
-              let conversation = children(area).flatMap({ descendants($0, excludingWebAreas: true) }).first(where: {
-                  string($0, kAXSubroleAttribute) == "AXLandmarkRegion" && string($0, kAXTitleAttribute) == "Conversation"
+              let conversation = AXSupport.children(area).flatMap({ descendants($0, excludingWebAreas: true) }).first(where: {
+                  AXSupport.subrole($0) == "AXLandmarkRegion" && AXSupport.title($0) == "Conversation"
               }) else { return nil }
-        let groups = descendants(conversation, excludingWebAreas: true).filter { children($0).contains { messageRole($0) != nil } }
+        let groups = descendants(conversation, excludingWebAreas: true).filter { AXSupport.children($0).contains { messageRole($0) != nil } }
         var result: [ObservedEntry] = []
         for group in groups {
             var heading: AXUIElement?
@@ -121,7 +121,7 @@ enum NativeChatAXCapture {
                     role: role, renderedText: text, contextText: rendered?.contextText))
                 result.append(ObservedEntry(entry: entry, element: heading, selectedText: selected, codeBlocks: rendered?.codeBlocks ?? []))
             }
-            for node in children(group) {
+            for node in AXSupport.children(group) {
                 if let nextRole = messageRole(node) {
                     appendMessage()
                     heading = node
@@ -129,10 +129,10 @@ enum NativeChatAXCapture {
                     bodies = []
                     selected = nil
                 } else if role != nil {
-                    guard [kAXGroupRole, kAXStaticTextRole].contains(string(node, kAXRoleAttribute) ?? ""),
+                    guard [kAXGroupRole, kAXStaticTextRole].contains(AXSupport.role(node) ?? ""),
                           let text = renderedMessage(bodies: [node], area: area)?.text, !text.isEmpty else { continue }
                     bodies.append(node)
-                    if let selection = string(node, kAXSelectedTextAttribute), !selection.isEmpty {
+                    if let selection = AXSupport.string(node, kAXSelectedTextAttribute), !selection.isEmpty {
                         selected = selection
                     }
                 }
@@ -143,10 +143,7 @@ enum NativeChatAXCapture {
     }
 
     private static func isChatGPTShell(_ node: AXUIElement) -> Bool {
-        guard string(node, kAXRoleAttribute) == "AXWebArea" else { return false }
-        let rawURL = value(node, kAXURLAttribute)
-        let url = (rawURL as? URL) ?? (rawURL as? String).flatMap(URL.init(string:))
-        return url?.absoluteString == "app://-/index.html"
+        AXSupport.role(node) == "AXWebArea" && AXSupport.url(node)?.absoluteString == "app://-/index.html"
     }
 
     private struct RenderedMessage {
@@ -168,7 +165,7 @@ enum NativeChatAXCapture {
             guard nodes.contains(where: isCodeEditor) else {
                 return renderedText(bodies: [node], area: area).map { RenderedMessage(text: $0, contextText: $0) }
             }
-            let parts = children(node).compactMap(render)
+            let parts = AXSupport.children(node).compactMap(render)
             return RenderedMessage(text: parts.map(\.text).joined(separator: "\n\n"),
                 contextText: parts.map(\.contextText).joined(separator: "\n\n"), codeBlocks: parts.flatMap(\.codeBlocks))
         }
@@ -183,50 +180,50 @@ enum NativeChatAXCapture {
         var inConversation = false
         while let current = node {
             if isCodeEditor(current) { editor = current }
-            if string(current, kAXSubroleAttribute) == "AXLandmarkRegion",
-               string(current, kAXTitleAttribute) == "Conversation" { inConversation = true }
+            if AXSupport.subrole(current) == "AXLandmarkRegion",
+               AXSupport.title(current) == "Conversation" { inConversation = true }
             if isChatGPTShell(current) { return inConversation ? editor : nil }
-            node = element(value(current, kAXParentAttribute))
+            node = AXSupport.parent(current)
         }
         return nil
     }
 
     private static func isCodeEditor(_ node: AXUIElement) -> Bool {
-        NativeChatCodeBlock.isEditor(role: string(node, kAXRoleAttribute),
-            title: string(node, kAXTitleAttribute), classes: classes(node))
+        NativeChatCodeBlock.isEditor(role: AXSupport.role(node),
+            title: AXSupport.title(node), classes: classes(node))
     }
 
     private static func codeBlock(_ editor: AXUIElement) -> NativeChatCodeBlock? {
-        let lines = children(editor).filter { classes($0).contains("cm-line") }
+        let lines = AXSupport.children(editor).filter { classes($0).contains("cm-line") }
         guard !lines.isEmpty else { return nil }
         return NativeChatCodeBlock(lines: lines.map { line in
-            descendants(line).filter { string($0, kAXRoleAttribute) == kAXStaticTextRole }
-                .compactMap { string($0, kAXValueAttribute) }
+            descendants(line).filter { AXSupport.role($0) == kAXStaticTextRole }
+                .compactMap { AXSupport.string($0, kAXValueAttribute) }
         })
     }
 
     private static func classes(_ node: AXUIElement) -> [String] {
-        value(node, "AXDOMClassList") as? [String] ?? []
+        AXSupport.value(node, "AXDOMClassList") as? [String] ?? []
     }
 
     private static func renderedText(bodies: [AXUIElement], area: AXUIElement) -> String? {
         guard let first = bodies.first, let last = bodies.last else { return nil }
         let range: CFTypeRef?
         if bodies.count == 1 {
-            range = parameter(area, "AXTextMarkerRangeForUIElement", first)
-        } else if let start = value(first, "AXStartTextMarker"), let end = value(last, "AXEndTextMarker") {
-            range = parameter(area, "AXTextMarkerRangeForUnorderedTextMarkers", [start, end] as CFArray)
+            range = AXSupport.parameterizedValue(area, "AXTextMarkerRangeForUIElement", first)
+        } else if let start = AXSupport.value(first, "AXStartTextMarker"), let end = AXSupport.value(last, "AXEndTextMarker") {
+            range = AXSupport.parameterizedValue(area, "AXTextMarkerRangeForUnorderedTextMarkers", [start, end] as CFArray)
         } else {
             range = nil
         }
         guard let range else { return nil }
-        return parameter(area, "AXStringForTextMarkerRange", range) as? String
+        return AXSupport.parameterizedValue(area, "AXStringForTextMarkerRange", range) as? String
     }
 
     private static func messageRole(_ node: AXUIElement) -> NativeConversationSnapshot.Message.Role? {
-        guard string(node, kAXRoleAttribute) == "AXHeading" else { return nil }
+        guard AXSupport.role(node) == "AXHeading" else { return nil }
         let label = [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute]
-            .compactMap { string(node, $0) }.first { !$0.isEmpty }
+            .compactMap { AXSupport.string(node, $0) }.first { !$0.isEmpty }
         switch label {
         case "You said:": return .user
         case "ChatGPT said:": return .assistant
@@ -236,24 +233,24 @@ enum NativeChatAXCapture {
 
     private static func geminiMessages(window: AXUIElement) -> [ObservedEntry]? {
         guard let column = descendants(window).first(where: {
-            string($0, kAXRoleAttribute) == kAXColumnRole && string($0, kAXIdentifierAttribute) == "content"
-        }), let content = element(value(column, kAXParentAttribute)) else { return nil }
-        return children(content).filter { string($0, kAXRoleAttribute) == kAXRowRole }.map { row in
+            AXSupport.role($0) == kAXColumnRole && AXSupport.identifier($0) == "content"
+        }), let content = AXSupport.parent(column) else { return nil }
+        return AXSupport.children(content).filter { AXSupport.role($0) == kAXRowRole }.map { row in
             let nodes = descendants(row)
-            if let heading = nodes.first(where: { string($0, kAXRoleAttribute) == "AXHeading" }),
-               let text = string(heading, kAXDescriptionAttribute), !text.isEmpty {
+            if let heading = nodes.first(where: { AXSupport.role($0) == "AXHeading" }),
+               let text = AXSupport.descriptionText(heading), !text.isEmpty {
                 return ObservedEntry(entry: .message(.init(role: .user, renderedText: text)), element: row,
-                    selectedText: string(heading, kAXSelectedTextAttribute))
+                    selectedText: AXSupport.string(heading, kAXSelectedTextAttribute))
             }
-            let staticTexts = nodes.filter { string($0, kAXRoleAttribute) == kAXStaticTextRole }
+            let staticTexts = nodes.filter { AXSupport.role($0) == kAXStaticTextRole }
             let parts = nodes.compactMap { node -> RenderedMessage? in
-                if string(node, kAXRoleAttribute) == kAXStaticTextRole,
-                   let text = string(node, kAXValueAttribute), !text.isEmpty {
-                    return RenderedMessage(text: text, contextText: string(node, kAXDescriptionAttribute) ?? text)
+                if AXSupport.role(node) == kAXStaticTextRole,
+                   let text = AXSupport.string(node, kAXValueAttribute), !text.isEmpty {
+                    return RenderedMessage(text: text, contextText: AXSupport.descriptionText(node) ?? text)
                 }
                 guard let attachment = NativeChatCodeBlock.geminiAttachment(
-                    identifier: string(node, kAXIdentifierAttribute), description: string(node, kAXDescriptionAttribute),
-                    renderedText: string(node, kAXValueAttribute)) else { return nil }
+                    identifier: AXSupport.identifier(node), description: AXSupport.descriptionText(node),
+                    renderedText: AXSupport.string(node, kAXValueAttribute)) else { return nil }
                 return RenderedMessage(text: attachment.text, contextText: attachment.markdown)
             }
             let text = parts.map(\.text).joined(separator: "\n")
@@ -262,50 +259,19 @@ enum NativeChatAXCapture {
             let descriptions = description.hasSuffix("\n") ? [description, String(description.dropLast())] : [description]
             let contextText = descriptions.first {
                 !NativeSelectionMarkdown.boldRanges(description: $0, renderedText: text, selectedText: text).isEmpty
-            } ?? (nodes.contains(where: isGeminiCodeAttachment) ? description : text)
+            } ?? (nodes.contains(where: AXSupport.isGeminiCodeAttachment) ? description : text)
             return ObservedEntry(entry: .message(.init(role: .assistant, renderedText: text, contextText: contextText)), element: row,
-                selectedText: staticTexts.compactMap { string($0, kAXSelectedTextAttribute) }.first { !$0.isEmpty })
+                selectedText: staticTexts.compactMap { AXSupport.string($0, kAXSelectedTextAttribute) }.first { !$0.isEmpty })
         }
     }
 
-    private static func isGeminiCodeAttachment(_ node: AXUIElement) -> Bool {
-        string(node, kAXRoleAttribute) == kAXButtonRole && NativeChatCodeBlock.geminiAttachment(
-            identifier: string(node, kAXIdentifierAttribute), description: string(node, kAXDescriptionAttribute),
-                    renderedText: string(node, kAXValueAttribute)) != nil
-    }
-
     private static func descendants(_ root: AXUIElement, excludingWebAreas: Bool = false) -> [AXUIElement] {
-        let role = string(root, kAXRoleAttribute)
+        let role = AXSupport.role(root)
         if excludingWebAreas, role == "AXWebArea" { return [] }
         if [kAXOutlineRole, kAXMenuBarRole, kAXTextFieldRole].contains(role ?? "") ||
-            (role == kAXButtonRole && !isGeminiCodeAttachment(root)) ||
+            (role == kAXButtonRole && !AXSupport.isGeminiCodeAttachment(root)) ||
             (role == kAXTextAreaRole && !isCodeEditor(root)) { return [] }
-        return [root] + children(root).flatMap { descendants($0, excludingWebAreas: excludingWebAreas) }
-    }
-
-    private static func children(_ node: AXUIElement) -> [AXUIElement] {
-        value(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
-    }
-
-    private static func string(_ node: AXUIElement, _ attribute: String) -> String? {
-        value(node, attribute) as? String
-    }
-
-    private static func value(_ node: AXUIElement, _ attribute: String) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(node, attribute as CFString, &result) == .success else { return nil }
-        return result
-    }
-
-    private static func parameter(_ node: AXUIElement, _ attribute: String, _ input: CFTypeRef) -> CFTypeRef? {
-        var result: CFTypeRef?
-        guard AXUIElementCopyParameterizedAttributeValue(node, attribute as CFString, input, &result) == .success else { return nil }
-        return result
-    }
-
-    private static func element(_ value: CFTypeRef?) -> AXUIElement? {
-        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return unsafeDowncast(value as AnyObject, to: AXUIElement.self)
+        return [root] + AXSupport.children(root).flatMap { descendants($0, excludingWebAreas: excludingWebAreas) }
     }
 }
 

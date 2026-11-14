@@ -113,14 +113,19 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
 @MainActor
 @Observable
 public final class AppCoordinator {
+    private struct ConversationHostChannel {
+        let store: ConversationHandoffStore
+        let requiresExplicitConversationOpen: Bool
+        let readinessFailure: @MainActor () -> String?
+        let dispatch: @MainActor (ConversationHandoffStore) async throws -> Void
+    }
+
     public let paths: StoragePaths
     public var environment: [String: String]
     public let memosClient: MemosClient
     public let outbox: OfflineOutbox
     public let hotCache: HotCache
-    public let handoff: ConversationHandoffStore
-    public let codexHandoff: ConversationHandoffStore
-    private let codexDelivery: (@Sendable (ConversationRequest) -> (ConversationReceipt.State, String?))?
+    private let hostChannels: [ConversationHost: ConversationHostChannel]
     public var conversationHost: ConversationHost = .antigravity {
         didSet {
             do { try AtomicFile.writeData(JSONEncoder().encode(conversationHost), to: conversationHostURL) }
@@ -163,7 +168,7 @@ public final class AppCoordinator {
     public var pluginStatusText: String = ""
 
     public var onOpenURL: (@MainActor (URL) -> Void)?
-    public var onOpenAntigravityApp: (@MainActor () -> Void)?
+    public var onWakeHost: (@MainActor (ConversationHost) -> Void)?
     public var onOpenConversation: (@MainActor (ConversationReference) -> Bool)?
 
     public init(
@@ -172,16 +177,45 @@ public final class AppCoordinator {
         memosClient: MemosClient = MemosClient(),
         capturer: any SelectionCapturing,
         antigravityContext: AntigravityCaptureContext = AntigravityCaptureContext(),
-        codexDelivery: (@Sendable (ConversationRequest) -> (ConversationReceipt.State, String?))? = nil
+        codexDelivery: (@Sendable (ConversationRequest) async -> (ConversationReceipt.State, String?))? = nil
     ) throws {
         self.paths = paths
         self.environment = environment
         self.memosClient = memosClient
         self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
-        self.handoff = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL)
-        self.codexHandoff = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
-        self.codexDelivery = codexDelivery
+        let antigravityStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .antigravity)
+        let codexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
+        self.hostChannels = [
+            .antigravity: ConversationHostChannel(
+                store: antigravityStore,
+                requiresExplicitConversationOpen: ConversationHost.antigravity.requiresExplicitConversationOpen,
+                readinessFailure: {
+                    if case .needsInstallOrRepair = AntigravityIntegration.verify(
+                        dataDirectoryURL: paths.dataDirectoryURL,
+                        configDirectoryURL: paths.antigravityConfigDirectoryURL
+                    ) {
+                        return "请先安装或修复 Antigravity 插件，再开始对话"
+                    }
+                    return nil
+                },
+                dispatch: { _ in }
+            ),
+            .codex: ConversationHostChannel(
+                store: codexStore,
+                requiresExplicitConversationOpen: ConversationHost.codex.requiresExplicitConversationOpen,
+                readinessFailure: {
+                    codexDelivery == nil ? "请先安装 Codex。所选片段已保留" : nil
+                },
+                dispatch: { store in
+                    guard let codexDelivery else { return }
+                    try await Task.detached {
+                        guard let worker = try ConversationSidecarWorker.acquireIfUnlocked(store: store) else { return }
+                        try await worker.processPending(invoke: codexDelivery)
+                    }.value
+                }
+            )
+        ]
         self.antigravityContext = antigravityContext
         self.capturer = capturer
         self.cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
@@ -189,10 +223,10 @@ public final class AppCoordinator {
         if FileManager.default.fileExists(atPath: conversationHostURL.path) {
             conversationHost = try JSONDecoder().decode(ConversationHost.self, from: Data(contentsOf: conversationHostURL))
         }
-        if let (host, store, current) = try activeConversation() {
+        _ = try ConversationSidecarWorker.acquireIfUnlocked(store: codexStore)
+        if let (host, _, current, receipt) = try activeConversation(clearingTerminalFailures: true) {
             activeConversationHost = host
             checkedCardIDs = Set(current.cardIDs)
-            let receipt = try store.receipt(for: current.requestId)
             if receipt?.state == .succeeded, let id = receipt?.conversationId {
                 confirmedConversation = ConversationReference(host: host, id: id)
             }
@@ -381,7 +415,10 @@ public final class AppCoordinator {
             }
 
             do {
-                _ = try? await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
+                if let flushed = (try? await outbox.flush(using: memosClient, baseURL: baseURL, token: token))?.flushed,
+                   !flushed.isEmpty {
+                    applyFlushedOutboxItems(flushed)
+                }
                 let saved = try await memosClient.createClip(
                     clientClipId: clientClipId,
                     content: rawContent,
@@ -424,7 +461,7 @@ public final class AppCoordinator {
 
     public func refresh() async {
         latestRefreshRequest += 1
-        let ticket = RefreshTicket(request: latestRefreshRequest, localRevision: localCardsRevision)
+        var ticket = RefreshTicket(request: latestRefreshRequest, localRevision: localCardsRevision)
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
               let token = KeychainTokenStore.resolveToken(environment: environment) else {
             guard canPublishRefresh(ticket) else { return }
@@ -432,7 +469,14 @@ public final class AppCoordinator {
             return
         }
         do {
-            _ = try await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
+            let (flushed, _) = try await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
+            if !flushed.isEmpty {
+                let revisionUnchangedBeforeFlush = (ticket.localRevision == localCardsRevision)
+                applyFlushedOutboxItems(flushed)
+                if revisionUnchangedBeforeFlush {
+                    ticket = RefreshTicket(request: ticket.request, localRevision: localCardsRevision)
+                }
+            }
             let remoteCards = try await memosClient.listHotClips(baseURL: baseURL, token: token)
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: remoteCards, pendingOutbox: outbox.loadEntries())
@@ -444,6 +488,29 @@ public final class AppCoordinator {
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: cards, pendingOutbox: outbox.loadEntries())
             setBanner("同步失败，当前显示本机保存的片段", isError: true)
+        }
+    }
+
+    private func applyFlushedOutboxItems(_ flushed: [(clientClipId: String, card: RewindCard)]) {
+        guard !flushed.isEmpty else { return }
+        for item in flushed {
+            if checkedCardIDs.remove(item.clientClipId) != nil {
+                checkedCardIDs.insert(item.card.id)
+            }
+            if focusedCardID == item.clientClipId {
+                focusedCardID = item.card.id
+            }
+        }
+        let pendingEntries = outbox.loadEntries()
+        updateLocalCards { cards in
+            for item in flushed {
+                cards.removeAll { $0.id == item.clientClipId || $0.id == item.card.id }
+                cards.append(item.card)
+            }
+            cards = Self.mergeCards(cached: cards, pendingOutbox: pendingEntries)
+        }
+        if focusedCardID == nil {
+            focusedCardID = cards.first?.id
         }
     }
 
@@ -461,38 +528,30 @@ public final class AppCoordinator {
         do {
             let current: CurrentConversation
             let host: ConversationHost
-            let store: ConversationHandoffStore
-            if let (existingHost, existingStore, existing) = try activeConversation() {
+            let channel: ConversationHostChannel
+            if let (existingHost, _, existing, _) = try activeConversation() {
                 host = existingHost
-                store = existingStore
+                channel = hostChannel(for: existingHost)
                 current = existing
             } else {
                 host = requestedHost ?? conversationHost
-                store = handoffStore(for: host)
+                channel = hostChannel(for: host)
                 let selected = cards.filter { checkedCardIDs.contains($0.id) }
                 guard !selected.isEmpty else {
                     setBanner("请先保存或勾选至少一条片段", isError: true)
                     return nil
                 }
-                if host == .antigravity, case .needsInstallOrRepair = AntigravityIntegration.verify(dataDirectoryURL: paths.dataDirectoryURL, configDirectoryURL: paths.antigravityConfigDirectoryURL) {
-                    setBanner("请先安装或修复 Antigravity 插件，再开始对话", isError: true)
+                if let failureBanner = channel.readinessFailure() {
+                    setBanner(failureBanner, isError: true)
                     return nil
                 }
-                guard host != .codex || codexDelivery != nil else {
-                    setBanner("请先安装 Codex。所选片段已保留", isError: true)
-                    return nil
-                }
-                current = try store.submit(prompt: ConversationPrompt.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesizedOnLaunch)
+                current = try channel.store.submit(prompt: ConversationPrompt.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesizedOnLaunch)
             }
+            let store = channel.store
             activeConversationHost = host
-            if host == .antigravity { onOpenAntigravityApp?() }
             setBanner("正在等待 \(host.displayName) 确认发送结果…", isError: false)
-            if host == .codex, let codexDelivery {
-                try await Task.detached {
-                    let worker = try ConversationSidecarWorker(store: store)
-                    try worker.processPending(invoke: codexDelivery)
-                }.value
-            }
+            onWakeHost?(host)
+            try await channel.dispatch(store)
             let deadline = Date().addingTimeInterval(max(0, waitSeconds))
             repeat {
                 if let receipt = try store.receipt(for: current.requestId), receipt.state != .dispatching {
@@ -501,7 +560,7 @@ public final class AppCoordinator {
                         guard let conversationID = receipt.conversationId else { throw RewindError.ioError("发送结果缺少对话编号") }
                         let reference = ConversationReference(host: host, id: conversationID)
                         confirmedConversation = reference
-                        let opened = host != .codex || onOpenConversation?(reference) == true
+                        let opened = !channel.requiresExplicitConversationOpen || onOpenConversation?(reference) == true
                         if current.markSynthesized && !current.archiveCardIDs.isEmpty {
                             canEndUnarchivedConversation = true
                             let remainingIDs = Set(current.archiveCardIDs)
@@ -533,7 +592,7 @@ public final class AppCoordinator {
                             try store.clearCurrent(requestId: current.requestId)
                             activeConversationHost = nil
                         }
-                        setBanner(opened ? "已将 \(current.cardIDs.count) 条片段发送到 \(host.displayName) 的新对话" : "已发送到 Codex，但未能打开对话。可重新打开，不会重复发送", isError: !opened)
+                        setBanner(opened ? "已将 \(current.cardIDs.count) 条片段发送到 \(host.displayName) 的新对话" : "已发送到 \(host.displayName)，但未能打开对话。可重新打开，不会重复发送", isError: !opened)
                         return .succeeded(reference)
                     case .rejected, .expired:
                         try store.clearCurrent(requestId: current.requestId)
@@ -561,8 +620,8 @@ public final class AppCoordinator {
     public func endUnconfirmedConversation() {
         guard !isLaunchingConversation else { return }
         do {
-            guard let (_, store, current) = try activeConversation(),
-                  try store.receipt(for: current.requestId)?.state == .unknown else { return }
+            guard let (_, store, current, receipt) = try activeConversation(clearingTerminalFailures: true),
+                  receipt?.state == .unknown else { return }
             checkedCardIDs.subtract(current.cardIDs)
             try store.clearCurrent(requestId: current.requestId)
             activeConversationHost = nil
@@ -574,8 +633,8 @@ public final class AppCoordinator {
     public func endUnarchivedConversation() {
         guard !isLaunchingConversation else { return }
         do {
-            guard let (_, store, current) = try activeConversation(), current.markSynthesized,
-                  try store.receipt(for: current.requestId)?.state == .succeeded else { return }
+            guard let (_, store, current, receipt) = try activeConversation(clearingTerminalFailures: true), current.markSynthesized,
+                  receipt?.state == .succeeded else { return }
             checkedCardIDs.subtract(current.cardIDs)
             try store.clearCurrent(requestId: current.requestId)
             activeConversationHost = nil
@@ -591,9 +650,9 @@ public final class AppCoordinator {
             return
         }
         do {
-            if let (host, store, current) = try activeConversation(), host == reference.host,
+            if let (host, store, current, receipt) = try activeConversation(clearingTerminalFailures: true), host == reference.host,
                (!current.markSynthesized || current.archiveCardIDs.isEmpty),
-               try store.receipt(for: current.requestId)?.conversationId == reference.id {
+               receipt?.conversationId == reference.id {
                 try store.clearCurrent(requestId: current.requestId)
                 activeConversationHost = nil
             }
@@ -601,15 +660,39 @@ public final class AppCoordinator {
         } catch { setBanner(error.localizedDescription, isError: true) }
     }
 
-    private func handoffStore(for host: ConversationHost) -> ConversationHandoffStore {
-        host == .antigravity ? handoff : codexHandoff
+    public func handoffStore(for host: ConversationHost) -> ConversationHandoffStore {
+        hostChannel(for: host).store
     }
 
-    private func activeConversation() throws -> (ConversationHost, ConversationHandoffStore, CurrentConversation)? {
-        try ConversationHost.allCases.compactMap { host in
+    private func hostChannel(for host: ConversationHost) -> ConversationHostChannel {
+        guard let channel = hostChannels[host] else {
+            preconditionFailure("Missing host channel for \(host)")
+        }
+        return channel
+    }
+
+    private func activeConversation(
+        clearingTerminalFailures: Bool = false
+    ) throws -> (ConversationHost, ConversationHandoffStore, CurrentConversation, ConversationReceipt?)? {
+        var live: [(ConversationHost, ConversationHandoffStore, CurrentConversation, ConversationReceipt?)] = []
+        var terminal: [(ConversationHost, ConversationHandoffStore, CurrentConversation, ConversationReceipt?)] = []
+        for host in ConversationHost.allCases {
             let store = handoffStore(for: host)
-            return try store.current().map { (host, store, $0) }
-        }.min { $0.2.expiresAt < $1.2.expiresAt }
+            guard let current = try store.current() else { continue }
+            let receipt = try store.receipt(for: current.requestId)
+            if receipt?.state.isTerminalFailure == true {
+                terminal.append((host, store, current, receipt))
+            } else {
+                live.append((host, store, current, receipt))
+            }
+        }
+        if clearingTerminalFailures || !live.isEmpty {
+            for (_, store, current, _) in terminal {
+                try store.clearCurrent(requestId: current.requestId)
+            }
+            return live.min { $0.2.expiresAt < $1.2.expiresAt }
+        }
+        return terminal.min { $0.2.expiresAt < $1.2.expiresAt }
     }
 
     public func markCardSynthesized(_ card: RewindCard) async {
