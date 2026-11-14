@@ -99,7 +99,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     }
 
     public var launchTitle: String {
-        checkedCardCount > 0 ? "在 \(conversationHost.displayName) 开聊（已选 \(checkedCardCount) 张）" : "在 \(conversationHost.displayName) 开聊"
+        checkedCardCount > 0 ? "在所选应用开聊（已选 \(checkedCardCount) 张）" : "在所选应用开聊"
     }
 }
 

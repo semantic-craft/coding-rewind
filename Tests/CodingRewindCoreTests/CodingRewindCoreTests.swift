@@ -1124,7 +1124,7 @@ struct CodingRewindCoreTests {
         #expect(initialSnap.headerTitle == "Coding Rewind · 0 张热卡")
         #expect(initialSnap.headerSubtitle == "Memos 未配置（离线队列可用） · 插件待安装")
         #expect(initialSnap.toggleHUDTitle == "打开 Rewind 浮窗")
-        #expect(initialSnap.launchTitle == "在 Antigravity 开聊")
+        #expect(initialSnap.launchTitle == "在所选应用开聊")
 
         await coord.captureSelection()
         let pendingSnap = coord.menuStatusSnapshot(isHUDVisible: true, isAccessibilityTrusted: true)
@@ -1134,7 +1134,7 @@ struct CodingRewindCoreTests {
         #expect(pendingSnap.isAccessibilityTrusted == true)
         #expect(pendingSnap.headerTitle == "Coding Rewind · 1 张热卡（待同步 1）")
         #expect(pendingSnap.toggleHUDTitle == "收起 Rewind 浮窗")
-        #expect(pendingSnap.launchTitle == "在 Antigravity 开聊（已选 1 张）")
+        #expect(pendingSnap.launchTitle == "在所选应用开聊（已选 1 张）")
         #expect(pendingSnap.recentCards.count == 1)
         #expect(pendingSnap.recentCards[0].sourcePlatform == "gemini")
         #expect(pendingSnap.recentCards[0].isChecked == true)
@@ -1191,7 +1191,7 @@ struct CodingRewindCoreTests {
         #expect(customPortSnap.recentCards[0].titlePreview == "Multi line Card One")
         #expect(customPortSnap.recentCards[2].id == "c-3")
         #expect(customPortSnap.recentCards[2].isChecked == true)
-        #expect(customPortSnap.launchTitle == "在 Antigravity 开聊（已选 1 张）")
+        #expect(customPortSnap.launchTitle == "在所选应用开聊（已选 1 张）")
     }
     @Test("Sidecar installation preserves host project assignment and refuses unknown config shapes")
     func sidecarInstallationConfigBoundaries() throws {

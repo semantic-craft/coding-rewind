@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-13T23:54:40.409618Z</p>
-<p>Main: <code>main: 304ad0e8b2c21a81fba331a4aed444330ced0833</code></p>
+<p>Observed: 2026-11-14T00:10:28.089861Z</p>
+<p>Main: <code>main: c0d1b035e19985bf3afc7aa77254ca4ac2b36fdc</code></p>
 <section id="release-030"><h2>0.3.0 候选发布</h2>
 <article id="release-030-preparation"><h3>候选版已公开发布</h3><span class="badge">done</span><p>v0.3.0-rc.1 已公开发布应用包、网页扩展和 SHA-256 文件。PR #17 已合并；主工作区与非作者独立工作区的全仓检查通过，解压附件的签名、版本、架构、许可证和字节核对通过。公开包不含个人开发凭据配置，使用 ad-hoc 签名，尚未 Apple 公证。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/17">pull 17: 非作者在精确 head 独立验证 PASS+NOTES。自动 Codex Review 因额度限制未运行。</a></li>
@@ -106,6 +106,10 @@
 <article id="delivery-state"><h3>提交与合并</h3><span class="badge">done</span><p>PR #7 已合并，日常应用已安装；全仓门禁通过，独立验收 PASS+NOTES。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/7">pull 7: 设置与桌面入口已合并，独立验收评论记录范围</a></li>
 </ul><p>Next: 按代码质量标准继续补验下列未覆盖项。</p></article>
+<article id="selected-app-menu-label"><h3>所选应用开聊菜单文案</h3><span class="badge">done</span><p>状态菜单的 ⌘Return 入口改为“在所选应用开聊”，保留已选卡片数提示。全仓 scripts/check 通过；日常应用已升级、重启并从实际展开的状态菜单读回通用入口与两个固定宿主入口，Codex 不再重复。安装签名与构建二进制 SHA-256 一致，现有开发凭据配置保留。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/AppCoordinator.swift">file Sources/CodingRewindCore/AppCoordinator.swift: 仅修改菜单快照标题，接聊动作和宿主选择沿用现有逻辑。</a></li>
+<li>note 2026-11-14 本机菜单读回: 安装二进制 SHA-256 c86e4c722752a31a9367832abf84af74f4a434939c40d3a3c1794245379af6df；状态菜单快照 s00000369。</li>
+</ul><p>Next: </p></article>
 </section>
 <section id="unverified"><h2>本轮补验与剩余边界</h2>
 <article id="capture-permission"><h3>桌面跨应用选区</h3><span class="badge">done</span><p>TextEdit 与 Chrome 真实选区、Chrome 用户全局快捷键已通过服务读回。新增受控来源证明 AX 无值时模拟复制成功，原文与实际选区一致。成功 AX、空选区和成功复制回退均核对两条剪贴板 item、七种格式原始字节，用户原剪贴板恢复一致。</p><ul>

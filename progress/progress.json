@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "304ad0e8b2c21a81fba331a4aed444330ced0833",
+    "main": "c0d1b035e19985bf3afc7aa77254ca4ac2b36fdc",
     "open_pulls": [],
     "pulls": [
       {
@@ -147,7 +147,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-13T23:54:40.409618Z",
+  "observed_at": "2026-11-14T00:10:28.089861Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -615,6 +615,25 @@
           "status": "done",
           "summary": "PR #7 已合并，日常应用已安装；全仓门禁通过，独立验收 PASS+NOTES。",
           "title": "提交与合并"
+        },
+        {
+          "id": "selected-app-menu-label",
+          "title": "所选应用开聊菜单文案",
+          "status": "done",
+          "summary": "状态菜单的 ⌘Return 入口改为“在所选应用开聊”，保留已选卡片数提示。全仓 scripts/check 通过；日常应用已升级、重启并从实际展开的状态菜单读回通用入口与两个固定宿主入口，Codex 不再重复。安装签名与构建二进制 SHA-256 一致，现有开发凭据配置保留。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindCore/AppCoordinator.swift",
+              "note": "仅修改菜单快照标题，接聊动作和宿主选择沿用现有逻辑。"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-14 本机菜单读回",
+              "note": "安装二进制 SHA-256 c86e4c722752a31a9367832abf84af74f4a434939c40d3a3c1794245379af6df；状态菜单快照 s00000369。"
+            }
+          ],
+          "next": ""
         }
       ],
       "title": "本轮桌面入口与设置"
