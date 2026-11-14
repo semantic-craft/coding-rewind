@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "e07c132cbe840163a2fb88e65367ff1de5e38251",
+    "main": "b2ca0d6a33a770057e3de8b6c422abc4dedb0002",
     "open_pulls": [],
     "pulls": [
       {
@@ -139,6 +139,14 @@
         "merged": true,
         "number": 18,
         "state": "closed"
+      },
+      {
+        "base": "e0bff80d9646b34dd4d8fd4a46f6791ec5776701",
+        "head": "7b4a19347bd01db5e9b3fd52f81487648e7b3824",
+        "merge_commit": "b2ca0d6a33a770057e3de8b6c422abc4dedb0002",
+        "merged": true,
+        "number": 19,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -155,7 +163,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T00:51:26.067575Z",
+  "observed_at": "2026-11-14T01:11:27.186549Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -169,56 +177,61 @@
   "sections": [
     {
       "id": "bright-native-colors",
-      "title": "明亮原生配色",
       "items": [
         {
-          "id": "bright-native-implementation",
-          "title": "内容底色与蓝色强调",
-          "status": "done",
-          "summary": "设置详情与未选热卡改用自适应内容底色；主按钮、时钟与空状态图标使用蓝色，选中卡片采用更轻的强调色。保留既有布局、原生材质及系统明暗适配。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift",
-              "note": "仅改变颜色，数据与动作未变。"
+              "note": "仅改变颜色，数据与动作未变。",
+              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift"
             },
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindApp/SettingsViews.swift",
-              "note": "设置详情使用 controlBackgroundColor。"
+              "note": "设置详情使用 controlBackgroundColor。",
+              "ref": "Sources/CodingRewindApp/SettingsViews.swift"
             }
           ],
-          "next": ""
+          "id": "bright-native-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "设置详情与未选热卡改用自适应内容底色；主按钮、时钟与空状态图标使用蓝色，选中卡片采用更轻的强调色。保留既有布局、原生材质及系统明暗适配。",
+          "title": "内容底色与蓝色强调"
         },
         {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "实际原生窗口截图及全仓日志已核对，复用此前未变的行为验收。",
+              "ref": "2026-11-14 明亮配色验收"
+            }
+          ],
           "id": "bright-native-verification",
-          "title": "门禁与原生明暗核对",
+          "next": "",
           "status": "done",
           "summary": "全仓 scripts/check、签名打包及独立审查通过。隔离示例卡片的浮窗、设置浅色与深色窗口均已查看；深色诊断包临时指定外观，生产源码已恢复。",
-          "evidence": [
-            {
-              "kind": "note",
-              "ref": "2026-11-14 明亮配色验收",
-              "note": "实际原生窗口截图及全仓日志已核对，复用此前未变的行为验收。"
-            }
-          ],
-          "next": ""
+          "title": "门禁与原生明暗核对"
         },
         {
-          "id": "bright-native-delivery",
-          "title": "安装与源码交付",
-          "status": "in_progress",
-          "summary": "本机日常包已替换并启动，实际设置窗口读回白色正文与原生侧栏。签名、现有开发配置及二进制 SHA-256 与交付包一致；隔离测试进程、启动注册与偏好已清理。源码待 PR 合并。",
           "evidence": [
             {
               "kind": "note",
-              "ref": "2026-11-14 日常包替换",
-              "note": "二进制 SHA-256 1aa2fb56b80df039b5bda49cf8a24e3719e6cd64ff77eb3a3edb874e60a1e7fa。"
+              "note": "二进制 SHA-256 1aa2fb56b80df039b5bda49cf8a24e3719e6cd64ff77eb3a3edb874e60a1e7fa。",
+              "ref": "2026-11-14 日常包替换"
+            },
+            {
+              "kind": "pull",
+              "note": "颜色调整、全仓检查、独立审查与本机安装已完成。",
+              "ref": 19
             }
           ],
-          "next": "完成 PR 合并并更新远端事实。"
+          "id": "bright-native-delivery",
+          "next": "",
+          "status": "done",
+          "summary": "本机日常包已替换并启动，实际设置窗口读回白色正文与原生侧栏。签名、现有开发配置及二进制 SHA-256 与交付包一致；隔离测试进程、启动注册与偏好已清理。PR #19 已独立复核并合并至 main。",
+          "title": "日常安装与源码交付完成"
         }
-      ]
+      ],
+      "title": "明亮原生配色"
     },
     {
       "id": "native-ui-unification",
@@ -961,7 +974,8 @@
       13,
       15,
       17,
-      18
+      18,
+      19
     ]
   }
 }
