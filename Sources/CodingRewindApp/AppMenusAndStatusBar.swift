@@ -8,7 +8,7 @@ import SwiftUI
 public enum AppCommand: Equatable, Sendable {
     case toggleHUD
     case presentHUDAndFocus
-    case captureSelectionFromMenu
+    case captureSelection
     case captureSelectionHotkey
     case launchConversation
     case launchIn(ConversationHost)
@@ -99,7 +99,7 @@ public enum MainMenuBuilder {
         let toggleItem = makeCommandMenuItem(title: "显示或隐藏片段浮窗", command: .toggleHUD, handler: onCommand)
         shortcuts.bindMenuItem(toggleItem, to: .toggleHUD)
         actionsMenu.addItem(toggleItem)
-        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelectionFromMenu, handler: onCommand)
+        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelection, handler: onCommand)
         shortcuts.bindMenuItem(captureItem, to: .captureSelection)
         actionsMenu.addItem(captureItem)
         actionsMenu.addItem(
@@ -153,7 +153,7 @@ public enum MainMenuBuilder {
         let windowMenuItem = NSMenuItem(title: "窗口", action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: "窗口")
         windowMenu.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-        windowMenu.addItem(makeCommandMenuItem(title: "前置 Rewind 浮窗", command: .presentHUDAndFocus, handler: onCommand))
+        windowMenu.addItem(makeCommandMenuItem(title: "前置片段浮窗", command: .presentHUDAndFocus, handler: onCommand))
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
 
@@ -400,7 +400,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         let toggleItem = makeCommandMenuItem(title: snapshot.toggleHUDTitle, command: .toggleHUD, handler: onCommand)
         shortcuts.applyMenuShortcut(to: toggleItem, for: .toggleHUD)
         menu.addItem(toggleItem)
-        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelectionFromMenu, handler: onCommand)
+        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelection, handler: onCommand)
         shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
         menu.addItem(captureItem)
         menu.addItem(
@@ -514,27 +514,24 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 }
 
 @MainActor
-public final class SettingsWindowController: NSWindowController {
+public final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let coordinator: AppCoordinator
-    private let appearance: AppAppearancePreferences
-    private let shortcuts: AppShortcuts
-    private let onInstallPlugin: @MainActor () -> Void
-    private let onRequestAccessibility: @MainActor () -> Void
-    private let hostingView: NSHostingView<SettingsFormView>
+    private let permissionState: AccessibilityPermissionState
+    public let connectionDraft: SettingsConnectionDraft
     private var hasCenteredOnce = false
 
     public init(
         coordinator: AppCoordinator,
         appearance: AppAppearancePreferences,
         shortcuts: AppShortcuts,
-        onInstallPlugin: @escaping @MainActor () -> Void,
-        onRequestAccessibility: @escaping @MainActor () -> Void
+        permissionState: AccessibilityPermissionState = AccessibilityPermissionState(),
+        connectionDraft: SettingsConnectionDraft? = nil,
+        onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
+        let draft = connectionDraft ?? SettingsConnectionDraft(memosURL: coordinator.connectionSettings.memosURL)
         self.coordinator = coordinator
-        self.appearance = appearance
-        self.shortcuts = shortcuts
-        self.onInstallPlugin = onInstallPlugin
-        self.onRequestAccessibility = onRequestAccessibility
+        self.permissionState = permissionState
+        self.connectionDraft = draft
 
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: SettingsLayout.contentSize),
@@ -544,21 +541,21 @@ public final class SettingsWindowController: NSWindowController {
         )
         window.title = "Coding Rewind 设置"
         window.isReleasedWhenClosed = false
-
-        let placeholderView = SettingsFormView(
+        let rootView = SettingsRootView(
             coordinator: coordinator,
             appearance: appearance,
             shortcuts: shortcuts,
-            onInstallPlugin: onInstallPlugin,
-            onRequestAccessibility: onRequestAccessibility,
-            onClose: {}
+            permissionState: permissionState,
+            connectionDraft: draft,
+            onCommand: onCommand,
+            onClose: { [weak window] in
+                window?.close()
+            }
         )
-        self.hostingView = NSHostingView(rootView: placeholderView)
-        super.init(window: window)
-
-        self.hostingView.rootView = makeRootView()
-        window.contentView = self.hostingView
+        window.contentView = NSHostingView(rootView: rootView)
         window.setContentSize(SettingsLayout.contentSize)
+        super.init(window: window)
+        window.delegate = self
     }
 
     @available(*, unavailable)
@@ -567,8 +564,12 @@ public final class SettingsWindowController: NSWindowController {
     }
 
     public func show() {
+        let wasClosed = (window?.isVisible != true)
         coordinator.refreshPluginStatus()
-        hostingView.rootView = makeRootView()
+        permissionState.refresh()
+        if wasClosed {
+            connectionDraft.reset(memosURL: coordinator.connectionSettings.memosURL)
+        }
         if !hasCenteredOnce {
             window?.center()
             hasCenteredOnce = true
@@ -577,16 +578,8 @@ public final class SettingsWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(nil)
     }
 
-    private func makeRootView() -> SettingsFormView {
-        SettingsFormView(
-            coordinator: coordinator,
-            appearance: appearance,
-            shortcuts: shortcuts,
-            onInstallPlugin: onInstallPlugin,
-            onRequestAccessibility: onRequestAccessibility,
-            onClose: { [weak self] in
-                self?.window?.close()
-            }
-        )
+    public func windowDidBecomeKey(_ notification: Notification) {
+        coordinator.refreshPluginStatus()
+        permissionState.refresh()
     }
 }

@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: MIT
 
-import { normalizeMemosBaseUrl } from "./memos_payload.mjs";
+import { buildAuthHeaders, normalizeMemosBaseUrl } from "./memos_payload.mjs";
 
 export async function testMemosConnection({ baseUrl, token, fetchImpl = globalThis.fetch }) {
   const normalized = normalizeMemosBaseUrl(baseUrl);
   if (!normalized) {
     return { ok: false, message: "请输入有效的 Memos 服务地址" };
   }
-  const headers = {};
-  if (token && token.trim()) {
-    headers.Authorization = `Bearer ${token.trim()}`;
-  }
+  const headers = buildAuthHeaders(token, { includeJsonContentType: false });
   try {
     const resp = await fetchImpl(`${normalized}/api/memos?pageSize=1`, {
       method: "GET",
@@ -76,18 +73,24 @@ function initOptionsPage() {
     }
   });
 
-  formEl.addEventListener("submit", async (event) => {
-    event.preventDefault();
+  async function resolveAuthorizedBaseUrl() {
     const normalized = normalizeMemosBaseUrl(urlInput.value);
     if (!normalized) {
       setStatus("请输入以 http:// 或 https:// 开头的有效 Memos 服务地址", "error");
-      return;
+      return "";
     }
     const granted = await requestOriginPermission(normalized);
     if (!granted) {
       setStatus("请允许扩展访问此服务地址，才能连接 Memos", "error");
-      return;
+      return "";
     }
+    return normalized;
+  }
+
+  formEl.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const normalized = await resolveAuthorizedBaseUrl();
+    if (!normalized) return;
 
     urlInput.value = normalized;
     await chrome.storage.local.set({
@@ -100,17 +103,9 @@ function initOptionsPage() {
   });
 
   testBtn?.addEventListener("click", async () => {
-    const normalized = normalizeMemosBaseUrl(urlInput.value);
-    if (!normalized) {
-      setStatus("请输入以 http:// 或 https:// 开头的有效 Memos 服务地址", "error");
-      return;
-    }
-    const granted = await requestOriginPermission(normalized);
-    if (!granted) {
-      setStatus("请允许扩展访问此服务地址，才能连接 Memos", "error");
-      return;
-    }
-    setStatus("正在检查连接…", "info");
+    const normalized = await resolveAuthorizedBaseUrl();
+    if (!normalized) return;
+    setStatus("正在测试连接…", "info");
     const res = await testMemosConnection({
       baseUrl: normalized,
       token: tokenInput.value.trim()

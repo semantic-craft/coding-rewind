@@ -144,8 +144,6 @@ export function buildMemosWirePayloads(clip, options = {}) {
   };
 }
 
-export const buildMemoPayload = buildMemosWirePayloads;
-
 export function parseServerMemoId(memoResponse) {
   const name = memoResponse && typeof memoResponse.name === "string" ? memoResponse.name : "";
   const parts = name.split("/");
@@ -186,8 +184,8 @@ function isRetryableStatus(status) {
   return status >= 500 || status === 408 || status === 429;
 }
 
-function buildAuthHeaders(token) {
-  const headers = { "Content-Type": "application/json" };
+export function buildAuthHeaders(token, { includeJsonContentType = true } = {}) {
+  const headers = includeJsonContentType ? { "Content-Type": "application/json" } : {};
   const cleanToken = String(token || "").trim();
   if (cleanToken) {
     headers.Authorization = `Bearer ${cleanToken}`;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Adapted from MIT-licensed background dispatch patterns in mem0ai/mem0-chrome-extension.
 
-import { detectPlatform, cleanSessionTitle } from "./extractors.mjs";
+import { buildFallbackClip } from "./extractors.mjs";
 import { flushOutbox, saveClipWithOutbox } from "./memos_payload.mjs";
 
 const CONTEXT_MENU_ID = "save-to-coding-rewind";
@@ -109,15 +109,11 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
   }
 
   if (!clip && fallbackSelectionText && fallbackSelectionText.trim()) {
-    const sourceUrl = tab.url || "";
-    clip = {
+    clip = buildFallbackClip({
       selectedMarkdown: fallbackSelectionText,
-      sourcePlatform: detectPlatform(sourceUrl),
-      sessionTitle: cleanSessionTitle(tab.title || ""),
-      prompt: "",
-      recentTurns: "",
-      sourceUrl
-    };
+      sourceUrl: tab.url || "",
+      title: tab.title || ""
+    });
   }
 
   if (!clip || !clip.selectedMarkdown) return;

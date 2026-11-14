@@ -7,17 +7,17 @@ import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { parseHtmlDocument } from "./test_dom_shim.mjs";
+
 import {
   detectPlatform,
   cleanSessionTitle,
+  buildFallbackClip,
   htmlToMarkdown,
   selectionToMarkdown,
   extractSessionTitle,
   extractConversationTurns,
-  extractClipContext,
-  parseHtmlDocument,
-  isHyperCaptureShortcutEvent,
-  computePillPosition
+  extractClipContext
 } from "./extractors.mjs";
 
 import {
@@ -26,6 +26,7 @@ import {
   TOAST_MESSAGES,
   generateClipId,
   normalizeMemosBaseUrl,
+  buildAuthHeaders,
   buildMemosWirePayloads,
   parseServerMemoId,
   saveClipWithOutbox,
@@ -59,6 +60,33 @@ test("detectPlatform and cleanSessionTitle strip provider boilerplate", () => {
   assert.equal(cleanSessionTitle("SQLite WAL Tuning - Claude"), "SQLite WAL Tuning");
   assert.equal(cleanSessionTitle("Google Gemini"), "");
   assert.equal(cleanSessionTitle("New chat - ChatGPT"), "");
+
+  assert.deepEqual(
+    buildFallbackClip({
+      selectedMarkdown: "  exact fallback  ",
+      sourceUrl: "https://chatgpt.com/c/abc-123",
+      title: "Swift Concurrency Actor Isolation - ChatGPT"
+    }),
+    {
+      selectedMarkdown: "  exact fallback  ",
+      sourcePlatform: "chatgpt",
+      sessionTitle: "Swift Concurrency Actor Isolation",
+      prompt: "",
+      recentTurns: "",
+      sourceUrl: "https://chatgpt.com/c/abc-123"
+    }
+  );
+  assert.deepEqual(
+    extractClipContext({ selectedText: "docless selection", url: "https://claude.ai/chat/1" }),
+    {
+      selectedMarkdown: "docless selection",
+      sourcePlatform: "claude",
+      sessionTitle: "",
+      prompt: "",
+      recentTurns: "",
+      sourceUrl: "https://claude.ai/chat/1"
+    }
+  );
 });
 
 test("htmlToMarkdown converts code blocks, copy headers, lists, headings, links, and inline styles", () => {
@@ -885,14 +913,14 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
 
 test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.json is valid MV3", async () => {
   let seenUrl = "";
-  let seenAuth = "";
+  let seenHeaders = null;
   const methods = [];
   const conn = await testMemosConnection({
     baseUrl: "https://memos.internal.test/",
     token: "tok-abc",
     fetchImpl: async (url, init) => {
       seenUrl = url;
-      seenAuth = init.headers.Authorization;
+      seenHeaders = init.headers;
       methods.push(init.method);
       return { ok: true, status: 200, async json() { return { memos: [] }; } };
     }
@@ -900,7 +928,11 @@ test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.j
   assert.equal(conn.ok, true);
   assert.equal(conn.message, "连接成功，可读取片段。尚未验证保存。");
   assert.equal(seenUrl, "https://memos.internal.test/api/memos?pageSize=1");
-  assert.equal(seenAuth, "Bearer tok-abc");
+  assert.deepEqual(seenHeaders, { Authorization: "Bearer tok-abc" });
+  assert.deepEqual(buildAuthHeaders("tok-abc"), {
+    "Content-Type": "application/json",
+    Authorization: "Bearer tok-abc"
+  });
   assert.deepEqual(methods, ["GET"]);
 
   assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/memos/"), "https://memos.internal.test");
@@ -908,6 +940,8 @@ test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.j
   assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/"), "https://memos.internal.test");
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const optionsHtml = fs.readFileSync(path.join(__dirname, "options.html"), "utf8");
+  assert.match(optionsHtml, /<button id="test-btn" type="button">测试连接<\/button>/);
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
   for (const perm of ["storage", "contextMenus", "activeTab", "scripting"]) {
@@ -954,32 +988,38 @@ test("captured range keeps its excerpt and context after the live selection move
   assert.equal(clip.recentTurns, "User: Question A\n\nAssistant: Answer A");
 });
 
-test("isHyperCaptureShortcutEvent accepts only non-repeating Hyper+S and rejects Alt+Shift+S, partial modifiers, and other keys", () => {
-  assert.equal(
-    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, code: "KeyS", repeat: false }),
-    true
-  );
-  assert.equal(
-    isHyperCaptureShortcutEvent({ ctrlKey: false, altKey: true, shiftKey: true, metaKey: false, code: "KeyS", repeat: false }),
-    false
-  );
-  assert.equal(
-    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: false, metaKey: true, code: "KeyS", repeat: false }),
-    false
-  );
-  assert.equal(
-    isHyperCaptureShortcutEvent({ ctrlKey: false, altKey: false, shiftKey: false, metaKey: true, code: "KeyS", repeat: false }),
-    false
-  );
-  assert.equal(
-    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, code: "KeyR", repeat: false }),
-    false
-  );
-  assert.equal(
-    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, code: "KeyS", repeat: true }),
-    false
-  );
-  assert.equal(isHyperCaptureShortcutEvent(null), false);
+test("content.js Hyper+S shortcut accepts only non-repeating Hyper+S and rejects Alt+Shift+S, partial modifiers, and other keys", async () => {
+  const harness = createContentScriptHarness();
+
+  const rejectedEvents = [
+    { key: "S", code: "KeyS", ctrlKey: false, altKey: true, shiftKey: true, metaKey: false, repeat: false },
+    { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: false, metaKey: true, repeat: false },
+    { key: "s", code: "KeyS", ctrlKey: false, altKey: false, shiftKey: false, metaKey: true, repeat: false },
+    { key: "r", code: "KeyR", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, repeat: false },
+    { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, repeat: true }
+  ];
+
+  for (const evt of rejectedEvents) {
+    const res = harness.document.dispatch("keydown", evt);
+    assert.equal(res.defaultPrevented, false);
+  }
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 0);
+
+  const accepted = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(accepted.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].type, "REWIND_SAVE_CLIP");
 });
 
 function createContentScriptHarness({
@@ -1195,7 +1235,7 @@ function createContentScriptHarness({
   };
 
   const sentMessages = [];
-  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: "已暂存到 Coding Rewind" }));
+  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
 
   const fakeChrome = {
     runtime: {
@@ -1253,6 +1293,13 @@ function createContentScriptHarness({
     setSelectionCollapsed(collapsed) {
       selectionCollapsed = collapsed;
     },
+    setSelectionRect(rect) {
+      selectionRect = rect;
+    },
+    setViewportSize(width, height) {
+      fakeWindow.innerWidth = width;
+      fakeWindow.innerHeight = height;
+    },
     isSelectionCollapsed() {
       return selectionCollapsed;
     },
@@ -1263,6 +1310,9 @@ function createContentScriptHarness({
     },
     getPill() {
       return this.getHost()?.shadowRoot?.querySelector(".rw-pill") || null;
+    },
+    getPillLabel() {
+      return this.getPill()?.children.find((c) => c.className === "rw-pill-label")?.textContent ?? null;
     },
     getToast() {
       return this.getHost()?.shadowRoot?.querySelector(".rw-toast") || null;
@@ -1294,6 +1344,7 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(pill.style.display, "inline-flex");
   assert.equal(pill.style.visibility, "visible");
   assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(harness.getPillLabel(), "暂存");
   assert.equal(pill.style.left, "322px", "pill centers horizontally above selection rect");
   assert.equal(pill.style.top, "160px", "pill positions above selection rect");
   assert.doesNotMatch(
@@ -1305,6 +1356,7 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(click1.defaultPrevented, true);
   assert.equal(click1.propagationStopped, true);
   assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(harness.getPillLabel(), "暂存中…");
 
   const click2 = pill.dispatch("mousedown", { path: [pill] });
   assert.equal(click2.defaultPrevented, true);
@@ -1327,9 +1379,10 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   await new Promise((r) => setImmediate(r));
   assert.equal(harness.sentMessages.length, 1, "click while saving is ignored even after 350ms cooldown");
 
-  resolveInFlightSave({ status: "saved", toast: "已暂存到 Coding Rewind" });
+  resolveInFlightSave({ status: "saved", toast: TOAST_MESSAGES.SAVED });
   await new Promise((r) => setImmediate(r));
   assert.equal(pill.getAttribute("data-state"), "saved");
+  assert.equal(harness.getPillLabel(), "已同步");
   assert.equal(pill.style.left, "322px");
   assert.equal(pill.style.top, "160px");
 
@@ -1337,7 +1390,23 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(pill.getAttribute("data-state"), "hidden");
   assert.equal(pill.style.display, "none");
 
-  harness.setSendMessageHandler(async () => ({ status: "saved", toast: "已暂存到 Coding Rewind" }));
+  let resolveQueuedSave;
+  harness.setSendMessageHandler(() => new Promise((resolve) => { resolveQueuedSave = resolve; }));
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  assert.equal(harness.getPillLabel(), "暂存");
+  pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(harness.getPillLabel(), "暂存中…");
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  resolveQueuedSave({ status: "queued", toast: TOAST_MESSAGES.QUEUED });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "queued");
+  assert.equal(harness.getPillLabel(), "待同步");
+  harness.advanceTime(950);
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  harness.setSendMessageHandler(async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
   harness.advanceTime(500);
 
   const altShiftRes = harness.document.dispatch("keydown", {
@@ -1351,7 +1420,7 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   });
   await new Promise((r) => setImmediate(r));
   assert.equal(altShiftRes.defaultPrevented, false);
-  assert.equal(harness.sentMessages.length, 1, "Alt+Shift+S must be left exclusively to chrome.commands");
+  assert.equal(harness.sentMessages.length, 2, "Alt+Shift+S must be left exclusively to chrome.commands");
 
   const hyperRes = harness.document.dispatch("keydown", {
     key: "s",
@@ -1365,7 +1434,7 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(hyperRes.defaultPrevented, true);
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 2, "Hyper+S must trigger REWIND_SAVE_CLIP");
+  assert.equal(harness.sentMessages.length, 3, "Hyper+S must trigger REWIND_SAVE_CLIP");
 });
 
 test("content.js capsule hides cleanly on Escape mid-save and never freezes in saving when extractClipContext or sendMessage rejects", async () => {
@@ -1385,7 +1454,7 @@ test("content.js capsule hides cleanly on Escape mid-save and never freezes in s
   assert.equal(escapePill.getAttribute("data-state"), "hidden");
   assert.equal(escapePill.style.display, "none");
 
-  finishSave({ status: "saved", toast: "已暂存到 Coding Rewind" });
+  finishSave({ status: "saved", toast: TOAST_MESSAGES.SAVED });
   await new Promise((r) => setImmediate(r));
   assert.equal(escapePill.getAttribute("data-state"), "hidden", "Escape during saving keeps pill hidden after response");
   assert.equal(escapePill.style.display, "none");
@@ -1428,48 +1497,51 @@ test("content.js capsule hides cleanly on Escape mid-save and never freezes in s
   assert.equal(rejectExtractHarness.getToast().getAttribute("data-visible"), "true");
 });
 
-test("computePillPosition centers capsule above selection, flips below near top edge, and clamps horizontally", () => {
-  assert.deepEqual(
-    computePillPosition({
+test("content.js capsule centers above selection, flips below near top edge, and clamps horizontally", () => {
+  const harness = createContentScriptHarness();
+  harness.setViewportSize(1280, 800);
+
+  const cases = [
+    {
       rect: { left: 300, top: 200, bottom: 224, width: 160, height: 24 },
-      pillWidth: 116,
-      pillHeight: 32,
-      viewportWidth: 1280,
-      viewportHeight: 800
-    }),
-    { left: 322, top: 160 }
-  );
-
-  assert.deepEqual(
-    computePillPosition({
+      expected: { left: "322px", top: "160px" }
+    },
+    {
       rect: { left: 300, top: 18, bottom: 42, width: 160, height: 24 },
-      pillWidth: 116,
-      pillHeight: 32,
-      viewportWidth: 1280,
-      viewportHeight: 800
-    }),
-    { left: 322, top: 50 }
-  );
-
-  assert.deepEqual(
-    computePillPosition({
+      expected: { left: "322px", top: "50px" }
+    },
+    {
       rect: { left: 2, top: 200, bottom: 224, width: 20, height: 24 },
-      pillWidth: 116,
-      pillHeight: 32,
-      viewportWidth: 1280,
-      viewportHeight: 800
-    }),
-    { left: 8, top: 160 }
-  );
-
-  assert.deepEqual(
-    computePillPosition({
+      expected: { left: "8px", top: "160px" }
+    },
+    {
       rect: { left: 1250, top: 200, bottom: 224, width: 24, height: 24 },
-      pillWidth: 116,
-      pillHeight: 32,
-      viewportWidth: 1280,
-      viewportHeight: 800
-    }),
-    { left: 1156, top: 160 }
-  );
+      expected: { left: "1156px", top: "160px" }
+    }
+  ];
+
+  for (const { rect, expected } of cases) {
+    harness.setSelectionRect(rect);
+    harness.document.dispatch("mouseup", { path: [] });
+    harness.advanceTime(20);
+    const pill = harness.getPill();
+    assert.deepEqual({ left: pill.style.left, top: pill.style.top }, expected);
+  }
+
+  harness.setViewportSize(400, 300);
+  harness.setSelectionRect({ left: 370, top: 200, bottom: 224, width: 24, height: 24 });
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  const clampedPill = harness.getPill();
+  assert.deepEqual({ left: clampedPill.style.left, top: clampedPill.style.top }, { left: "276px", top: "160px" });
+});
+
+test("htmlToMarkdown falls back cleanly when DOMParser is unavailable", () => {
+  const originalDOMParser = globalThis.DOMParser;
+  try {
+    globalThis.DOMParser = undefined;
+    assert.equal(htmlToMarkdown("  worker fallback\n\n\nline two  "), "worker fallback\n\nline two");
+  } finally {
+    globalThis.DOMParser = originalDOMParser;
+  }
 });

@@ -46,6 +46,7 @@ class MockBackendState:
             "context_summary": "讨论如何用单线程事件循环替代显式互斥锁，避免剪贴板捕获竞态。",
             "keywords": ["Swift", "Concurrency", "Actor"],
         }
+        self.ai_raw_content: str | None = None
 
 
 def _start_mock_upstream(state: MockBackendState, expected_memos_token: str = "memos-tok", expected_ai_key: str = "ai-tok"):
@@ -91,7 +92,11 @@ def _start_mock_upstream(state: MockBackendState, expected_memos_token: str = "m
                 body = self._read_json()
                 with state.lock:
                     state.ai_calls.append(body)
-                    content_str = json.dumps(state.ai_response, ensure_ascii=False)
+                    content_str = (
+                        state.ai_raw_content
+                        if state.ai_raw_content is not None
+                        else json.dumps(state.ai_response, ensure_ascii=False)
+                    )
                 return self._send(200, {"choices": [{"message": {"content": content_str}}]})
             self._send(404, {"error": "not found"})
 
@@ -250,6 +255,90 @@ class EnricherUnitTests(unittest.TestCase):
         self.assertEqual(enriched[len(expected_prefix) :], verbatim)
         self.assertNotIn("#rewind/pending", enriched)
         self.assertNotIn("#rewind/has-ctx", enriched)
+
+    def test_crlf_headers_preserve_verbatim_body_without_duplicating_source(self) -> None:
+        verbatim = "\r\n  first line with CRLF\r\n\r\nsecond line\r\n"
+        raw_memo = (
+            "#rewind/pending #rewind/has-ctx #source/web\r\n\r\n"
+            "> **Source:** [CRLF Clip](https://example.com/crlf) · 2026-11-14T10:00:00Z\r\n\r\n"
+            + verbatim
+        )
+        parsed = enricher.parse_raw_memo(raw_memo)
+        self.assertIsNotNone(parsed)
+        assert parsed is not None
+        self.assertTrue(parsed["has_ctx"])
+        self.assertEqual(parsed["ready_tag_line"], "#rewind/ready #source/web")
+        self.assertEqual(
+            parsed["source_line"],
+            "> **Source:** [CRLF Clip](https://example.com/crlf) · 2026-11-14T10:00:00Z",
+        )
+        self.assertEqual(parsed["verbatim_body"], verbatim)
+
+        enriched = enricher.build_enriched_content(
+            parsed,
+            {
+                "title": "CRLF 边界保留",
+                "session_topic": "换行兼容验证",
+                "context_summary": "确保 CRLF 头部解析不污染原始正文。",
+                "keywords": ["CRLF", "Parser"],
+            },
+        )
+        self.assertEqual(enriched.count("> **Source:**"), 1)
+        self.assertTrue(enriched.endswith("\n\n" + verbatim))
+
+    def test_process_memo_extracts_fenced_json_with_wrapper_text(self) -> None:
+        state = MockBackendState()
+        state.ai_raw_content = (
+            "以下是整理结果：\n```JSON\n"
+            + json.dumps(state.ai_response, ensure_ascii=False)
+            + "\n```\n以上。"
+        )
+        srv, base_url = _start_mock_upstream(state)
+        try:
+            verbatim = "let value = 7"
+            state.memos["rw-fenced"] = {
+                "name": "memos/rw-fenced",
+                "createTime": "2026-11-14T10:00:00Z",
+                "content": (
+                    "#rewind/pending #source/macos\n\n"
+                    "> **Source:** [Antigravity](conversation://fenced) · 2026-11-14T10:00:00Z\n\n"
+                    + verbatim
+                ),
+            }
+            svc = enricher.EnricherService(
+                memos_url=base_url,
+                memos_token="memos-tok",
+                ai_base_url=f"{base_url}/v1",
+                ai_api_key="ai-tok",
+                ai_model="qwen-plus",
+            )
+            self.assertEqual(svc.process_memo(state.memos["rw-fenced"]), "enriched")
+            patched = state.memos["rw-fenced"]["content"]
+            self.assertTrue(patched.startswith("#rewind/ready #source/macos\n\n> **Title:** Swift 并发锁消除\n"))
+            self.assertTrue(patched.endswith("\n\n" + verbatim))
+
+            state.ai_raw_content = (
+                "Here is the structured summary:\n"
+                + json.dumps(state.ai_response, ensure_ascii=False)
+                + "\nDone."
+            )
+            leading_blank_verbatim = "\nleading blank preserved\nsecond line"
+            state.memos["rw-prose"] = {
+                "name": "memos/rw-prose",
+                "createTime": "2026-11-14T10:01:00Z",
+                "content": (
+                    "#rewind/pending #source/macos\r\n\r\n\r\n"
+                    "> **Source:** [Antigravity](conversation://prose) · 2026-11-14T10:01:00Z\r\n\r\n"
+                    + leading_blank_verbatim
+                ),
+            }
+            self.assertEqual(svc.process_memo(state.memos["rw-prose"]), "enriched")
+            prose_patched = state.memos["rw-prose"]["content"]
+            self.assertEqual(prose_patched.count("> **Source:**"), 1)
+            self.assertTrue(prose_patched.endswith("\n\n" + leading_blank_verbatim))
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
     def test_has_ctx_wait_comment_arrival_and_timeout_fallback(self) -> None:
         state = MockBackendState()
@@ -496,6 +585,14 @@ class MemosMcpBridgeTests(unittest.TestCase):
         proc = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True, check=True)
         self.assertEqual(
             json.loads(proc.stdout.strip()),
+            ["-y", "mcp-remote", "https://memos.example.com/mcp", "--header", "Authorization: Bearer env-secret-token"],
+        )
+
+        legacy_suffix = "/api" + "/v1/memos/"
+        env["CODING_REWIND_MEMOS_URL"] = f"https://memos.example.com{legacy_suffix}"
+        legacy_proc = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(
+            json.loads(legacy_proc.stdout.strip()),
             ["-y", "mcp-remote", "https://memos.example.com/mcp", "--header", "Authorization: Bearer env-secret-token"],
         )
 

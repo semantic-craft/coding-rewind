@@ -174,4 +174,30 @@ struct SelectionPopupTests {
             #expect(AntigravityWebAreaClassification.classify(rawURLString: raw) == .disallowed)
         }
     }
+
+    @Test @MainActor func savedPopupRendersUnifiedSyncTerminology() {
+        #expect(SelectionPopupPhase.ready(shortcutHint: nil).labelText == "暂存")
+        #expect(SelectionPopupPhase.saving.labelText == "暂存中…")
+        #expect(SelectionPopupPhase.saved(offline: false).labelText == "已同步")
+        #expect(SelectionPopupPhase.saved(offline: true).labelText == "待同步")
+
+        let panel = SelectionPopupPanel(onStash: {})
+        defer { panel.orderOut(nil) }
+
+        panel.render(
+            phase: .saved(offline: false),
+            selectionRect: CGRect(x: 200, y: 200, width: 120, height: 22),
+            releasePoint: CGPoint(x: 260, y: 210),
+            onStash: {}
+        )
+        #expect(panel.isVisible)
+
+        panel.render(
+            phase: .saved(offline: true),
+            selectionRect: CGRect(x: 200, y: 200, width: 120, height: 22),
+            releasePoint: CGPoint(x: 260, y: 210),
+            onStash: {}
+        )
+        #expect(panel.isVisible)
+    }
 }

@@ -47,9 +47,17 @@ def parse_iso_utc(value: str | None) -> float | None:
         return None
 
 
+def _strip_single_newline(text: str) -> str:
+    if text.startswith("\r\n"):
+        return text[2:]
+    if text.startswith("\n"):
+        return text[1:]
+    return text
+
+
 def parse_raw_memo(content: str) -> dict | None:
-    first_line, _, rest = content.partition("\n")
-    tags = first_line.split()
+    first_line, sep, rest = content.partition("\n")
+    tags = first_line.removesuffix("\r").split()
     if "#rewind/pending" not in tags or "#rewind/ready" in tags or "#rewind/synthesized" in tags:
         return None
     out_tags: list[str] = []
@@ -57,10 +65,15 @@ def parse_raw_memo(content: str) -> dict | None:
         mapped = "#rewind/ready" if tok == "#rewind/pending" else tok
         if mapped != "#rewind/has-ctx" and mapped not in out_tags:
             out_tags.append(mapped)
-    body, source_line = (rest[1:] if rest.startswith("\n") else rest), None
-    if body.startswith("> **Source:**"):
-        source_line, nl, after = body.partition("\n")
-        body = after[1:] if (nl and after.startswith("\n")) else after
+    body, source_line = rest, None
+    if sep:
+        after_blanks = re.sub(r"^(?:[ \t]*\r?\n)+", "", rest)
+        if after_blanks.startswith("> **Source:**"):
+            raw_source, nl, after = after_blanks.partition("\n")
+            source_line = raw_source.removesuffix("\r")
+            body = _strip_single_newline(after) if nl else after
+        else:
+            body = _strip_single_newline(rest)
     return {"has_ctx": "#rewind/has-ctx" in tags, "ready_tag_line": " ".join(out_tags), "source_line": source_line, "verbatim_body": body}
 
 
@@ -83,6 +96,25 @@ def build_enriched_content(parsed: dict, ai_meta: dict) -> str:
         f"> **Keywords:** {keywords}",
     ] + ([parsed["source_line"]] if parsed["source_line"] else [])
     return f"{parsed['ready_tag_line']}\n\n" + "\n".join(lines) + f"\n\n{parsed['verbatim_body']}"
+
+
+def _parse_ai_json(raw_text: str) -> dict:
+    text = raw_text.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        parsed = json.loads(text[start : end + 1])
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError("AI response did not contain a JSON object")
 
 
 def _json_req(method: str, url: str, token: str, payload: dict | None = None, timeout: float = 20.0) -> dict:
@@ -132,10 +164,8 @@ class EnricherService:
             "model": self.ai_model, "temperature": 0.2, "response_format": {"type": "json_object"},
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
         })
-        raw_json = ai_resp["choices"][0]["message"]["content"].strip()
-        if raw_json.startswith("```"):
-            raw_json = raw_json.strip("`").removeprefix("json").strip()
-        _json_req("PATCH", f"{base}/api/memos/{memo_id}?updateMask=content", self.memos_token, {"content": build_enriched_content(parsed, json.loads(raw_json))})
+        raw_json = ai_resp["choices"][0]["message"]["content"]
+        _json_req("PATCH", f"{base}/api/memos/{memo_id}?updateMask=content", self.memos_token, {"content": build_enriched_content(parsed, _parse_ai_json(raw_json))})
         return "enriched"
 
     def reconcile_once(self) -> int:

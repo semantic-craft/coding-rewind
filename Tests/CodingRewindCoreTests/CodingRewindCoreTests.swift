@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-import CodingRewindCore
+@testable import CodingRewindCore
 import Foundation
 import Testing
 
@@ -512,7 +512,9 @@ struct CodingRewindCoreTests {
         defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
         let baseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local"))
         let gate = MemosResponseGate()
-        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in await gate.response() }
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            req.httpMethod == "POST" ? await gate.response() : (404, Data())
+        }
         let session = makeMockSession()
         defer { session.invalidateAndCancel() }
         let flush = Task { try await outbox.flush(using: MemosClient(session: session), baseURL: baseURL, token: "test-token") }
@@ -523,7 +525,7 @@ struct CodingRewindCoreTests {
         let result = try await flush.value
 
         let expected = replaceSnapshot ? [replacement, added] : [added]
-        #expect(result.flushed.map(\.id) == [old.clientClipId])
+        #expect(result.flushed.map(\.card.id) == [old.clientClipId])
         #expect(result.remaining == expected)
         #expect(OfflineOutbox(fileURL: outbox.fileURL).loadEntries() == expected)
     }
@@ -545,8 +547,12 @@ struct CodingRewindCoreTests {
         let secondURL = try #require(URL(string: "https://\(secondSuite).mock.memos.local"))
         let firstGate = MemosResponseGate()
         let secondGate = MemosResponseGate()
-        MockMemosURLProtocol.register(suiteID: firstSuite) { _, _ in await firstGate.response() }
-        MockMemosURLProtocol.register(suiteID: secondSuite) { _, _ in await secondGate.response() }
+        MockMemosURLProtocol.register(suiteID: firstSuite) { req, _ in
+            req.httpMethod == "POST" ? await firstGate.response() : (404, Data())
+        }
+        MockMemosURLProtocol.register(suiteID: secondSuite) { req, _ in
+            req.httpMethod == "POST" ? await secondGate.response() : (404, Data())
+        }
         let session = makeMockSession()
         defer { session.invalidateAndCancel() }
         let client = MemosClient(session: session)
@@ -556,7 +562,7 @@ struct CodingRewindCoreTests {
         await secondGate.waitForRequests(1)
         await secondGate.release(0, status: 409)
         let success = try await successfulFlush.value
-        #expect(success.flushed.map(\.id) == ["overlapping"])
+        #expect(success.flushed.map(\.card.id) == ["overlapping"])
         #expect(first.loadEntries().isEmpty)
         await firstGate.release(0, status: 503)
         let failure = try await failedFlush.value
@@ -718,8 +724,8 @@ struct CodingRewindCoreTests {
         #expect(recorded[3].url.query == "updateMask=content")
         #expect(recorded[3].body.contains("#rewind\\/synthesized") || recorded[3].body.contains("#rewind/synthesized"))
         #expect(!recorded[3].body.contains("#rewind/ready"))
-        #expect(MemosClient.normalizeBaseURLString("https://memos.example.com/api/memos/") == "https://memos.example.com")
-        #expect(MemosClient.normalizeBaseURLString("https://memos.example.com/api/v1/memos/") == "https://memos.example.com")
+        #expect(MemosWireFormat.normalizeBaseURLString("https://memos.example.com/api/memos/") == "https://memos.example.com")
+        #expect(MemosWireFormat.normalizeBaseURLString("https://memos.example.com/api/v1/memos/") == "https://memos.example.com")
     }
 
     @Test("OfflineOutbox + HotCache survive network failure and flush idempotently on 409 retry")
@@ -1341,9 +1347,65 @@ struct CodingRewindCoreTests {
         #expect(deliveries.prompts == [ConversationPrompt.buildPrompt(for: [card])])
         #expect(coordinator.cards == [card])
         #expect(coordinator.checkedCardIDs == [card.id])
-        #expect(try coordinator.codexHandoff.current()?.archiveCardIDs == [card.id])
-        #expect(try coordinator.handoff.current() == nil)
+        #expect(try coordinator.handoffStore(for: .codex).current()?.archiveCardIDs == [card.id])
+        #expect(try coordinator.handoffStore(for: .antigravity).current() == nil)
         #expect(coordinator.confirmedConversation == nil)
+    }
+
+    @Test("Startup prunes stale expired and rejected handoffs while preserving unknown and succeeded recovery", arguments: [ConversationReceipt.State.expired, .rejected])
+    @MainActor
+    func startupPrunesTerminalFailureReceiptsAndPreservesRecoverableOnes(terminalFailure: ConversationReceipt.State) throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let capturer = StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        let baseDate = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let antigravityStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .antigravity)
+        let stale = try antigravityStore.submit(prompt: "stale prompt", cardIDs: ["stale-card"], markSynthesized: true, now: baseDate)
+        try antigravityStore.saveReceipt(ConversationReceipt(requestId: stale.requestId, state: terminalFailure, updatedAt: baseDate.addingTimeInterval(10)))
+        try antigravityStore.removeRequest(stale.requestId)
+
+        let cleanCoordinator = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
+        #expect(cleanCoordinator.activeConversationHost == nil)
+        #expect(cleanCoordinator.bannerMessage == nil)
+        #expect(cleanCoordinator.checkedCardIDs.isEmpty)
+        #expect(cleanCoordinator.confirmedConversation == nil)
+        #expect(try cleanCoordinator.handoffStore(for: .antigravity).current() == nil)
+
+        let staleBeforeUnknown = try antigravityStore.submit(prompt: "older stale", cardIDs: ["stale-card"], markSynthesized: false, now: baseDate)
+        try antigravityStore.saveReceipt(ConversationReceipt(requestId: staleBeforeUnknown.requestId, state: terminalFailure, updatedAt: baseDate.addingTimeInterval(5)))
+        try antigravityStore.removeRequest(staleBeforeUnknown.requestId)
+
+        let codexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
+        let unknownCurrent = try codexStore.submit(prompt: "uncertain codex", cardIDs: ["unknown-card"], markSynthesized: false, now: baseDate.addingTimeInterval(20))
+        try codexStore.saveReceipt(ConversationReceipt(requestId: unknownCurrent.requestId, state: .unknown, updatedAt: baseDate.addingTimeInterval(25)))
+        try codexStore.removeRequest(unknownCurrent.requestId)
+
+        let unknownRestored = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
+        #expect(try unknownRestored.handoffStore(for: .antigravity).current() == nil)
+        #expect(unknownRestored.activeConversationHost == .codex)
+        #expect(unknownRestored.canEndUnconfirmedConversation)
+        #expect(unknownRestored.checkedCardIDs == ["unknown-card"])
+        #expect(unknownRestored.bannerMessage != nil)
+
+        try codexStore.clearCurrent(requestId: unknownCurrent.requestId)
+        let staleBeforeSucceeded = try codexStore.submit(prompt: "older codex stale", cardIDs: ["stale-codex"], markSynthesized: false, now: baseDate)
+        try codexStore.saveReceipt(ConversationReceipt(requestId: staleBeforeSucceeded.requestId, state: terminalFailure, updatedAt: baseDate.addingTimeInterval(5)))
+        try codexStore.removeRequest(staleBeforeSucceeded.requestId)
+
+        let threadID = UUID().uuidString
+        let succeededCurrent = try antigravityStore.submit(prompt: "unarchived succeeded", cardIDs: ["ready-card"], markSynthesized: true, now: baseDate.addingTimeInterval(30))
+        try antigravityStore.saveReceipt(ConversationReceipt(requestId: succeededCurrent.requestId, state: .succeeded, updatedAt: baseDate.addingTimeInterval(35), conversationId: threadID))
+        try antigravityStore.removeRequest(succeededCurrent.requestId)
+
+        let succeededRestored = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
+        #expect(try succeededRestored.handoffStore(for: .codex).current() == nil)
+        #expect(succeededRestored.activeConversationHost == .antigravity)
+        #expect(succeededRestored.confirmedConversation == ConversationReference(host: .antigravity, id: threadID))
+        #expect(succeededRestored.canEndUnarchivedConversation)
+        #expect(succeededRestored.checkedCardIDs == ["ready-card"])
+        #expect(succeededRestored.bannerMessage != nil)
     }
 
     @Test("A confirmed conversation archives only successfully patched cards and retries archiving without another conversation", arguments: ConversationHost.allCases)
@@ -1554,6 +1616,523 @@ struct CodingRewindCoreTests {
         #expect(await emptyCoordinator.captureSelection() == .failed(.emptySelection))
     }
 
+    @Test("MemosWireFormat round-trips middle dots and brackets in source titles and caps client clip IDs at 32 chars")
+    func sourceLineRoundTripsMiddleDotsAndBracketsAndCapsClientClipID() throws {
+        let now = try #require(MemosWireFormat.parseISO8601("2026-11-14T08:00:00Z"))
+        let titles: [(title: String, url: String?, expectedURL: String?)] = [
+            ("A · B", "https://chatgpt.com/c/1", "https://chatgpt.com/c/1"),
+            ("[Draft v2] · Notes [WIP]", "https://claude.ai/chat/abc", "https://claude.ai/chat/abc"),
+            ("[fn](args) · Session", "conversation://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "conversation://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            ("Local · Window [1]", nil, nil)
+        ]
+
+        for sample in titles {
+            let raw = try MemosWireFormat.formatRawMemoContent(
+                verbatimText: "Verbatim body",
+                sourcePlatform: "chatgpt",
+                sourceTitle: sample.title,
+                sourceURL: sample.url,
+                capturedAt: now,
+                hasContext: false
+            )
+            let parsed = try #require(MemosWireFormat.parseMemo(id: "memo-rt", rawContent: raw, createdAt: now, now: now))
+            #expect(parsed.sourceTitle == sample.title)
+            #expect(parsed.sourceURL == sample.expectedURL)
+            #expect(parsed.verbatimText == "Verbatim body")
+        }
+
+        let noTimestamp = MemosWireFormat.parseSourceLine("[A · B](https://chatgpt.com/c/1)")
+        #expect(noTimestamp.title == "A · B")
+        #expect(noTimestamp.url == "https://chatgpt.com/c/1")
+
+        let plainEscaped = MemosWireFormat.parseSourceLine("Draft \\[v2\\] · Notes · 2026-11-14T08:00:00Z")
+        #expect(plainEscaped.title == "Draft [v2] · Notes")
+        #expect(plainEscaped.url == nil)
+
+        for candidateDate in [
+            now,
+            Date(timeIntervalSince1970: -500),
+            Date.distantFuture,
+            Date(timeIntervalSince1970: 1e25)
+        ] {
+            let clipID = MemosWireFormat.makeClientClipID(now: candidateDate)
+            #expect(clipID.utf8.count <= 32)
+            #expect(!clipID.hasSuffix("-"))
+            #expect(MemosWireFormat.isValidMemoID(clipID))
+            #expect(MemosWireFormat.isValidMemoID("\(clipID)-ctx"))
+        }
+    }
+
+    @Test("MemosClient.createClip recovers canonical serverId via GET on HTTP 409 and falls back cleanly on GET failure", arguments: ["canonical", "notFound", "invalidName"])
+    func createClipResolvesCanonicalServerIDOn409(mode: String) async throws {
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let now = try #require(MemosWireFormat.parseISO8601("2026-11-14T08:30:00Z"))
+        let baseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local"))
+        let clipID = "rw-1794645000-abcd1234"
+        let rawContent = try MemosWireFormat.formatRawMemoContent(
+            verbatimText: "Idempotent clip body",
+            sourcePlatform: "antigravity",
+            sourceTitle: "Session · Retry",
+            sourceURL: "conversation://conv-retry",
+            capturedAt: now,
+            hasContext: true
+        )
+        let comment = CaptureContext(
+            sessionTitle: "Session · Retry",
+            prompt: "Why did retry post to wrong ID?",
+            recentTurns: [ConversationTurn(role: "User", text: "Why did retry post to wrong ID?")]
+        ).formattedCommentMarkdown()
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            let path = req.url?.path ?? ""
+            if req.httpMethod == "POST" && path == "/api/memos" {
+                return (409, Data("{\"message\":\"already exists\"}".utf8))
+            }
+            if req.httpMethod == "GET" && path == "/api/memos/\(clipID)" {
+                switch mode {
+                case "canonical":
+                    let dto: [String: Any] = [
+                        "name": "memos/srv-canonical-77",
+                        "content": rawContent,
+                        "createTime": "2026-11-14T08:30:00Z"
+                    ]
+                    return (200, (try? JSONSerialization.data(withJSONObject: dto)) ?? Data())
+                case "invalidName":
+                    let dto: [String: Any] = ["name": "", "content": rawContent]
+                    return (200, (try? JSONSerialization.data(withJSONObject: dto)) ?? Data())
+                default:
+                    return (404, Data("{\"message\":\"not found\"}".utf8))
+                }
+            }
+            if req.httpMethod == "POST" && path.hasSuffix("/comments") {
+                return (200, Data("{\"name\":\"memos/comment-1\",\"content\":\"ok\"}".utf8))
+            }
+            return (500, Data())
+        }
+
+        let client = MemosClient(session: makeMockSession())
+        let saved = try await client.createClip(
+            clientClipId: clipID,
+            content: rawContent,
+            contextComment: comment,
+            baseURL: baseURL,
+            token: "tok-409",
+            fallbackCreatedAt: now
+        )
+
+        let expectedID = mode == "canonical" ? "srv-canonical-77" : clipID
+        #expect(saved.id == expectedID)
+        let recorded = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(recorded.count == 3)
+        #expect(recorded[0].method == "POST" && recorded[0].url.path == "/api/memos")
+        #expect(recorded[1].method == "GET" && recorded[1].url.path == "/api/memos/\(clipID)")
+        #expect(recorded[2].method == "POST" && recorded[2].url.path == "/api/memos/\(expectedID)/comments")
+        #expect(recorded[2].url.query == "commentId=\(clipID)-ctx")
+    }
+
+    @Test("AppCoordinator.refresh clears isOfflinePending on flushed outbox cards even when listHotClips throws")
+    @MainActor
+    func refreshClearsOfflinePendingWhenListHotClipsFails() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let selection = CapturedSelection(
+            text: "Flushed before list failure",
+            bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+            appName: "Antigravity",
+            windowTitle: "Flush · Reconciliation"
+        )
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: selection)
+        )
+        let outcome = await coordinator.captureSelection()
+        guard case .queuedOffline(let queuedID) = outcome else {
+            Issue.record("Expected .queuedOffline, got \(outcome)")
+            return
+        }
+        #expect(coordinator.cards.first?.isOfflinePending == true)
+        #expect(coordinator.checkedCardIDs == Set([queuedID]))
+        #expect(coordinator.focusedCardID == queuedID)
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, bodyData in
+            if req.httpMethod == "POST" && req.url?.path == "/api/memos" {
+                let obj = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+                let content = obj["content"] as? String ?? ""
+                let resp: [String: Any] = [
+                    "name": "memos/srv-reconciled-1",
+                    "content": content,
+                    "createTime": MemosWireFormat.formatISO8601UTC(Date())
+                ]
+                return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+            }
+            return (503, Data("{\"error\":\"list unavailable\"}".utf8))
+        }
+
+        coordinator.environment = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "fixture-token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+        await coordinator.refresh()
+
+        #expect(coordinator.outbox.loadEntries().isEmpty)
+        #expect(coordinator.cards.map(\.id) == ["srv-reconciled-1"])
+        #expect(coordinator.cards.first?.isOfflinePending == false)
+        #expect(coordinator.checkedCardIDs == Set(["srv-reconciled-1"]))
+        #expect(coordinator.focusedCardID == "srv-reconciled-1")
+        #expect(coordinator.isErrorBanner)
+
+        let persisted = coordinator.hotCache.loadCards()
+        #expect(persisted.map(\.id) == ["srv-reconciled-1"])
+        #expect(persisted.first?.isOfflinePending == false)
+    }
+
+    @Test("AntigravityCaptureContext rejects orphan assistant messages and groups consecutive user turns into one round")
+    func antigravityOrphanAssistantAndConsecutiveUserRounds() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let orphanID = "11111111-1111-1111-1111-111111111111"
+        let orphanURL = try #require(URL(string: "http://127.0.0.1:49807/c/\(orphanID)"))
+        let orphanConv = try #require(AntigravityConversationID(webAreaURL: orphanURL))
+        try writeTranscript([
+            ["type": "PLANNER_RESPONSE", "content": "Orphan assistant reply without user prompt"]
+        ], conversationID: orphanID, home: dir)
+
+        let resolver = AntigravityCaptureContext(homeDirectory: dir)
+        #expect(await resolver.resolve(
+            conversationID: orphanConv,
+            selectedText: "Orphan assistant reply",
+            sessionTitle: "Orphan"
+        ) == nil)
+
+        let groupedID = "22222222-2222-2222-2222-222222222222"
+        let groupedURL = try #require(URL(string: "http://127.0.0.1:49807/c/\(groupedID)"))
+        let groupedConv = try #require(AntigravityConversationID(webAreaURL: groupedURL))
+        try writeTranscript([
+            ["type": "USER_INPUT", "content": "Round 1"],
+            ["type": "PLANNER_RESPONSE", "content": "Answer 1"],
+            ["type": "USER_INPUT", "content": "Round 2 part A"],
+            ["type": "USER_INPUT", "content": "Round 2 part B"],
+            ["type": "PLANNER_RESPONSE", "content": "Answer 2"],
+            ["type": "USER_INPUT", "content": "Round 3"],
+            ["type": "PLANNER_RESPONSE", "content": "Answer 3"],
+            ["type": "USER_INPUT", "content": "Round 4"],
+            ["type": "PLANNER_RESPONSE", "content": "Answer 4"],
+            ["type": "USER_INPUT", "content": "Round 5 part A"],
+            ["type": "USER_INPUT", "content": "Round 5 part B"],
+            ["type": "PLANNER_RESPONSE", "content": "Target answer 5"]
+        ], conversationID: groupedID, home: dir)
+
+        let resolved = try #require(await resolver.resolve(
+            conversationID: groupedConv,
+            selectedText: "Target answer 5",
+            sessionTitle: "Grouped"
+        ))
+        #expect(resolved.prompt == "Round 5 part B")
+        #expect(resolved.recentTurns.map(\.text) == [
+            "Round 2 part A",
+            "Round 2 part B",
+            "Answer 2",
+            "Round 3",
+            "Answer 3",
+            "Round 4",
+            "Answer 4",
+            "Round 5 part A",
+            "Round 5 part B",
+            "Target answer 5"
+        ])
+    }
+
+    @Test("Outbox flush reconciles checked card IDs during captureSelection and concurrent refresh")
+    @MainActor
+    func outboxFlushReconcilesCheckedCardsAcrossCaptureAndConcurrentRefresh() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let session = makeMockSession()
+        defer { session.invalidateAndCancel() }
+        let client = MemosClient(session: session)
+
+        var nextSelection = CapturedSelection(text: "First offline clip", bundleIdentifier: "test.capture", appName: "Fixture")
+        let coord = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: client,
+            capturer: ClosureSelectionCapturer { nextSelection }
+        )
+
+        guard case .queuedOffline(let offlineID1) = await coord.captureSelection() else {
+            Issue.record("Expected offline capture")
+            return
+        }
+        #expect(coord.checkedCardIDs == Set([offlineID1]))
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, bodyData in
+            if req.httpMethod == "POST", req.url?.path == "/api/memos" {
+                let memoID = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "memoId" })?.value ?? ""
+                let obj = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+                let serverName = memoID == offlineID1 ? "memos/srv-flushed-during-capture" : "memos/srv-new-capture"
+                let resp: [String: Any] = [
+                    "name": serverName,
+                    "content": obj["content"] as? String ?? "",
+                    "createTime": MemosWireFormat.formatISO8601UTC(Date())
+                ]
+                return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+            }
+            return (404, Data())
+        }
+        coord.environment = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "fixture-token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+        nextSelection = CapturedSelection(text: "Second online clip", bundleIdentifier: "test.capture", appName: "Fixture")
+        let secondOutcome = await coord.captureSelection()
+        #expect(secondOutcome == .saved(cardID: "srv-new-capture", sourceTitle: "Fixture"))
+        #expect(coord.checkedCardIDs == Set(["srv-flushed-during-capture", "srv-new-capture"]))
+        #expect(Set(coord.cards.map(\.id)) == Set(["srv-flushed-during-capture", "srv-new-capture"]))
+
+        let concurrentDir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: concurrentDir) }
+        let concurrentSuite = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: concurrentSuite) }
+
+        let concurrentPaths = try StoragePaths(
+            dataDirectoryURL: concurrentDir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: concurrentDir.appendingPathComponent("Config")
+        )
+        let gatedCapturer = GatedCapturer()
+        let concurrentCoord = try AppCoordinator(
+            paths: concurrentPaths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: client,
+            capturer: StubCapturer(selection: CapturedSelection(text: "Offline c1", bundleIdentifier: "test.capture", appName: "Fixture"))
+        )
+        guard case .queuedOffline(let c1) = await concurrentCoord.captureSelection() else {
+            Issue.record("Expected offline c1")
+            return
+        }
+        #expect(concurrentCoord.checkedCardIDs == Set([c1]))
+
+        let flushGate = MemosResponseGate()
+        MockMemosURLProtocol.register(suiteID: concurrentSuite) { req, bodyData in
+            if req.httpMethod == "POST", req.url?.path == "/api/memos" {
+                let memoID = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "memoId" })?.value ?? ""
+                let obj = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+                if memoID == c1 {
+                    let (status, _) = await flushGate.response()
+                    let resp: [String: Any] = [
+                        "name": "memos/s1",
+                        "content": obj["content"] as? String ?? "",
+                        "createTime": MemosWireFormat.formatISO8601UTC(Date())
+                    ]
+                    return (status, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+                }
+                let resp: [String: Any] = [
+                    "name": "memos/s2",
+                    "content": obj["content"] as? String ?? "",
+                    "createTime": MemosWireFormat.formatISO8601UTC(Date())
+                ]
+                return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+            }
+            if req.httpMethod == "GET", req.url?.path == "/api/memos" {
+                let resp: [String: Any] = ["memos": []]
+                return (200, (try? JSONSerialization.data(withJSONObject: resp)) ?? Data())
+            }
+            return (404, Data())
+        }
+        concurrentCoord.capturer = gatedCapturer
+        concurrentCoord.environment = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(concurrentSuite).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "fixture-token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+
+        let refreshTask = Task { await concurrentCoord.refresh() }
+        await flushGate.waitForRequests(1)
+
+        let captureTask = Task { await concurrentCoord.captureSelection() }
+        await gatedCapturer.waitUntilStarted()
+
+        await flushGate.release(0, status: 200)
+        await refreshTask.value
+
+        #expect(concurrentCoord.checkedCardIDs.contains("s1"))
+        #expect(!concurrentCoord.checkedCardIDs.contains(c1))
+
+        await gatedCapturer.finish()
+        let captureResult = await captureTask.value
+        #expect(captureResult == .saved(cardID: "s2", sourceTitle: "Fixture"))
+        #expect(concurrentCoord.checkedCardIDs == Set(["s1", "s2"]))
+        #expect(Set(concurrentCoord.cards.map(\.id)) == Set(["s1", "s2"]))
+        #expect(Set(concurrentCoord.hotCache.loadCards().map(\.id)) == Set(["s1", "s2"]))
+    }
+
+    @Test("MemosWireFormat parses CRLF enriched memos identically to LF while sanitizing and splitting Markdown source links safely")
+    func crlfMemoParsingAndSourceURLSanitization() throws {
+        let now = try #require(MemosWireFormat.parseISO8601("2026-11-14T12:00:00Z"))
+        let verbatim = "\r\n  line one with CRLF\r\n\r\nline two"
+        let crlfContent = [
+            "#rewind/ready #source/chatgpt",
+            "",
+            "> **Title:** CRLF 卡片标题",
+            "> **Session:** 跨平台换行解析",
+            "> **Context:** 验证回车符不会破坏元数据匹配或污染正文。",
+            "> **Keywords:** CRLF, WireFormat, Swift",
+            "> **Source:** [ChatGPT \\[fn\\](x)](https://chatgpt.com/c/123) · 2026-11-14T11:55:00Z",
+            ""
+        ].joined(separator: "\r\n") + "\r\n" + verbatim
+
+        let parsed = try #require(MemosWireFormat.parseMemo(
+            id: "memos/crlf-card",
+            rawContent: crlfContent,
+            createdAt: now,
+            now: now
+        ))
+        #expect(parsed.id == "crlf-card")
+        #expect(parsed.status == .ready)
+        #expect(parsed.sourcePlatform == "chatgpt")
+        #expect(parsed.title == "CRLF 卡片标题")
+        #expect(parsed.sessionTopic == "跨平台换行解析")
+        #expect(parsed.contextSummary == "验证回车符不会破坏元数据匹配或污染正文。")
+        #expect(parsed.keywords == ["CRLF", "WireFormat", "Swift"])
+        #expect(parsed.sourceTitle == "ChatGPT [fn](x)")
+        #expect(parsed.sourceURL == "https://chatgpt.com/c/123")
+        #expect(parsed.verbatimText == verbatim)
+
+        let sourceLine = MemosWireFormat.formatSourceLine(
+            sourceTitle: "Spec [v1](draft)",
+            sourcePlatform: "claude",
+            sourceURL: "https://claude.ai/chat/a (b)/c",
+            capturedAt: now
+        )
+        #expect(sourceLine == "> **Source:** [Spec \\[v1\\](draft)](https://claude.ai/chat/a%20%28b%29/c) · 2026-11-14T12:00:00Z")
+        let roundTripped = MemosWireFormat.parseSourceLine(String(sourceLine.dropFirst("> **Source:** ".count)))
+        #expect(roundTripped.title == "Spec [v1](draft)")
+        #expect(roundTripped.url == "https://claude.ai/chat/a%20%28b%29/c")
+
+        let unencodedBracketURL = MemosWireFormat.parseSourceLine("[Label \\[ok\\](1)](https://example.com/path?[inner](val) · 2026-11-14T12:00:00Z")
+        #expect(unencodedBracketURL.title == "Label [ok](1)")
+        #expect(unencodedBracketURL.url == "https://example.com/path?[inner](val")
+    }
+
+    @Test("ConversationContextSlicer enforces 4,000-character total recentTurns budget while keeping anchor turn")
+    func conversationContextSlicerEnforcesFourThousandCharBudgetKeepingAnchor() throws {
+        var messages: [ConversationContextSlicer.Message] = []
+        for round in 1...4 {
+            messages.append(.init(role: .user, matchText: "U\(round)-" + String(repeating: "u", count: 760)))
+            messages.append(.init(
+                role: .assistant,
+                matchText: round == 4
+                    ? "ANCHOR-4-" + String(repeating: "a", count: 760)
+                    : "A\(round)-" + String(repeating: "a", count: 760)
+            ))
+        }
+
+        let sliced = try #require(ConversationContextSlicer.slice(
+            selectedText: "ANCHOR-4-",
+            messages: messages,
+            anchor: .uniqueSubstring,
+            sessionTitle: "Budget Session"
+        ))
+        let formattedLength = sliced.recentTurns
+            .map { "\($0.role): \($0.text)" }
+            .joined(separator: "\n")
+            .count
+        #expect(formattedLength <= ConversationContextSlicer.maxRecentTurnsCharacters)
+        #expect(sliced.recentTurns.count < 8)
+        #expect(sliced.recentTurns.count >= 4)
+        #expect(sliced.recentTurns.first?.text.hasPrefix("U1-") == false)
+        #expect(sliced.recentTurns.last?.text.hasPrefix("ANCHOR-4-") == true)
+    }
+
+    @Test("AppCoordinator recovers crashed Codex handoff on launch, tolerates worker lock contention, and prunes stale terminal failures")
+    @MainActor
+    func codexStartupCrashRecoveryLockContentionAndTerminalFailurePruning() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let card = try #require(MemosWireFormat.parseMemo(
+            id: "c1",
+            rawContent: "#rewind/ready #source/macos\n\nSnippet",
+            createdAt: Date()
+        ))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
+
+        let crashedCodexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
+        let crashedCurrent = try crashedCodexStore.submit(prompt: "crashed", cardIDs: ["c1"], markSynthesized: false)
+        try crashedCodexStore.saveReceipt(ConversationReceipt(requestId: crashedCurrent.requestId, state: .dispatching))
+
+        let relaunched = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            capturer: StubCapturer(selection: CapturedSelection(text: "unused", bundleIdentifier: "test", appName: "Test")),
+            codexDelivery: { _ in (.succeeded, UUID().uuidString) }
+        )
+        #expect(relaunched.activeConversationHost == .codex)
+        #expect(relaunched.canEndUnconfirmedConversation)
+        #expect(try crashedCodexStore.receipt(for: crashedCurrent.requestId)?.state == .unknown)
+        relaunched.endUnconfirmedConversation()
+        #expect(try crashedCodexStore.current() == nil)
+
+        let antigravityStore = relaunched.handoffStore(for: .antigravity)
+        let earlierNow = Date().addingTimeInterval(-10)
+        let staleAntigravity = try antigravityStore.submit(prompt: "expired-ag", cardIDs: ["c1"], markSynthesized: false, now: earlierNow)
+        try antigravityStore.saveReceipt(ConversationReceipt(requestId: staleAntigravity.requestId, state: .expired))
+
+        let liveCodex = try crashedCodexStore.submit(prompt: "live-codex", cardIDs: ["c1"], markSynthesized: false, now: Date())
+        let heldWorker = try #require(try ConversationSidecarWorker.acquireIfUnlocked(store: crashedCodexStore))
+        let expectedThreadID = UUID().uuidString.lowercased()
+        relaunched.onOpenConversation = { $0.host == .codex && $0.id == expectedThreadID }
+
+        let writerTask = Task.detached {
+            try? await Task.sleep(for: .milliseconds(80))
+            try? crashedCodexStore.saveReceipt(ConversationReceipt(
+                requestId: liveCodex.requestId,
+                state: .succeeded,
+                conversationId: expectedThreadID
+            ))
+            _ = heldWorker
+        }
+        let outcome = await relaunched.launchChecked(in: .codex, waitSeconds: 3)
+        await writerTask.value
+
+        #expect(outcome == .succeeded(ConversationReference(host: .codex, id: expectedThreadID)))
+        #expect(try antigravityStore.current() == nil)
+        #expect(try crashedCodexStore.current() == nil)
+    }
+
+}
+
+private struct ClosureSelectionCapturer: SelectionCapturing {
+    let provider: @MainActor @Sendable () -> CapturedSelection
+    func captureFrontmostSelection() async throws -> CapturedSelection {
+        await provider()
+    }
 }
 
 private final class CodexDeliveryRecorder: @unchecked Sendable {

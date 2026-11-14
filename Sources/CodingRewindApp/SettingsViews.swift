@@ -3,7 +3,58 @@
 import AppKit
 import CodingRewindCore
 import KeyboardShortcuts
+import Observation
 import SwiftUI
+
+@MainActor
+@Observable
+public final class AccessibilityPermissionState {
+    public private(set) var isTrusted: Bool
+    private let checkTrusted: @MainActor () -> Bool
+
+    public init(checkTrusted: (@MainActor () -> Bool)? = nil) {
+        let check = checkTrusted ?? { AXSupport.isTrusted(prompt: false) }
+        self.checkTrusted = check
+        self.isTrusted = check()
+    }
+
+    public func refresh() {
+        isTrusted = checkTrusted()
+    }
+}
+
+@MainActor
+@Observable
+public final class SettingsConnectionDraft {
+    public var urlDraft: String
+    public var tokenDraft: String = ""
+    public private(set) var saveMessage: String?
+    public private(set) var saveFailed = false
+
+    public init(memosURL: String) {
+        self.urlDraft = memosURL
+    }
+
+    public func reset(memosURL: String) {
+        urlDraft = memosURL
+        tokenDraft = ""
+        saveMessage = nil
+        saveFailed = false
+    }
+
+    public func save(using coordinator: AppCoordinator) {
+        do {
+            try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
+            urlDraft = coordinator.connectionSettings.memosURL
+            tokenDraft = ""
+            saveFailed = false
+            saveMessage = "连接设置已保存，尚未确认同步成功。请点击“立即同步”检查。"
+        } catch {
+            saveFailed = true
+            saveMessage = error.localizedDescription
+        }
+    }
+}
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general
@@ -38,37 +89,33 @@ enum SettingsLayout {
 }
 
 @MainActor
-public struct SettingsFormView: View {
+public struct SettingsRootView: View {
     @Bindable public var coordinator: AppCoordinator
     @Bindable public var appearance: AppAppearancePreferences
     @Bindable public var shortcuts: AppShortcuts
-    public let onInstallPlugin: @MainActor () -> Void
-    public let onRequestAccessibility: @MainActor () -> Void
+    @Bindable public var permissionState: AccessibilityPermissionState
+    @Bindable public var connectionDraft: SettingsConnectionDraft
+    public let onCommand: @MainActor (AppCommand) -> Void
     public let onClose: @MainActor () -> Void
 
     @State private var selectedPage: SettingsPage = .general
-    @State private var urlDraft: String
-    @State private var tokenDraft = ""
-    @State private var isAccessibilityTrusted: Bool
-    @State private var saveMessage: String?
-    @State private var saveFailed = false
 
     public init(
         coordinator: AppCoordinator,
         appearance: AppAppearancePreferences,
         shortcuts: AppShortcuts,
-        onInstallPlugin: @escaping @MainActor () -> Void,
-        onRequestAccessibility: @escaping @MainActor () -> Void,
+        permissionState: AccessibilityPermissionState = AccessibilityPermissionState(),
+        connectionDraft: SettingsConnectionDraft? = nil,
+        onCommand: @escaping @MainActor (AppCommand) -> Void,
         onClose: @escaping @MainActor () -> Void
     ) {
         self.coordinator = coordinator
         self.appearance = appearance
         self.shortcuts = shortcuts
-        self.onInstallPlugin = onInstallPlugin
-        self.onRequestAccessibility = onRequestAccessibility
+        self.permissionState = permissionState
+        self.connectionDraft = connectionDraft ?? SettingsConnectionDraft(memosURL: coordinator.connectionSettings.memosURL)
+        self.onCommand = onCommand
         self.onClose = onClose
-        self._urlDraft = State(initialValue: coordinator.connectionSettings.memosURL)
-        self._isAccessibilityTrusted = State(initialValue: MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false))
     }
 
     public var body: some View {
@@ -115,10 +162,6 @@ public struct SettingsFormView: View {
         }
         .frame(width: SettingsLayout.contentSize.width, height: SettingsLayout.contentSize.height)
         .onExitCommand(perform: onClose)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
-            coordinator.refreshPluginStatus()
-        }
     }
 
     private var general: some View {
@@ -166,7 +209,7 @@ public struct SettingsFormView: View {
             SettingsSection("Memos 服务") {
                 SettingsRow("服务地址", layout: .field, help: coordinator.connectionSettings.isURLManaged
                             ? "服务地址由启动配置提供，不能在此修改。" : nil) {
-                    TextField("服务地址", text: $urlDraft, prompt: Text("https://memos.example.com"))
+                    TextField("服务地址", text: $connectionDraft.urlDraft, prompt: Text("https://memos.example.com"))
                         .textFieldStyle(.roundedBorder)
                         .disabled(coordinator.connectionSettings.isURLManaged)
                         .accessibilityIdentifier("settings.memosURL")
@@ -175,26 +218,26 @@ public struct SettingsFormView: View {
                 SettingsRow("访问令牌", layout: .field, help: coordinator.connectionSettings.isTokenManaged
                             ? "访问令牌由启动配置提供，不能在此修改。"
                             : "请填写在 Memos 中生成的访问令牌。令牌保存在 macOS 钥匙串中。") {
-                    SecureField("访问令牌", text: $tokenDraft, prompt: Text("留空则保留现有令牌"))
+                    SecureField("访问令牌", text: $connectionDraft.tokenDraft, prompt: Text("留空则保留现有令牌"))
                         .textFieldStyle(.roundedBorder)
                         .disabled(coordinator.connectionSettings.isTokenManaged)
                         .accessibilityIdentifier("settings.memosToken")
                 }
                 SettingsRow("", layout: .field) {
-                    Button("保存连接设置") { saveConnection() }
+                    Button("保存连接设置") { connectionDraft.save(using: coordinator) }
                         .rewindButtonRole(.primary)
                         .disabled(coordinator.connectionSettings.isURLManaged && coordinator.connectionSettings.isTokenManaged)
                         .accessibilityIdentifier("settings.saveConnection")
                 }
-                if let saveMessage {
+                if let saveMessage = connectionDraft.saveMessage {
                     Text(saveMessage)
-                        .foregroundStyle(saveFailed ? Color.red : Color.secondary)
+                        .foregroundStyle(connectionDraft.saveFailed ? Color.red : Color.secondary)
                         .textSelection(.enabled)
                 }
             }
             SettingsSection("同步与提示") {
                 SettingsRow("同步片段") {
-                    Button("立即同步") { Task { await coordinator.refresh() } }
+                    Button("立即同步") { onCommand(.refreshHotStream) }
                         .rewindButtonRole(.secondary)
                 }
                 Text(coordinator.bannerMessage ?? "从 Memos 获取最新片段，并上传本机待同步的片段。")
@@ -233,37 +276,24 @@ public struct SettingsFormView: View {
             SettingsSection("Antigravity 插件") {
                 SettingsRow("插件状态", help: coordinator.pluginStatusText) {
                     Button("安装或修复插件") {
-                        onInstallPlugin()
-                        coordinator.refreshPluginStatus()
+                        onCommand(.installOrRepairPlugin)
                     }
                     .rewindButtonRole(.secondary)
                 }
             }
             SettingsSection("辅助功能") {
                 SettingsRow("读取所选文本") {
-                    Button(isAccessibilityTrusted ? "检查权限" : "前往系统设置…") {
-                        onRequestAccessibility()
-                        isAccessibilityTrusted = MacOSAccessibilitySelectionCapturer.isAccessibilityTrusted(prompt: false)
+                    Button(permissionState.isTrusted ? "重新核对权限" : "前往系统设置…") {
+                        onCommand(.requestAccessibility)
+                        permissionState.refresh()
                     }
                     .rewindButtonRole(.secondary)
-                    .accessibilityLabel(isAccessibilityTrusted ? "检查辅助功能权限" : "前往系统设置，允许读取所选文本")
+                    .accessibilityLabel(permissionState.isTrusted ? "重新核对辅助功能权限" : "前往系统设置，允许读取所选文本")
                 }
-                Text(isAccessibilityTrusted ? "已授权，可读取其他应用中所选的文本。" : "未授权，需要在“辅助功能”中允许读取其他应用的所选文本。")
+                Text(permissionState.isTrusted ? "已授权，可读取其他应用中所选的文本。" : "未授权，需要在“辅助功能”中允许读取其他应用的所选文本。")
                     .font(.callout)
-                    .foregroundStyle(isAccessibilityTrusted ? Color.secondary : Color.orange)
+                    .foregroundStyle(permissionState.isTrusted ? Color.secondary : Color.orange)
             }
-        }
-    }
-
-    private func saveConnection() {
-        do {
-            try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
-            tokenDraft = ""
-            saveFailed = false
-            saveMessage = "连接设置已保存，尚未确认同步成功。请点击“立即同步”检查。"
-        } catch {
-            saveFailed = true
-            saveMessage = error.localizedDescription
         }
     }
 }

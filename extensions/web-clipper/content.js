@@ -269,7 +269,7 @@
       pillShortcutEl.hidden = true;
     } else if (state === "saved") {
       pillIconEl.textContent = "✓";
-      pillLabelEl.textContent = "已暂存";
+      pillLabelEl.textContent = "已同步";
       pillShortcutEl.hidden = true;
     } else if (state === "queued") {
       pillIconEl.textContent = "✓";

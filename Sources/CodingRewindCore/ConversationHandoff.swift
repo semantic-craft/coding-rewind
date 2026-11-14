@@ -13,11 +13,50 @@ public enum ConversationHost: String, Codable, CaseIterable, Sendable {
         }
     }
 
+    public var requiresExplicitConversationOpen: Bool {
+        switch self {
+        case .antigravity: return false
+        case .codex: return true
+        }
+    }
+
     fileprivate var handoffDirectory: String {
         switch self {
         case .antigravity: return "handoff"
         case .codex: return "codex-handoff"
         }
+    }
+}
+
+public enum ConversationPrompt {
+    public static func buildPrompt(for cards: [RewindCard]) -> String {
+        var sections: [String] = [
+            "请围绕以下我在 Coding Rewind 暂存的灵感卡片展开分析与写作推演，保留关键原文论据并在引用处附上出处链接："
+        ]
+        for (index, card) in cards.enumerated() {
+            var lines: [String] = []
+            let heading = card.title ?? card.sourceTitle
+            lines.append("### 卡片 \(index + 1)：\(heading)")
+            if let session = card.sessionTopic, !session.isEmpty {
+                lines.append("- 会话主题：\(session)")
+            }
+            if let ctx = card.contextSummary, !ctx.isEmpty {
+                lines.append("- 上下文脉络：\(ctx)")
+            }
+            if let url = card.sourceURL, !url.isEmpty {
+                lines.append("- 原文出处：[出处](\(url))（\(card.sourceTitle)）")
+            } else {
+                lines.append("- 原文出处：\(card.sourceTitle)")
+            }
+            lines.append("")
+            let quoted = card.verbatimText
+                .components(separatedBy: "\n")
+                .map { "> \($0)" }
+                .joined(separator: "\n")
+            lines.append(quoted)
+            sections.append(lines.joined(separator: "\n"))
+        }
+        return sections.joined(separator: "\n\n")
     }
 }
 
@@ -37,7 +76,7 @@ public enum ConversationLaunchResult: Equatable, Sendable {
 }
 
 public struct ConversationRequest: Codable, Equatable, Sendable {
-    public static let lifetime: TimeInterval = 30
+    public static let lifetime: TimeInterval = 45
     public let version: Int
     public let requestId: UUID
     public let createdAt: Date
@@ -56,6 +95,15 @@ public struct ConversationRequest: Codable, Equatable, Sendable {
 public struct ConversationReceipt: Codable, Equatable, Sendable {
     public enum State: String, Codable, Sendable {
         case dispatching, succeeded, rejected, expired, unknown
+
+        var isTerminalFailure: Bool {
+            switch self {
+            case .rejected, .expired:
+                return true
+            case .dispatching, .succeeded, .unknown:
+                return false
+            }
+        }
     }
     public let requestId: UUID
     public let state: State
@@ -253,17 +301,59 @@ public struct ConversationHandoffStore: Sendable {
 
     public func acquireWorkerLock() throws -> Int32 { try acquireLock(named: "worker.lock") }
 
+    package func acquireWorkerLockIfUnlocked() throws -> Int32? { try acquireLockIfUnlocked(named: "worker.lock") }
+
     private func acquireLock(named name: String) throws -> Int32 {
+        guard let fd = try acquireLockIfUnlocked(named: name) else {
+            throw Self.failure("\(name) is already locked")
+        }
+        return fd
+    }
+
+    private func acquireLockIfUnlocked(named name: String) throws -> Int32? {
         let url = directory.appendingPathComponent(name)
         let fd = open(url.path, O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw Self.failure("open \(name)") }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_uid == getuid(),
-              info.st_nlink == 1, info.st_mode & 0o077 == 0, flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+              info.st_nlink == 1, info.st_mode & 0o077 == 0 else {
             close(fd)
-            throw Self.failure("\(name) is already locked or unsafe")
+            throw Self.failure("\(name) is unsafe")
         }
-        return fd
+        while true {
+            if flock(fd, LOCK_EX | LOCK_NB) == 0 {
+                return fd
+            }
+            if errno == EINTR {
+                continue
+            }
+            let lockErrno = errno
+            close(fd)
+            if lockErrno == EWOULDBLOCK {
+                return nil
+            }
+            throw Self.failure("lock \(name)")
+        }
+    }
+}
+
+package extension Process {
+    func waitForExit(within seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
+    func terminateGracefully(graceSeconds: TimeInterval = 0.2) {
+        if isRunning {
+            terminate()
+            waitForExit(within: graceSeconds)
+        }
+        if isRunning {
+            _ = kill(processIdentifier, SIGKILL)
+        }
+        waitUntilExit()
     }
 }
 
@@ -294,11 +384,7 @@ public enum SidecarAgentAPI {
                 else { exceeded = true }
             } else if !process.isRunning { break }
             if Date() >= deadline || exceeded {
-                process.terminate()
-                let grace = Date().addingTimeInterval(0.2)
-                while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.01) }
-                if process.isRunning { _ = kill(process.processIdentifier, SIGKILL) }
-                process.waitUntilExit()
+                process.terminateGracefully()
                 return (.unknown, nil)
             }
             if count <= 0 { Thread.sleep(forTimeInterval: 0.01) }
@@ -313,33 +399,66 @@ public enum SidecarAgentAPI {
     }
 }
 
-public final class ConversationSidecarWorker {
+public final class ConversationSidecarWorker: Sendable {
     private let store: ConversationHandoffStore
     private let lockFD: Int32
-    public init(store: ConversationHandoffStore) throws {
+
+    private init(store: ConversationHandoffStore, lockFD: Int32) {
         self.store = store
-        lockFD = try store.acquireWorkerLock()
+        self.lockFD = lockFD
+    }
+
+    public convenience init(store: ConversationHandoffStore) throws {
+        let fd = try store.acquireWorkerLock()
+        self.init(store: store, lockFD: fd)
         try store.recover()
     }
+
+    public static func acquireIfUnlocked(store: ConversationHandoffStore) throws -> ConversationSidecarWorker? {
+        guard let fd = try store.acquireWorkerLockIfUnlocked() else { return nil }
+        let worker = ConversationSidecarWorker(store: store, lockFD: fd)
+        try store.recover()
+        return worker
+    }
+
     deinit { _ = flock(lockFD, LOCK_UN); close(lockFD) }
 
-    public func processPending(now: Date = Date(), invoke: (ConversationRequest) -> (ConversationReceipt.State, String?)) throws {
-        try store.expireUnpublishedCurrent(now: now)
-        for request in try store.pendingRequests() {
-            if let receipt = try store.receipt(for: request.requestId) {
-                if receipt.state != .dispatching { try store.removeRequest(request.requestId) }
-                continue
-            }
-            if request.expiresAt <= now || request.createdAt > now.addingTimeInterval(5) {
-                try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: .expired, updatedAt: now))
-                try store.removeRequest(request.requestId)
-                continue
-            }
-            try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: .dispatching, updatedAt: now))
-            let (state, conversationID) = invoke(request)
-            let finalState: ConversationReceipt.State = state == .dispatching ? .unknown : state
-            try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: finalState, conversationId: conversationID))
-            try store.removeRequest(request.requestId)
+    public func processPending(now: Date? = nil, invoke: (ConversationRequest) -> (ConversationReceipt.State, String?)) throws {
+        for request in try pendingBatch(now: now ?? Date()) {
+            guard try beginDispatch(for: request, now: now ?? Date()) else { continue }
+            try completeDispatch(for: request, outcome: invoke(request), now: now ?? Date())
         }
+    }
+
+    public func processPending(now: Date? = nil, invoke: (ConversationRequest) async -> (ConversationReceipt.State, String?)) async throws {
+        for request in try pendingBatch(now: now ?? Date()) {
+            guard try beginDispatch(for: request, now: now ?? Date()) else { continue }
+            try completeDispatch(for: request, outcome: await invoke(request), now: now ?? Date())
+        }
+    }
+
+    private func pendingBatch(now: Date) throws -> [ConversationRequest] {
+        try store.expireUnpublishedCurrent(now: now)
+        return try store.pendingRequests()
+    }
+
+    private func beginDispatch(for request: ConversationRequest, now: Date) throws -> Bool {
+        if let receipt = try store.receipt(for: request.requestId) {
+            if receipt.state != .dispatching { try store.removeRequest(request.requestId) }
+            return false
+        }
+        if request.expiresAt <= now || request.createdAt > now.addingTimeInterval(5) {
+            try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: .expired, updatedAt: now))
+            try store.removeRequest(request.requestId)
+            return false
+        }
+        try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: .dispatching, updatedAt: now))
+        return true
+    }
+
+    private func completeDispatch(for request: ConversationRequest, outcome: (ConversationReceipt.State, String?), now: Date) throws {
+        let finalState: ConversationReceipt.State = outcome.0 == .dispatching ? .unknown : outcome.0
+        try store.saveReceipt(ConversationReceipt(requestId: request.requestId, state: finalState, updatedAt: now, conversationId: outcome.1))
+        try store.removeRequest(request.requestId)
     }
 }

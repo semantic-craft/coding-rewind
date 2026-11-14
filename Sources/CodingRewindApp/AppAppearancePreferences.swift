@@ -1,7 +1,32 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import CryptoKit
 import Observation
+
+public enum AppPreferences {
+    public static func preferencesSuite(environment: [String: String], dataDirectory: URL) -> String? {
+        guard environment["CODING_REWIND_QA"] == "1" else { return nil }
+        if let suite = environment["CODING_REWIND_SHORTCUTS_SUITE"],
+           suite.hasPrefix("dev.codingrewind.qa."),
+           suite.count > 20 {
+            return suite
+        }
+        let digest = SHA256.hash(data: Data(dataDirectory.standardizedFileURL.path.utf8))
+            .map { String(format: "%02x", $0) }.joined().prefix(16)
+        return "dev.codingrewind.qa.shortcuts.\(digest)"
+    }
+
+    public static func userDefaults(environment: [String: String], dataDirectory: URL) -> UserDefaults {
+        if let suite = preferencesSuite(environment: environment, dataDirectory: dataDirectory) {
+            guard let defaults = UserDefaults(suiteName: suite) else {
+                preconditionFailure("Invalid QA preferences suite")
+            }
+            return defaults
+        }
+        return .standard
+    }
+}
 
 @MainActor
 @Observable
