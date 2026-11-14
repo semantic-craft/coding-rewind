@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Coding Rewind 网页扩展",
-  "version": "0.3.0.4",
+  "version": "0.3.0.5",
   "description": "保存网页中选中的文本和相关对话，在 Coding Rewind 中查看和复用。",
   "icons": {
     "16": "icons/icon-16.png",
@@ -77,5 +77,5 @@
       "use_dynamic_url": true
     }
   ],
-  "version_name": "0.3.0-rc.2"
+  "version_name": "0.3.0-rc.3"
 }
