@@ -88,7 +88,7 @@ public struct MemosClient: Sendable {
             id: serverId,
             rawContent: storedContent,
             createdAt: createdDate,
-            now: max(Date(), createdDate)
+            now: createdDate
         ) {
             return parsed
         }
