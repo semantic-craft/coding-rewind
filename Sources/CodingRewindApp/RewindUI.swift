@@ -15,7 +15,7 @@ private struct RewindButtonModifier: ViewModifier {
     func body(content: Content) -> some View {
         switch role {
         case .primary:
-            content.buttonStyle(.borderedProminent).controlSize(.regular)
+            content.buttonStyle(.borderedProminent).controlSize(.regular).tint(.blue)
         case .secondary:
             content.buttonStyle(.bordered).controlSize(.small)
         case .toolbar:

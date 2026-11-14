@@ -111,6 +111,7 @@ public struct SettingsFormView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Color(nsColor: .controlBackgroundColor))
         }
         .frame(width: SettingsLayout.contentSize.width, height: SettingsLayout.contentSize.height)
         .onExitCommand(perform: onClose)
