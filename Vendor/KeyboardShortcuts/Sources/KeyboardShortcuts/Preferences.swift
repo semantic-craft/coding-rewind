@@ -9,6 +9,9 @@ nonisolated private final class ShortcutPreferences: @unchecked Sendable {
     func configure(_ defaults: UserDefaults) {
         lock.lock()
         defer { lock.unlock() }
+        if self.defaults === defaults {
+            return
+        }
         precondition(!hasBeenRead, "Configure shortcut preferences before creating any Name or using the library.")
         self.defaults = defaults
     }
@@ -28,6 +31,8 @@ extension KeyboardShortcuts {
     nonisolated public static func configure(userDefaults: UserDefaults) {
         preferences.configure(userDefaults)
     }
+
+    nonisolated public static var configuredUserDefaults: UserDefaults { preferences.read() }
 
     nonisolated static var userDefaults: UserDefaults { preferences.read() }
 }

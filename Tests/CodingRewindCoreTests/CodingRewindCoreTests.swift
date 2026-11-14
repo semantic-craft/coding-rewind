@@ -217,9 +217,11 @@ struct CodingRewindCoreTests {
         let coordinator = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: capturer)
         let first = Task { await coordinator.captureSelection() }
         await capturer.waitUntilStarted()
-        await coordinator.captureSelection()
+        let busyOutcome = await coordinator.captureSelection()
+        #expect(busyOutcome == .ignoredBusy)
         await capturer.finish()
-        await first.value
+        let firstOutcome = await first.value
+        if case .queuedOffline = firstOutcome {} else { Issue.record("Expected .queuedOffline, got \(firstOutcome)") }
         #expect(await capturer.calls == 1)
         #expect(coordinator.outbox.loadEntries().count == 1)
         #expect(!coordinator.isCapturingSelection)
@@ -369,7 +371,7 @@ struct CodingRewindCoreTests {
         await coordinator.refresh()
         #expect(coordinator.cards == [captured])
         await gate.release(0, status: 500)
-        await capture.value
+        _ = await capture.value
         #expect(coordinator.cards == [captured])
         #expect(coordinator.hotCache.loadCards().map(\.id) == [captured.id])
         #expect(coordinator.outbox.loadEntries().map(\.clientClipId) == [captured.id])
@@ -1395,6 +1397,161 @@ struct CodingRewindCoreTests {
         #expect(try store.current() == nil)
         #expect(coordinator.checkedCardIDs.isEmpty)
         #expect(try store.pendingRequests().isEmpty)
+    }
+
+    @Test("AntigravityConversationID accepts loopback HTTP and HTTPS conversation URLs including trailing slash")
+    func antigravityConversationIDAcceptsLoopbackHTTPAndHTTPS() throws {
+        let rawUUID = "F7ECEA74-AD04-4857-9E98-9468BA725E79"
+        let expectedBacklink = "conversation://\(rawUUID.lowercased())"
+
+        #expect(AntigravityConversationID(webAreaURL: try #require(URL(string: "http://127.0.0.1:49807/c/\(rawUUID)")))?.backlink == expectedBacklink)
+        #expect(AntigravityConversationID(webAreaURL: try #require(URL(string: "http://127.0.0.1:49807/c/\(rawUUID)/")))?.backlink == expectedBacklink)
+        #expect(AntigravityConversationID(webAreaURL: try #require(URL(string: "https://127.0.0.1/c/\(rawUUID)")))?.backlink == expectedBacklink)
+        #expect(AntigravityConversationID(webAreaURL: try #require(URL(string: "https://127.0.0.1/c/\(rawUUID)/?project=fixture")))?.backlink == expectedBacklink)
+        #expect(AntigravityConversationID(webAreaURL: try #require(URL(string: "HTTPS://127.0.0.1:8443/c/\(rawUUID)")))?.backlink == expectedBacklink)
+
+        let invalidURLs = [
+            "ws://127.0.0.1/c/\(rawUUID)",
+            "file:///c/\(rawUUID)",
+            "https://localhost/c/\(rawUUID)",
+            "https://example.com/c/\(rawUUID)",
+            "https://user:pass@127.0.0.1/c/\(rawUUID)",
+            "https://127.0.0.1/\(rawUUID)",
+            "https://127.0.0.1/c/not-a-uuid",
+            "https://127.0.0.1/c//\(rawUUID)",
+            "https://127.0.0.1/c/\(rawUUID)/extra"
+        ]
+        for candidate in invalidURLs {
+            let url = try #require(URL(string: candidate))
+            #expect(AntigravityConversationID(webAreaURL: url) == nil)
+        }
+    }
+
+    @Test("captureSelection rolls back optimistic card from memory and cache when outbox enqueue throws", arguments: [false, true])
+    @MainActor
+    func outboxEnqueueFailureRollsBackProvisionalCard(configuredRemoteFails: Bool) async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let existing = try #require(MemosWireFormat.parseMemo(
+            id: "existing-card",
+            rawContent: "#rewind/ready #source/macos\n\nExisting persisted card",
+            createdAt: Date()
+        ))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([existing])
+
+        if configuredRemoteFails {
+            MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (-1, Data()) }
+        }
+        let env: [String: String] = configuredRemoteFails
+            ? [
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+                StoragePaths.memosTokenEnvironmentKey: "fixture-token",
+                StoragePaths.qaEnvironmentKey: "1"
+            ]
+            : [StoragePaths.qaEnvironmentKey: "1"]
+
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: env,
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(
+                text: "Unpersisted phantom candidate",
+                bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+                appName: "Antigravity"
+            ))
+        )
+        coordinator.focusAndCheckCard(id: existing.id)
+
+        let lockCollisionDir = paths.outboxFileURL.appendingPathExtension("lock")
+        try FileManager.default.createDirectory(at: lockCollisionDir, withIntermediateDirectories: true)
+
+        let outcome = await coordinator.captureSelection()
+        if case .failed = outcome {} else {
+            Issue.record("Expected .failed when outbox.enqueue throws, got \(outcome)")
+        }
+
+        #expect(coordinator.cards.map(\.id) == [existing.id])
+        #expect(coordinator.checkedCardIDs == Set([existing.id]))
+        #expect(coordinator.focusedCardID == existing.id)
+        #expect(coordinator.hotCache.loadCards().map(\.id) == [existing.id])
+        #expect(coordinator.isErrorBanner)
+    }
+
+    @Test("captureSelection returns structured saved, queuedOffline, and failed outcomes")
+    @MainActor
+    func captureSelectionReturnsStructuredOutcomes() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let env = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "fixture-token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, bodyData in
+            let memoID = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "memoId" })?.value ?? "srv-1"
+            let parsed = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+            let content = (parsed["content"] as? String) ?? "#rewind/pending #source/antigravity\n\nsaved"
+            let payload: [String: Any] = [
+                "name": "memos/\(memoID)",
+                "content": content,
+                "createTime": "2026-11-14T05:00:00Z"
+            ]
+            return (200, try! JSONSerialization.data(withJSONObject: payload))
+        }
+
+        let onlineCoordinator = try AppCoordinator(
+            paths: paths,
+            environment: env,
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(
+                text: "Saved highlight",
+                bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+                appName: "Antigravity"
+            ))
+        )
+        let savedOutcome = await onlineCoordinator.captureSelection()
+        if case .saved(let cardID, let sourceTitle) = savedOutcome {
+            #expect(cardID.hasPrefix("rw-"))
+            #expect(sourceTitle == "Antigravity")
+        } else {
+            Issue.record("Expected .saved outcome, got \(savedOutcome)")
+        }
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (-1, Data()) }
+        let offlineOutcome = await onlineCoordinator.captureSelection()
+        if case .queuedOffline(let cardID) = offlineOutcome {
+            #expect(cardID.hasPrefix("rw-"))
+        } else {
+            Issue.record("Expected .queuedOffline outcome, got \(offlineOutcome)")
+        }
+
+        let emptyCoordinator = try AppCoordinator(
+            paths: paths,
+            environment: env,
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(
+                text: "   ",
+                bundleIdentifier: CapturedSelection.antigravityBundleIdentifier,
+                appName: "Antigravity"
+            ))
+        )
+        #expect(await emptyCoordinator.captureSelection() == .failed(.emptySelection))
     }
 
 }

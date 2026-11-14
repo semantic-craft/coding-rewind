@@ -50,6 +50,39 @@ export function detectPlatform(url) {
   return "web";
 }
 
+export function isHyperCaptureShortcutEvent(event) {
+  return Boolean(
+    event &&
+      !event.repeat &&
+      event.code === "KeyS" &&
+      event.ctrlKey &&
+      event.altKey &&
+      event.shiftKey &&
+      event.metaKey
+  );
+}
+
+export function computePillPosition({ rect, pillWidth, pillHeight, viewportWidth, viewportHeight }) {
+  const width = Number(pillWidth) || 0;
+  const height = Number(pillHeight) || 0;
+  const vw = Number(viewportWidth) || 0;
+  const vh = Number(viewportHeight) || 0;
+  const rectLeft = Number(rect?.left) || 0;
+  const rectTop = Number(rect?.top) || 0;
+  const rectWidth = Number(rect?.width) || 0;
+  const rectBottom = typeof rect?.bottom === "number" ? rect.bottom : rectTop + (Number(rect?.height) || 0);
+
+  const maxLeft = Math.max(8, vw - width - 8);
+  const left = Math.round(Math.min(maxLeft, Math.max(8, rectLeft + rectWidth / 2 - width / 2)));
+
+  let top = rectTop - height - 8;
+  if (top < 8) {
+    const maxTop = Math.max(8, vh - height - 8);
+    top = Math.min(maxTop, rectBottom + 8);
+  }
+  return { left, top: Math.round(Math.max(8, top)) };
+}
+
 export function cleanSessionTitle(rawTitle) {
   if (!rawTitle || typeof rawTitle !== "string") return "";
   let cleaned = rawTitle

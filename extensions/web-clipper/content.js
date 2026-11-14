@@ -1,20 +1,65 @@
 // SPDX-License-Identifier: MIT
-// Adapted from MIT-licensed UX patterns in mem0ai/mem0-chrome-extension.
+// Adapted from MIT-licensed UX patterns in mem0ai/mem0-chrome-extension and GaimsDevSoftware/linuxpop.
 
 (() => {
   if (globalThis.__CODING_REWIND_CONTENT_READY__) return;
   globalThis.__CODING_REWIND_CONTENT_READY__ = true;
 
   const TOAST_DURATION_MS = 2200;
+  const PILL_HOLD_MS = 900;
+  const IS_APPLE_PLATFORM = /Mac|iPhone|iPad|iPod/i.test(
+    (globalThis.navigator && (navigator.platform || navigator.userAgent)) || ""
+  );
+  const CAPTURE_SHORTCUT_HINT = IS_APPLE_PLATFORM ? "⌃⌥⇧⌘S" : "Alt+Shift+S";
+
   let extractorsModulePromise = null;
   let shadowRootRef = null;
   let toastEl = null;
   let toastDotEl = null;
   let toastTextEl = null;
   let pillEl = null;
+  let pillIconEl = null;
+  let pillLabelEl = null;
+  let pillShortcutEl = null;
   let toastTimer = null;
+  let pillHoldTimer = null;
+  let pillState = "hidden";
+  let lastAnchorRect = null;
   let showSelectionPill = true;
   let lastTriggerAt = 0;
+
+  function isHyperCaptureShortcutEvent(event) {
+    return Boolean(
+      event &&
+        !event.repeat &&
+        event.code === "KeyS" &&
+        event.ctrlKey &&
+        event.altKey &&
+        event.shiftKey &&
+        event.metaKey
+    );
+  }
+
+  function computePillPosition({ rect, pillWidth, pillHeight, viewportWidth, viewportHeight }) {
+    const width = Number(pillWidth) || 0;
+    const height = Number(pillHeight) || 0;
+    const vw = Number(viewportWidth) || 0;
+    const vh = Number(viewportHeight) || 0;
+    const rectLeft = Number(rect?.left) || 0;
+    const rectTop = Number(rect?.top) || 0;
+    const rectWidth = Number(rect?.width) || 0;
+    const rectBottom = typeof rect?.bottom === "number" ? rect.bottom : rectTop + (Number(rect?.height) || 0);
+
+    const maxLeft = Math.max(8, vw - width - 8);
+    const left = Math.round(Math.min(maxLeft, Math.max(8, rectLeft + rectWidth / 2 - width / 2)));
+
+    let top = rectTop - height - 8;
+    if (top < 8) {
+      const maxTop = Math.max(8, vh - height - 8);
+      top = Math.min(maxTop, rectBottom + 8);
+    }
+    return { left, top: Math.round(Math.max(8, top)) };
+  }
 
   function loadExtractors() {
     if (!extractorsModulePromise) {
@@ -37,7 +82,7 @@
     style.textContent = `
       :host {
         color-scheme: light dark;
-        --rw-surface: rgba(255, 255, 255, 0.97);
+        --rw-surface: rgba(255, 255, 255, 0.96);
         --rw-text: #202124;
         --rw-border: #dfe3e8;
         --rw-accent: #0068d9;
@@ -47,7 +92,7 @@
       }
       @media (prefers-color-scheme: dark) {
         :host {
-          --rw-surface: rgba(32, 33, 36, 0.97);
+          --rw-surface: rgba(32, 33, 36, 0.96);
           --rw-text: #f2f3f4;
           --rw-border: #41454c;
           --rw-accent: #0a84ff;
@@ -125,22 +170,46 @@
         position: fixed;
         display: none;
         align-items: center;
-        gap: 4px;
-        height: 28px;
-        padding: 4px 8px;
-        border-radius: 7px;
+        gap: 6px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 999px;
         background: var(--rw-surface);
-        color: var(--rw-accent);
+        color: var(--rw-text);
         border: 1px solid var(--rw-border);
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
-        font: 500 11.5px/1.2 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
+        font: 500 12.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
         cursor: pointer;
         pointer-events: auto;
         user-select: none;
         white-space: nowrap;
       }
-      .rw-pill:hover { border-color: var(--rw-accent); }
-      .rw-pill-plus { font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; }
+      .rw-pill[data-state="ready"]:hover { border-color: var(--rw-accent); }
+      .rw-pill[data-state="saving"],
+      .rw-pill[data-state="saved"],
+      .rw-pill[data-state="queued"] {
+        cursor: default;
+      }
+      .rw-pill-icon {
+        color: var(--rw-accent);
+        font-weight: 600;
+        font-size: 14px;
+        line-height: 1;
+      }
+      .rw-pill[data-state="saved"] .rw-pill-icon {
+        color: var(--rw-success);
+      }
+      .rw-pill[data-state="queued"] .rw-pill-icon {
+        color: var(--rw-warning);
+      }
+      .rw-pill-shortcut {
+        color: #8a9099;
+        font-size: 11px;
+        font-weight: 400;
+        line-height: 1;
+      }
       @media (prefers-reduced-motion: reduce) {
         .rw-toast { transition: none; }
       }
@@ -161,23 +230,90 @@
     pillEl.type = "button";
     pillEl.className = "rw-pill";
     pillEl.tabIndex = -1;
-    pillEl.textContent = "保存所选文本";
-    const pillPlus = document.createElement("span");
-    pillPlus.className = "rw-pill-plus";
-    pillPlus.setAttribute("aria-hidden", "true");
-    pillPlus.textContent = "+";
-    pillEl.prepend(pillPlus);
+    pillEl.setAttribute("aria-label", "暂存选中文本");
+
+    pillIconEl = document.createElement("span");
+    pillIconEl.className = "rw-pill-icon";
+    pillIconEl.setAttribute("aria-hidden", "true");
+
+    pillLabelEl = document.createElement("span");
+    pillLabelEl.className = "rw-pill-label";
+
+    pillShortcutEl = document.createElement("span");
+    pillShortcutEl.className = "rw-pill-shortcut";
+    pillShortcutEl.setAttribute("aria-hidden", "true");
+
+    pillEl.append(pillIconEl, pillLabelEl, pillShortcutEl);
+    applyPillVisualState("ready");
+
     pillEl.addEventListener("mousedown", (event) => {
       event.preventDefault();
       event.stopPropagation();
-      hidePill();
-      void captureAndSendCurrentSelection();
+      if (pillState !== "ready") return;
+      void captureAndSendCurrentSelection({ morphPill: true });
     });
 
     shadow.append(style, toastEl, pillEl);
     (document.documentElement || document.body).appendChild(host);
     shadowRootRef = shadow;
     return shadow;
+  }
+
+  function applyPillVisualState(state) {
+    if (!pillEl) return;
+    pillState = state;
+    pillEl.setAttribute("data-state", state);
+    if (state === "saving") {
+      pillIconEl.textContent = "…";
+      pillLabelEl.textContent = "暂存中…";
+      pillShortcutEl.hidden = true;
+    } else if (state === "saved") {
+      pillIconEl.textContent = "✓";
+      pillLabelEl.textContent = "已暂存";
+      pillShortcutEl.hidden = true;
+    } else if (state === "queued") {
+      pillIconEl.textContent = "✓";
+      pillLabelEl.textContent = "待同步";
+      pillShortcutEl.hidden = true;
+    } else {
+      pillIconEl.textContent = "+";
+      pillLabelEl.textContent = "暂存";
+      pillShortcutEl.textContent = CAPTURE_SHORTCUT_HINT;
+      pillShortcutEl.hidden = false;
+    }
+  }
+
+  function positionPillAtRect(rect) {
+    if (!pillEl || !rect) return;
+    const pillWidth = pillEl.offsetWidth || 120;
+    const pillHeight = pillEl.offsetHeight || 32;
+    const pos = computePillPosition({
+      rect,
+      pillWidth,
+      pillHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight
+    });
+    pillEl.style.left = `${pos.left}px`;
+    pillEl.style.top = `${pos.top}px`;
+  }
+
+  function morphPillAndScheduleHide(nextState) {
+    if (!pillEl) return;
+    if (pillHoldTimer) {
+      clearTimeout(pillHoldTimer);
+      pillHoldTimer = null;
+    }
+    pillEl.style.display = "inline-flex";
+    pillEl.style.visibility = "visible";
+    applyPillVisualState(nextState);
+    if (lastAnchorRect) {
+      positionPillAtRect(lastAnchorRect);
+    }
+    pillHoldTimer = setTimeout(() => {
+      pillHoldTimer = null;
+      hidePill();
+    }, PILL_HOLD_MS);
   }
 
   function showToast(message, variant = "saved") {
@@ -193,7 +329,14 @@
   }
 
   function hidePill() {
+    if (pillHoldTimer) {
+      clearTimeout(pillHoldTimer);
+      pillHoldTimer = null;
+    }
+    pillState = "hidden";
+    lastAnchorRect = null;
     if (pillEl) {
+      pillEl.setAttribute("data-state", "hidden");
       pillEl.style.display = "none";
     }
   }
@@ -230,28 +373,45 @@
     return clip;
   }
 
-  async function captureAndSendCurrentSelection() {
+  async function captureAndSendCurrentSelection({ morphPill = false } = {}) {
     const now = Date.now();
     if (now - lastTriggerAt < 350) return;
     lastTriggerAt = now;
 
-    const clip = await extractCurrentSelection();
-    if (!clip || !clip.selectedMarkdown) return;
+    if (morphPill && pillEl && pillEl.style.display !== "none") {
+      applyPillVisualState("saving");
+      if (lastAnchorRect) positionPillAtRect(lastAnchorRect);
+    }
 
     try {
+      const clip = await extractCurrentSelection();
+      if (!clip || !clip.selectedMarkdown) {
+        if (morphPill && pillState === "saving") hidePill();
+        return;
+      }
+
       const resp = await chrome.runtime.sendMessage({
         type: "REWIND_SAVE_CLIP",
         clip
       });
+      if (morphPill && pillState === "saving" && resp && (resp.status === "saved" || resp.status === "queued")) {
+        morphPillAndScheduleHide(resp.status);
+        return;
+      }
+      if (morphPill && pillState === "saving") hidePill();
       if (resp && resp.toast) {
         showToast(resp.toast, resp.status || "saved");
       }
     } catch {
+      if (morphPill) hidePill();
       showToast("保存失败，请重试", "error");
     }
   }
 
   function updatePillPosition() {
+    if (pillState === "saving" || pillState === "saved" || pillState === "queued") {
+      return;
+    }
     if (!showSelectionPill) {
       hidePill();
       return;
@@ -274,11 +434,18 @@
     }
 
     ensureUiRoot();
-    const top = Math.max(8, rect.top - 34);
-    const left = Math.min(window.innerWidth - 110, Math.max(8, rect.right - 44));
-    pillEl.style.top = `${Math.round(top)}px`;
-    pillEl.style.left = `${Math.round(left)}px`;
+    lastAnchorRect = {
+      left: rect.left,
+      top: rect.top,
+      width: rect.width,
+      height: rect.height,
+      bottom: rect.bottom
+    };
+    applyPillVisualState("ready");
+    pillEl.style.visibility = "hidden";
     pillEl.style.display = "inline-flex";
+    positionPillAtRect(lastAnchorRect);
+    pillEl.style.visibility = "visible";
   }
 
   chrome.storage?.local?.get(["showSelectionPill"], (items) => {
@@ -294,28 +461,49 @@
     }
   });
 
-  document.addEventListener("mouseup", () => {
+  document.addEventListener("mousedown", (event) => {
+    if (pillEl && typeof event.composedPath === "function" && event.composedPath().includes(pillEl)) {
+      return;
+    }
+    if (pillState === "saving") return;
+    hidePill();
+  }, true);
+
+  document.addEventListener("mouseup", (event) => {
+    if (pillEl && typeof event.composedPath === "function" && event.composedPath().includes(pillEl)) {
+      return;
+    }
     setTimeout(updatePillPosition, 15);
   }, true);
 
   document.addEventListener("selectionchange", () => {
+    if (pillState === "saving" || pillState === "saved" || pillState === "queued") return;
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed) hidePill();
   }, true);
 
-  window.addEventListener("scroll", hidePill, { capture: true, passive: true });
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (pillState === "saving") return;
+      hidePill();
+    },
+    { capture: true, passive: true }
+  );
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       hidePill();
       return;
     }
-    if (event.altKey && event.shiftKey && !event.metaKey && !event.ctrlKey && event.code === "KeyS") {
+    if (isHyperCaptureShortcutEvent(event)) {
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && sel.toString().trim()) {
         event.preventDefault();
-        hidePill();
-        void captureAndSendCurrentSelection();
+        if (pillState === "saving") return;
+        const canMorphInPlace = Boolean(pillEl && pillEl.style.display !== "none" && pillState === "ready");
+        if (!canMorphInPlace) hidePill();
+        void captureAndSendCurrentSelection({ morphPill: canMorphInPlace });
       }
     }
   }, true);

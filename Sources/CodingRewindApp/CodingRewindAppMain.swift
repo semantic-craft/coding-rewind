@@ -10,6 +10,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var hudPanel: QuickPeekHUDPanel?
     public var statusItemController: StatusItemController?
     public var settingsWindowController: SettingsWindowController?
+    public var selectionPopupController: SelectionPopupController?
     public var shortcuts: AppShortcuts?
     public var appearance: AppAppearancePreferences?
     public private(set) var lastExternalApplication: NSRunningApplication?
@@ -137,6 +138,23 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             )
             self.statusItemController = statusController
 
+            let selectionPopup = SelectionPopupController(
+                appearance: appearance,
+                shortcuts: shortcuts,
+                onTriggerCapture: { [weak self] in
+                    guard let self, let coord = self.coordinator else { return .ignoredBusy }
+                    let outcome = await coord.captureSelection()
+                    self.statusItemController?.refreshIcon()
+                    return outcome
+                },
+                onPresentErrorHUD: { [weak self] in
+                    guard let self else { return }
+                    self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
+                }
+            )
+            selectionPopup.start()
+            self.selectionPopupController = selectionPopup
+
             observeCoordinatorChanges()
 
             if !CommandLine.arguments.contains("--background") {
@@ -152,7 +170,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    public func applicationWillTerminate(_ notification: Notification) { shortcuts?.stop() }
+    public func applicationWillTerminate(_ notification: Notification) {
+        selectionPopupController?.stop()
+        shortcuts?.stop()
+    }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         perform(.presentHUDAndFocus)
@@ -165,10 +186,32 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             hudPanel?.toggle(anchorFrame: statusItemController?.anchorFrame)
         case .presentHUDAndFocus:
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
-        case .captureSelectionHotkey, .captureSelectionFromMenu:
+        case .captureSelectionHotkey:
             guard let coord = coordinator else { return }
+            if selectionPopupController?.phase == .saving { return }
+            let wasPopupVisible = selectionPopupController?.isVisible == true
+            if wasPopupVisible {
+                selectionPopupController?.beginSavingInPlace()
+                Task { @MainActor [weak self] in
+                    let outcome = await coord.captureSelection()
+                    guard let self else { return }
+                    self.statusItemController?.refreshIcon()
+                    self.selectionPopupController?.applyInPlaceCaptureOutcome(outcome)
+                }
+            } else {
+                selectionPopupController?.hideImmediately()
+                Task { @MainActor [weak self] in
+                    _ = await coord.captureSelection()
+                    guard let self else { return }
+                    self.statusItemController?.refreshIcon()
+                    self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)
+                }
+            }
+        case .captureSelectionFromMenu:
+            guard let coord = coordinator else { return }
+            selectionPopupController?.hideImmediately()
             Task { @MainActor [weak self] in
-                await coord.captureSelection()
+                _ = await coord.captureSelection()
                 guard let self else { return }
                 self.statusItemController?.refreshIcon()
                 self.hudPanel?.presentNonActivating(anchorFrame: self.statusItemController?.anchorFrame)

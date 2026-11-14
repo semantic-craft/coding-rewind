@@ -4,7 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import vm from "node:vm";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   detectPlatform,
@@ -14,7 +15,9 @@ import {
   extractSessionTitle,
   extractConversationTurns,
   extractClipContext,
-  parseHtmlDocument
+  parseHtmlDocument,
+  isHyperCaptureShortcutEvent,
+  computePillPosition
 } from "./extractors.mjs";
 
 import {
@@ -949,4 +952,524 @@ test("captured range keeps its excerpt and context after the live selection move
   assert.equal(clip.selectedMarkdown, "Answer A");
   assert.equal(clip.prompt, "Question A");
   assert.equal(clip.recentTurns, "User: Question A\n\nAssistant: Answer A");
+});
+
+test("isHyperCaptureShortcutEvent accepts only non-repeating Hyper+S and rejects Alt+Shift+S, partial modifiers, and other keys", () => {
+  assert.equal(
+    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, code: "KeyS", repeat: false }),
+    true
+  );
+  assert.equal(
+    isHyperCaptureShortcutEvent({ ctrlKey: false, altKey: true, shiftKey: true, metaKey: false, code: "KeyS", repeat: false }),
+    false
+  );
+  assert.equal(
+    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: false, metaKey: true, code: "KeyS", repeat: false }),
+    false
+  );
+  assert.equal(
+    isHyperCaptureShortcutEvent({ ctrlKey: false, altKey: false, shiftKey: false, metaKey: true, code: "KeyS", repeat: false }),
+    false
+  );
+  assert.equal(
+    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, code: "KeyR", repeat: false }),
+    false
+  );
+  assert.equal(
+    isHyperCaptureShortcutEvent({ ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, code: "KeyS", repeat: true }),
+    false
+  );
+  assert.equal(isHyperCaptureShortcutEvent(null), false);
+});
+
+function createContentScriptHarness({
+  extractorsUrl,
+  sendMessageImpl
+} = {}) {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const contentScriptPath = path.join(extensionDir, "content.js");
+  const contentCode = fs.readFileSync(contentScriptPath, "utf8");
+  const resolvedExtractorsUrl = extractorsUrl || pathToFileURL(path.join(extensionDir, "extractors.mjs")).href;
+
+  let nowMs = 1_000_000;
+  let nextTimerId = 1;
+  const timers = new Map();
+
+  function scheduleTimeout(cb, ms = 0) {
+    const id = nextTimerId++;
+    timers.set(id, { cb, dueAt: nowMs + Number(ms) });
+    return id;
+  }
+
+  function cancelTimeout(id) {
+    timers.delete(id);
+  }
+
+  function advanceTime(deltaMs) {
+    nowMs += deltaMs;
+    while (true) {
+      let earliestId = null;
+      let earliestDue = Infinity;
+      for (const [id, entry] of timers.entries()) {
+        if (entry.dueAt <= nowMs && entry.dueAt < earliestDue) {
+          earliestDue = entry.dueAt;
+          earliestId = id;
+        }
+      }
+      if (earliestId === null) break;
+      const entry = timers.get(earliestId);
+      timers.delete(earliestId);
+      entry.cb();
+    }
+  }
+
+  function makeEventTarget() {
+    const map = new Map();
+    return {
+      addEventListener(type, fn, options) {
+        const capture = typeof options === "boolean" ? options : Boolean(options && options.capture);
+        if (!map.has(type)) map.set(type, []);
+        map.get(type).push({ fn, capture });
+      },
+      dispatch(type, rawEvent = {}) {
+        let defaultPrevented = false;
+        let propagationStopped = false;
+        const event = {
+          type,
+          ...rawEvent,
+          get defaultPrevented() {
+            return defaultPrevented;
+          },
+          preventDefault() {
+            defaultPrevented = true;
+          },
+          stopPropagation() {
+            propagationStopped = true;
+          },
+          composedPath() {
+            return rawEvent.path || [];
+          }
+        };
+        const entries = (map.get(type) || []).slice();
+        const ordered = [
+          ...entries.filter((e) => e.capture),
+          ...entries.filter((e) => !e.capture)
+        ];
+        for (const { fn } of ordered) {
+          if (propagationStopped) break;
+          fn(event);
+        }
+        return { event, defaultPrevented, propagationStopped };
+      }
+    };
+  }
+
+  function createFakeElement(tagName) {
+    const target = makeEventTarget();
+    const el = {
+      nodeType: 1,
+      tagName: String(tagName).toUpperCase(),
+      className: "",
+      type: "",
+      tabIndex: 0,
+      hidden: false,
+      textContent: "",
+      isConnected: false,
+      offsetWidth: 116,
+      offsetHeight: 32,
+      style: {},
+      attributes: {},
+      children: [],
+      childNodes: [],
+      parentElement: null,
+      shadowRoot: null,
+      setAttribute(name, val) {
+        this.attributes[String(name)] = String(val);
+      },
+      getAttribute(name) {
+        const k = String(name);
+        return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
+      },
+      appendChild(child) {
+        child.parentElement = this;
+        child.isConnected = this.isConnected;
+        this.children.push(child);
+        this.childNodes.push(child);
+        return child;
+      },
+      append(...nodes) {
+        for (const n of nodes) this.appendChild(n);
+      },
+      attachShadow({ mode }) {
+        const sr = {
+          mode,
+          host: el,
+          children: [],
+          append(...nodes) {
+            for (const n of nodes) this.children.push(n);
+          },
+          querySelector(cls) {
+            if (cls.startsWith(".")) {
+              const targetCls = cls.slice(1);
+              return this.children.find((c) => (c.className || "").split(/\s+/).includes(targetCls)) || null;
+            }
+            return this.children.find((c) => c.tagName === cls.toUpperCase()) || null;
+          }
+        };
+        el.shadowRoot = sr;
+        return sr;
+      },
+      addEventListener: target.addEventListener,
+      dispatch: target.dispatch
+    };
+    return el;
+  }
+
+  const parsedDoc = parseHtmlDocument(
+    `<html><head><title>Capsule VM Test - ChatGPT</title></head><body>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Why did Alt+Shift+S duplicate?</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p id="picked">Keep <code>Hyper+S</code> in content script only.</p></div></div>
+    </body></html>`,
+    { url: "https://chatgpt.com/c/capsule-vm" }
+  );
+  const pickedEl = parsedDoc.querySelector("#picked");
+  let selectionCollapsed = false;
+  let selectionRect = { left: 300, top: 200, bottom: 224, width: 160, height: 24 };
+
+  const currentSelection = {
+    get rangeCount() {
+      return selectionCollapsed ? 0 : 1;
+    },
+    get isCollapsed() {
+      return selectionCollapsed;
+    },
+    get anchorNode() {
+      return pickedEl;
+    },
+    get focusNode() {
+      return pickedEl;
+    },
+    collapse() {
+      selectionCollapsed = true;
+    },
+    toString() {
+      return selectionCollapsed ? "" : pickedEl.textContent;
+    },
+    getRangeAt() {
+      const baseRange = parsedDoc.createRangeFromNode(pickedEl);
+      return {
+        ...baseRange,
+        getBoundingClientRect() {
+          return selectionRect;
+        },
+        cloneRange() {
+          return parsedDoc.createRangeFromNode(pickedEl);
+        }
+      };
+    }
+  };
+
+  const docEvents = makeEventTarget();
+  const winEvents = makeEventTarget();
+  const documentElement = createFakeElement("html");
+  documentElement.isConnected = true;
+
+  const fakeDocument = {
+    title: parsedDoc.title,
+    location: parsedDoc.location,
+    documentElement,
+    body: documentElement,
+    createElement: createFakeElement,
+    querySelectorAll: (sel) => parsedDoc.querySelectorAll(sel),
+    querySelector: (sel) => parsedDoc.querySelector(sel),
+    addEventListener: docEvents.addEventListener,
+    dispatch: docEvents.dispatch
+  };
+
+  const fakeWindow = {
+    innerWidth: 1280,
+    innerHeight: 800,
+    getSelection: () => currentSelection,
+    addEventListener: winEvents.addEventListener,
+    dispatch: winEvents.dispatch
+  };
+
+  const sentMessages = [];
+  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: "已暂存到 Coding Rewind" }));
+
+  const fakeChrome = {
+    runtime: {
+      getURL() {
+        return resolvedExtractorsUrl;
+      },
+      async sendMessage(payload) {
+        sentMessages.push(payload);
+        return messageHandler(payload);
+      },
+      onMessage: { addListener() {} }
+    },
+    storage: {
+      local: {
+        get(_keys, cb) {
+          cb({ showSelectionPill: true });
+        }
+      },
+      onChanged: { addListener() {} }
+    }
+  };
+
+  const sandbox = {
+    Date: { now: () => nowMs },
+    Math,
+    Number,
+    String,
+    Boolean,
+    Object,
+    Set,
+    WeakMap,
+    URL,
+    Promise,
+    setTimeout: scheduleTimeout,
+    clearTimeout: cancelTimeout,
+    navigator: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" },
+    location: parsedDoc.location,
+    window: fakeWindow,
+    document: fakeDocument,
+    chrome: fakeChrome
+  };
+  sandbox.globalThis = sandbox;
+
+  vm.runInNewContext(contentCode, sandbox, {
+    filename: contentScriptPath,
+    importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
+  });
+
+  return {
+    advanceTime,
+    sentMessages,
+    setSendMessageHandler(fn) {
+      messageHandler = fn;
+    },
+    setSelectionCollapsed(collapsed) {
+      selectionCollapsed = collapsed;
+    },
+    isSelectionCollapsed() {
+      return selectionCollapsed;
+    },
+    document: fakeDocument,
+    window: fakeWindow,
+    getHost() {
+      return documentElement.children.find((c) => c.getAttribute("data-coding-rewind-ui") === "1") || null;
+    },
+    getPill() {
+      return this.getHost()?.shadowRoot?.querySelector(".rw-pill") || null;
+    },
+    getToast() {
+      return this.getHost()?.shadowRoot?.querySelector(".rw-toast") || null;
+    },
+    getStyleText() {
+      return this.getHost()?.shadowRoot?.querySelector("style")?.textContent || "";
+    }
+  };
+}
+
+test("content.js capsule positions on mouseup, absorbs rapid double-mousedown without collapsing selection, and handles Hyper+S vs Alt+Shift+S", async () => {
+  let resolveInFlightSave;
+  const harness = createContentScriptHarness({
+    sendMessageImpl: () =>
+      new Promise((resolve) => {
+        resolveInFlightSave = resolve;
+      })
+  });
+
+  harness.document.addEventListener("mousedown", () => {
+    harness.setSelectionCollapsed(true);
+  }, false);
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.ok(pill, "Expected .rw-pill to be mounted in shadow root");
+  assert.equal(pill.style.display, "inline-flex");
+  assert.equal(pill.style.visibility, "visible");
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.style.left, "322px", "pill centers horizontally above selection rect");
+  assert.equal(pill.style.top, "160px", "pill positions above selection rect");
+  assert.doesNotMatch(
+    harness.getStyleText(),
+    /\.rw-pill\[data-state="saving"\][\s\S]*?pointer-events:\s*none/
+  );
+
+  const click1 = pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(click1.defaultPrevented, true);
+  assert.equal(click1.propagationStopped, true);
+  assert.equal(pill.getAttribute("data-state"), "saving");
+
+  const click2 = pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(click2.defaultPrevented, true);
+  assert.equal(click2.propagationStopped, true);
+  assert.equal(harness.isSelectionCollapsed(), false, "rapid second click must not fall through and collapse selection");
+
+  harness.window.dispatch("scroll");
+  harness.document.dispatch("mousedown", { path: [] });
+  harness.setSelectionCollapsed(false);
+  assert.equal(pill.getAttribute("data-state"), "saving", "scroll and outside mousedown must not wipe in-flight saving state");
+
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].type, "REWIND_SAVE_CLIP");
+  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "Keep `Hyper+S` in content script only.");
+
+  harness.advanceTime(400);
+  pill.dispatch("mousedown", { path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1, "click while saving is ignored even after 350ms cooldown");
+
+  resolveInFlightSave({ status: "saved", toast: "已暂存到 Coding Rewind" });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saved");
+  assert.equal(pill.style.left, "322px");
+  assert.equal(pill.style.top, "160px");
+
+  harness.advanceTime(950);
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+  assert.equal(pill.style.display, "none");
+
+  harness.setSendMessageHandler(async () => ({ status: "saved", toast: "已暂存到 Coding Rewind" }));
+  harness.advanceTime(500);
+
+  const altShiftRes = harness.document.dispatch("keydown", {
+    key: "S",
+    code: "KeyS",
+    altKey: true,
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    repeat: false
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(altShiftRes.defaultPrevented, false);
+  assert.equal(harness.sentMessages.length, 1, "Alt+Shift+S must be left exclusively to chrome.commands");
+
+  const hyperRes = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperRes.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 2, "Hyper+S must trigger REWIND_SAVE_CLIP");
+});
+
+test("content.js capsule hides cleanly on Escape mid-save and never freezes in saving when extractClipContext or sendMessage rejects", async () => {
+  let finishSave;
+  const escapeHarness = createContentScriptHarness({
+    sendMessageImpl: () => new Promise((resolve) => { finishSave = resolve; })
+  });
+  escapeHarness.document.dispatch("mouseup", { path: [] });
+  escapeHarness.advanceTime(20);
+  const escapePill = escapeHarness.getPill();
+  escapePill.dispatch("mousedown", { path: [escapePill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(escapePill.getAttribute("data-state"), "saving");
+
+  escapeHarness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  assert.equal(escapePill.getAttribute("data-state"), "hidden");
+  assert.equal(escapePill.style.display, "none");
+
+  finishSave({ status: "saved", toast: "已暂存到 Coding Rewind" });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(escapePill.getAttribute("data-state"), "hidden", "Escape during saving keeps pill hidden after response");
+  assert.equal(escapePill.style.display, "none");
+
+  const rejectMsgHarness = createContentScriptHarness({
+    sendMessageImpl: async () => {
+      throw new Error("Extension context invalidated");
+    }
+  });
+  rejectMsgHarness.document.dispatch("mouseup", { path: [] });
+  rejectMsgHarness.advanceTime(20);
+  const msgPill = rejectMsgHarness.getPill();
+  assert.equal(msgPill.getAttribute("data-state"), "ready");
+
+  msgPill.dispatch("mousedown", { path: [msgPill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(msgPill.getAttribute("data-state"), "hidden", "sendMessage rejection hides pill");
+  assert.equal(msgPill.style.display, "none");
+  assert.equal(rejectMsgHarness.getToast().getAttribute("data-visible"), "true");
+
+  const throwingExtractorsUrl =
+    "data:text/javascript," +
+    encodeURIComponent("export function extractClipContext() { throw new Error('DOM extraction crashed'); }");
+  const rejectExtractHarness = createContentScriptHarness({
+    extractorsUrl: throwingExtractorsUrl
+  });
+  rejectExtractHarness.document.dispatch("mouseup", { path: [] });
+  rejectExtractHarness.advanceTime(20);
+  const extractPill = rejectExtractHarness.getPill();
+  assert.equal(extractPill.getAttribute("data-state"), "ready");
+
+  extractPill.dispatch("mousedown", { path: [extractPill] });
+  assert.equal(extractPill.getAttribute("data-state"), "saving");
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(extractPill.getAttribute("data-state"), "hidden", "extractClipContext rejection hides pill");
+  assert.equal(extractPill.style.display, "none");
+  assert.equal(rejectExtractHarness.sentMessages.length, 0);
+  assert.equal(rejectExtractHarness.getToast().getAttribute("data-visible"), "true");
+});
+
+test("computePillPosition centers capsule above selection, flips below near top edge, and clamps horizontally", () => {
+  assert.deepEqual(
+    computePillPosition({
+      rect: { left: 300, top: 200, bottom: 224, width: 160, height: 24 },
+      pillWidth: 116,
+      pillHeight: 32,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }),
+    { left: 322, top: 160 }
+  );
+
+  assert.deepEqual(
+    computePillPosition({
+      rect: { left: 300, top: 18, bottom: 42, width: 160, height: 24 },
+      pillWidth: 116,
+      pillHeight: 32,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }),
+    { left: 322, top: 50 }
+  );
+
+  assert.deepEqual(
+    computePillPosition({
+      rect: { left: 2, top: 200, bottom: 224, width: 20, height: 24 },
+      pillWidth: 116,
+      pillHeight: 32,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }),
+    { left: 8, top: 160 }
+  );
+
+  assert.deepEqual(
+    computePillPosition({
+      rect: { left: 1250, top: 200, bottom: 224, width: 24, height: 24 },
+      pillWidth: 116,
+      pillHeight: 32,
+      viewportWidth: 1280,
+      viewportHeight: 800
+    }),
+    { left: 1156, top: 160 }
+  );
 });

@@ -71,4 +71,22 @@ struct AppAppearancePreferencesTests {
         #expect(!AppAppearancePreferences(defaults: first).showsDockIcon)
         #expect(AppAppearancePreferences(defaults: second).showsDockIcon)
     }
+
+    @Test func selectionPopupPreferenceDefaultsEnabledAndPersists() {
+        let domain = "dev.codingrewind.qa.appearance.popup.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        let initial = AppAppearancePreferences(defaults: defaults) { _ in true }
+        #expect(initial.showsSelectionPopup)
+
+        initial.setShowsSelectionPopup(false)
+        #expect(!initial.showsSelectionPopup)
+        let reopenedDisabled = AppAppearancePreferences(defaults: defaults) { _ in true }
+        #expect(!reopenedDisabled.showsSelectionPopup)
+
+        reopenedDisabled.setShowsSelectionPopup(true)
+        #expect(reopenedDisabled.showsSelectionPopup)
+        #expect(AppAppearancePreferences(defaults: defaults) { _ in true }.showsSelectionPopup)
+    }
 }

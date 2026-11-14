@@ -222,6 +222,58 @@ struct AppShortcutsTests {
         #expect(shortcuts.state(for: .captureSelection) == .active)
     }
 
+    @Test func defaultShortcutsUseHyperSAndControlOptionR() {
+        #expect(ShortcutAction.captureSelection.defaultShortcut == .init(.s, modifiers: hyper))
+        #expect(ShortcutAction.toggleHUD.defaultShortcut == .init(.r, modifiers: [.control, .option]))
+    }
+
+    @Test func legacyControlOptionSMigratesOnceToHyperS() throws {
+        let legacy = KeyboardShortcuts.Shortcut(.s, modifiers: [.control, .option])
+        let encodedLegacy = try String(decoding: JSONEncoder().encode(legacy), as: UTF8.self)
+        Self.defaults.set(encodedLegacy, forKey: "KeyboardShortcuts_captureSelection")
+        Self.defaults.removeObject(forKey: "CodingRewind.captureSelectionShortcutSchemaVersion")
+
+        let shortcuts = AppShortcuts { _ in }
+        defer { shortcuts.stop() }
+        #expect(shortcuts.shortcut(for: .captureSelection) == ShortcutAction.captureSelection.defaultShortcut)
+        #expect(Self.defaults.integer(forKey: "CodingRewind.captureSelectionShortcutSchemaVersion") == 2)
+    }
+
+    @Test func customAndClearedShortcutsSurviveSchemaMigrationAndExplicitV2ChoicePersists() throws {
+        let custom = KeyboardShortcuts.Shortcut(.k, modifiers: hyper)
+        let encodedCustom = try String(decoding: JSONEncoder().encode(custom), as: UTF8.self)
+        Self.defaults.set(encodedCustom, forKey: "KeyboardShortcuts_captureSelection")
+        Self.defaults.removeObject(forKey: "CodingRewind.captureSelectionShortcutSchemaVersion")
+        do {
+            let shortcuts = AppShortcuts { _ in }
+            defer { shortcuts.stop() }
+            #expect(shortcuts.shortcut(for: .captureSelection) == custom)
+            #expect(Self.defaults.integer(forKey: "CodingRewind.captureSelectionShortcutSchemaVersion") == 2)
+        }
+
+        Self.defaults.removePersistentDomain(forName: Self.suite)
+        Self.defaults.set(false, forKey: "KeyboardShortcuts_captureSelection")
+        do {
+            let shortcuts = AppShortcuts { _ in }
+            defer { shortcuts.stop() }
+            #expect(shortcuts.shortcut(for: .captureSelection) == nil)
+            #expect(shortcuts.state(for: .captureSelection) == .unassigned)
+            #expect(Self.defaults.integer(forKey: "CodingRewind.captureSelectionShortcutSchemaVersion") == 2)
+        }
+
+        let explicitLegacy = KeyboardShortcuts.Shortcut(.s, modifiers: [.control, .option])
+        do {
+            let shortcuts = AppShortcuts { _ in }
+            #expect(shortcuts.set(explicitLegacy, for: .captureSelection))
+            shortcuts.stop()
+        }
+        do {
+            let reopened = AppShortcuts { _ in }
+            defer { reopened.stop() }
+            #expect(reopened.shortcut(for: .captureSelection) == explicitLegacy)
+        }
+    }
+
     @Test func modifierReleaseWaitYieldsAndTimesOut() async {
         var held = true
         let release = Task { @MainActor in
@@ -231,6 +283,112 @@ struct AppShortcutsTests {
         #expect(await MacOSAccessibilitySelectionCapturer.waitForReleasedModifiers(timeout: .milliseconds(200), flags: { held ? [.maskCommand, .maskShift, .maskAlternate, .maskControl] : [] }))
         await release.value
         #expect(!(await MacOSAccessibilitySelectionCapturer.waitForReleasedModifiers(timeout: .milliseconds(20), flags: { [.maskCommand] })))
+    }
+
+    @Test func idempotentShortcutPreferencesConfigurationDoesNotTrapAfterRead() {
+        _ = KeyboardShortcuts.configuredUserDefaults
+        KeyboardShortcuts.configure(userDefaults: Self.defaults)
+        #expect(KeyboardShortcuts.configuredUserDefaults === Self.defaults)
+    }
+
+    @Test func selectionPopupControllerPreservesSavingAndAnchorActivationFeedbackAndStopsCleanly() async throws {
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("dist/test-data/selection-popup-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let appearance = AppAppearancePreferences(defaults: Self.defaults, applyPolicy: { _ in true })
+        let shortcuts = AppShortcuts { _ in }
+        defer { shortcuts.stop() }
+
+        var errorHUDCount = 0
+        let popup = SelectionPopupController(
+            appearance: appearance,
+            shortcuts: shortcuts,
+            onTriggerCapture: { .saved(cardID: "rw-1", sourceTitle: "Gemini") },
+            onPresentErrorHUD: { errorHUDCount += 1 }
+        )
+        popup.start()
+        popup.start()
+        defer { popup.stop() }
+
+        popup.showForTesting(anchorPID: 4242, shortcutHint: "⌃⌥⇧⌘S")
+        #expect(popup.isVisible)
+
+        let capturer = BlockingAppSelectionCapturer()
+        let coord = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: capturer)
+        let delegate = CodingRewindAppDelegate()
+        delegate.coordinator = coord
+        delegate.selectionPopupController = popup
+
+        delegate.perform(.captureSelectionHotkey)
+        #expect(popup.phase == .saving)
+        await capturer.waitUntilStarted()
+
+        delegate.perform(.captureSelectionHotkey)
+        #expect(popup.phase == .saving)
+
+        popup.applyInPlaceCaptureOutcome(.ignoredBusy)
+        #expect(popup.phase == .saving)
+        #expect(errorHUDCount == 0)
+
+        popup.handleApplicationActivation(activatedPID: 9999)
+        #expect(popup.phase == .saving)
+
+        await capturer.finish()
+        for _ in 0..<20 where popup.phase == .saving {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(popup.phase == .saved(offline: true))
+        #expect(await capturer.calls == 1)
+
+        popup.handleApplicationActivation(activatedPID: 4242)
+        #expect(popup.phase == .saved(offline: true))
+
+        popup.handleApplicationActivation(activatedPID: 9999)
+        #expect(popup.phase == .hidden)
+
+        popup.showForTesting(anchorPID: 4242)
+        #expect(popup.isVisible)
+        appearance.setShowsSelectionPopup(false)
+        for _ in 0..<20 where popup.phase != .hidden {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(popup.phase == .hidden)
+
+        appearance.setShowsSelectionPopup(true)
+        popup.stop()
+        popup.showForTesting(anchorPID: 4242)
+        appearance.setShowsSelectionPopup(false)
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(popup.phase == .ready(shortcutHint: nil))
+        popup.hideImmediately()
+    }
+}
+
+private actor BlockingAppSelectionCapturer: SelectionCapturing {
+    private(set) var calls = 0
+    private var started: CheckedContinuation<Void, Never>?
+    private var release: CheckedContinuation<Void, Never>?
+
+    func captureFrontmostSelection() async throws -> CapturedSelection {
+        calls += 1
+        started?.resume()
+        started = nil
+        await withCheckedContinuation { release = $0 }
+        return CapturedSelection(text: "Gemini snippet", bundleIdentifier: "com.google.GeminiMacOS", appName: "Gemini")
+    }
+
+    func waitUntilStarted() async {
+        if calls > 0 { return }
+        await withCheckedContinuation { started = $0 }
+    }
+
+    func finish() {
+        release?.resume()
+        release = nil
     }
 }
 

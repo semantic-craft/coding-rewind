@@ -62,8 +62,19 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
             throw RewindError.accessibilityPermissionDenied
         }
         let focused = focusStatus == .success ? Self.axElement(focusedRef) : nil
-        let chatDocument = bundleID == CapturedSelection.antigravityBundleIdentifier
-            ? Self.chatDocument(owning: focused) : nil
+        let isAntigravity = bundleID == CapturedSelection.antigravityBundleIdentifier
+        let directChatDocument = isAntigravity ? Self.chatDocument(owning: focused) : nil
+        let fallbackWindowSelection: (document: ChatDocument, selectedText: String)? = {
+            guard isAntigravity,
+                  directChatDocument == nil,
+                  Self.owningWebArea(focused) == nil,
+                  !Self.hasEditableAncestor(focused),
+                  let window = Self.axElement(Self.axValue(appElement, kAXFocusedWindowAttribute)) else {
+                return nil
+            }
+            return Self.uniqueSelectedChatDocument(in: window)
+        }()
+        let chatDocument = directChatDocument ?? fallbackWindowSelection?.document
         let nativeObservation = NativeChatAXCapture.observe(
             app: appElement, bundleIdentifier: bundleID, windowTitle: windowTitle, focused: focused
         )
@@ -71,13 +82,29 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         if let focused, let text = Self.axValue(focused, kAXSelectedTextAttribute) as? String,
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             selectedText = text
-            if let chatDocument, chatDocument.matches(Self.focusedChatDocument(in: appElement)) {
-                conversationID = chatDocument.conversationID
+            if let directChatDocument, directChatDocument.matches(Self.focusedChatDocument(in: appElement)) {
+                conversationID = directChatDocument.conversationID
+            } else if let fallback = fallbackWindowSelection, fallback.selectedText == text {
+                conversationID = fallback.document.conversationID
             }
             if nativeObservation != nil {
                 let copied = await Self.copyViaCommandCPreservingPasteboard(targetPID: target.pid, expectedChatURL: nil)
                 selectedText = copied.text
                 selectedHTML = copied.html
+            }
+        } else if let directChatDocument,
+                  let areaText = Self.axValue(directChatDocument.area, kAXSelectedTextAttribute) as? String,
+                  !areaText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            selectedText = areaText
+            if directChatDocument.matches(Self.focusedChatDocument(in: appElement)) {
+                conversationID = directChatDocument.conversationID
+            }
+        } else if let fallback = fallbackWindowSelection {
+            selectedText = fallback.selectedText
+            if let window = Self.axElement(Self.axValue(appElement, kAXFocusedWindowAttribute)),
+               let rechecked = Self.uniqueSelectedChatDocument(in: window),
+               rechecked.document.matches(fallback.document) {
+                conversationID = fallback.document.conversationID
             }
         } else {
             let copied = await Self.copyViaCommandCPreservingPasteboard(
@@ -136,20 +163,106 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         chatDocument(owning: axElement(axValue(app, kAXFocusedUIElementAttribute)))
     }
 
+    private static func owningWebArea(_ element: AXUIElement?) -> AXUIElement? {
+        var current = element
+        var depth = 0
+        while let node = current, depth < 48 {
+            depth += 1
+            if (axValue(node, kAXRoleAttribute) as? String) == "AXWebArea" {
+                return node
+            }
+            current = axElement(axValue(node, kAXParentAttribute))
+        }
+        return nil
+    }
+
+    private static func isChildFrameWebArea(_ area: AXUIElement) -> Bool {
+        let rawURL = axValue(area, kAXURLAttribute)
+        let url = (rawURL as? URL) ?? (rawURL as? String).flatMap { URL(string: $0) }
+        guard let scheme = url?.scheme?.lowercased() else { return false }
+        return scheme == "data" || scheme == "about"
+    }
+
     private static func chatDocument(owning focused: AXUIElement?) -> ChatDocument? {
         var element = focused
-        while let current = element {
+        var depth = 0
+        while let current = element, depth < 48 {
+            depth += 1
             let role = axValue(current, kAXRoleAttribute) as? String
-            if role == kAXTextAreaRole || role == kAXTextFieldRole { return nil }
+            if role == kAXTextAreaRole || role == kAXTextFieldRole || role == kAXComboBoxRole { return nil }
+            if hasEditableAncestorValue(current) { return nil }
             if role == "AXWebArea" {
-                let rawURL = axValue(current, kAXURLAttribute)
-                let url = (rawURL as? URL) ?? (rawURL as? String).flatMap { URL(string: $0) }
-                guard let url, let id = AntigravityConversationID(webAreaURL: url) else { return nil }
-                return ChatDocument(area: current, url: url, conversationID: id)
+                if let document = chatDocument(forWebArea: current) {
+                    return document
+                }
+                if !isChildFrameWebArea(current) {
+                    return nil
+                }
             }
             element = axElement(axValue(current, kAXParentAttribute))
         }
         return nil
+    }
+
+    private static func chatDocument(forWebArea area: AXUIElement) -> ChatDocument? {
+        let rawURL = axValue(area, kAXURLAttribute)
+        let url = (rawURL as? URL) ?? (rawURL as? String).flatMap { URL(string: $0) }
+        guard let url, let id = AntigravityConversationID(webAreaURL: url) else { return nil }
+        return ChatDocument(area: area, url: url, conversationID: id)
+    }
+
+    package static func hasEditableAncestorValue(_ element: AXUIElement) -> Bool {
+        guard let editable = axValue(element, "AXEditableAncestor"),
+              CFGetTypeID(editable) != CFNullGetTypeID() else {
+            return false
+        }
+        if let flag = editable as? Bool { return flag }
+        return true
+    }
+
+    private static func hasEditableAncestor(_ element: AXUIElement?) -> Bool {
+        var current = element
+        var depth = 0
+        while let node = current, depth < 48 {
+            depth += 1
+            let role = axValue(node, kAXRoleAttribute) as? String
+            if role == kAXTextAreaRole || role == kAXTextFieldRole || role == kAXComboBoxRole { return true }
+            if hasEditableAncestorValue(node) { return true }
+            current = axElement(axValue(node, kAXParentAttribute))
+        }
+        return false
+    }
+
+    private static func uniqueSelectedChatDocument(in window: AXUIElement) -> (document: ChatDocument, selectedText: String)? {
+        var matches: [(document: ChatDocument, selectedText: String)] = []
+        collectSelectedChatDocuments(in: window, depth: 0, into: &matches)
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private static func collectSelectedChatDocuments(
+        in element: AXUIElement,
+        depth: Int,
+        into matches: inout [(document: ChatDocument, selectedText: String)]
+    ) {
+        guard depth < 24, matches.count <= 1 else { return }
+        let role = axValue(element, kAXRoleAttribute) as? String
+        if let role, [kAXMenuBarRole, kAXStaticTextRole, kAXImageRole, kAXScrollBarRole, kAXToolbarRole].contains(role) {
+            return
+        }
+        if role == "AXWebArea",
+           !hasEditableAncestorValue(element),
+           let document = chatDocument(forWebArea: element),
+           let selected = axValue(element, kAXSelectedTextAttribute) as? String,
+           !selected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !matches.contains(where: { $0.document.matches(document) }) {
+            matches.append((document, selected))
+            if matches.count > 1 { return }
+        }
+        guard let children = axValue(element, kAXChildrenAttribute) as? [AXUIElement] else { return }
+        for child in children {
+            collectSelectedChatDocuments(in: child, depth: depth + 1, into: &matches)
+            if matches.count > 1 { return }
+        }
     }
 
     private static func axValue(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {

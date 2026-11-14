@@ -7,10 +7,12 @@ import Observation
 @Observable
 public final class AppAppearancePreferences {
     public private(set) var showsDockIcon: Bool
+    public private(set) var showsSelectionPopup: Bool
     public private(set) var errorMessage: String?
     private let defaults: UserDefaults
     private let applyPolicy: (NSApplication.ActivationPolicy) -> Bool
     private static let dockKey = "showsDockIcon"
+    private static let selectionPopupKey = "showsSelectionPopup"
 
     public init(
         defaults: UserDefaults,
@@ -21,6 +23,7 @@ public final class AppAppearancePreferences {
         self.defaults = defaults
         self.applyPolicy = applyPolicy
         self.showsDockIcon = defaults.object(forKey: Self.dockKey) as? Bool ?? true
+        self.showsSelectionPopup = defaults.object(forKey: Self.selectionPopupKey) as? Bool ?? true
     }
 
     public func apply() {
@@ -35,5 +38,10 @@ public final class AppAppearancePreferences {
         showsDockIcon = visible
         defaults.set(visible, forKey: Self.dockKey)
         errorMessage = nil
+    }
+
+    public func setShowsSelectionPopup(_ enabled: Bool) {
+        showsSelectionPopup = enabled
+        defaults.set(enabled, forKey: Self.selectionPopupKey)
     }
 }

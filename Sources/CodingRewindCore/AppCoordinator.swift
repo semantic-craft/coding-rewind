@@ -7,6 +7,13 @@ public protocol SelectionCapturing: Sendable {
     func captureFrontmostSelection() async throws -> CapturedSelection
 }
 
+public enum SelectionCaptureOutcome: Equatable, Sendable {
+    case ignoredBusy
+    case saved(cardID: String, sourceTitle: String)
+    case queuedOffline(cardID: String)
+    case failed(RewindError)
+}
+
 public enum StatusFilter: String, CaseIterable, Equatable, Sendable {
     case all
     case ready
@@ -319,13 +326,16 @@ public final class AppCoordinator {
         return "\(prefix)…"
     }
 
-    public func captureSelection() async {
-        guard !isCapturingSelection else { return }
+    @discardableResult
+    public func captureSelection() async -> SelectionCaptureOutcome {
+        guard !isCapturingSelection else { return .ignoredBusy }
         isCapturingSelection = true
         defer {
             localCardsRevision += 1
             isCapturingSelection = false
         }
+        var provisionalCardID: String?
+        let previousFocusedCardID = focusedCardID
         do {
             let selection = try await capturer.captureFrontmostSelection()
             let (platform, sourceTitle, sourceURL, context) = await buildProvenance(from: selection)
@@ -354,6 +364,7 @@ public final class AppCoordinator {
                 now: max(Date(), selection.capturedAt),
                 isOfflinePending: true
             ) {
+                provisionalCardID = localCard.id
                 updateLocalCards { cards in
                     cards.removeAll { $0.id == localCard.id }
                     cards.insert(localCard, at: 0)
@@ -366,7 +377,7 @@ public final class AppCoordinator {
                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
                 try outbox.enqueue(entry)
                 setBanner("已保存到本机，设置 Memos 连接后将自动同步", isError: false)
-                return
+                return .queuedOffline(cardID: clientClipId)
             }
 
             do {
@@ -387,12 +398,27 @@ public final class AppCoordinator {
                 checkedCardIDs.insert(saved.id)
                 focusedCardID = saved.id
                 setBanner("已保存片段 · \(sourceTitle)", isError: false)
+                return .saved(cardID: saved.id, sourceTitle: sourceTitle)
             } catch {
                 try outbox.enqueue(entry)
                 setBanner("暂未同步到 Memos，已保存到本机", isError: false)
+                return .queuedOffline(cardID: clientClipId)
             }
         } catch {
+            if let provisionalCardID {
+                checkedCardIDs.remove(provisionalCardID)
+                updateLocalCards { cards in
+                    cards.removeAll { $0.id == provisionalCardID }
+                }
+                if focusedCardID == provisionalCardID {
+                    focusedCardID = cards.contains(where: { $0.id == previousFocusedCardID })
+                        ? previousFocusedCardID
+                        : cards.first?.id
+                }
+            }
+            let rewindError = (error as? RewindError) ?? .ioError(error.localizedDescription)
             setBanner(error.localizedDescription, isError: true)
+            return .failed(rewindError)
         }
     }
 

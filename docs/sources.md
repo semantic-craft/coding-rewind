@@ -6,12 +6,13 @@
 
 ## 直接复用或裁剪模式的 MIT 上游项目
 
-以下七个项目均已核实仓库根目录 `LICENSE` 全文与 GitHub API `license.spdx_id` 为标准 `MIT`，构成本仓库四端实现的技术底座：
+以下九个项目均已核实仓库根目录 `LICENSE` 全文与 GitHub API `license.spdx_id` 为标准 `MIT`，构成本仓库四端实现的技术底座：
 
 | 项目 | 仓库与许可证据 | 在本项目中的具体复用与适配 |
 | --- | --- | --- |
 | `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 零修改直接采用官方固定版本 `neosmemo/memos:26.11.0` 容器作为唯一后端事实源，使用其 `/api/memos`、评论接口、`internal/webhook/webhook.go` 的 Standard Webhooks HMAC-SHA256 签名约定以及进程内原生 `/mcp` Streamable HTTP 服务 |
 | `p0deje/Maccy` | [p0deje/Maccy](https://github.com/p0deje/Maccy)，`MIT License`，Copyright Alex Rodionov | 在 `CodingRewindApp` 适配其 `FloatingPanel` 的 `.nonactivatingPanel` 非激活浮窗标志位、`.hudWindow` 毛玻璃视觉材质、键盘多选列表手感与剪贴板快照保护思路 |
+| `GaimsDevSoftware/linuxpop` | [GaimsDevSoftware/linuxpop](https://github.com/GaimsDevSoftware/linuxpop)，`MIT License`（2026-11-14 Asia/Shanghai 读取 `README.md` 与 `LICENSE`） | 在 `SelectionPopupController.swift` 借鉴其 PopClip 风格划词探测与执行两阶段分离思路，第一阶段仅在满足拖拽或双击手势阈值后以纯只读方式判定选区并展示非激活胶囊，第二阶段仅在用户点击胶囊或按下快捷键时执行实际捕获 |
 | `sindresorhus/KeyboardShortcuts` | [3.1.0 上游源码](https://github.com/sindresorhus/KeyboardShortcuts/tree/772133d9dbe800fdac0473226822994c5c162c58)，`MIT License`，Copyright Sindre Sorhus | `Vendor/KeyboardShortcuts/` 保留源码、测试、本地化资源、manifest 与原许可，提供 Recorder、Hyper、配置持久化、Carbon 注册与菜单跟踪。本地补丁提供真实注册状态、失败重试、可注入偏好域和复用菜单冲突查询；版本与补丁边界见该目录 README |
 | `tisfeng/SelectedTextKit` | [tisfeng/SelectedTextKit](https://github.com/tisfeng/SelectedTextKit)，`MIT License`，Copyright Tao Shi | 在 `MacOSSelection.swift` 采用其选区获取双阶段策略，先读焦点元素 `kAXSelectedTextAttribute`，为空时完整备份 `NSPasteboardItem` 全部类型数据与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 校验计数递增后在 `defer` 无条件还原剪贴板 |
 | `wxtsky/CodeIsland` | [wxtsky/CodeIsland](https://github.com/wxtsky/CodeIsland)，`MIT License`，Copyright wxtsky | 在 `AntigravityIntegration.swift` 借鉴将辅助二进制固定拷入 `~/Library/Application Support/CodingRewind/bin/` 避免 `.build/` 断链的安装模式。早期借鉴的 Hook 快照管线已由按选区读取官方 transcript 替代 |

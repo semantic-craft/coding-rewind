@@ -12,7 +12,12 @@ public enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var title: String { self == .captureSelection ? "保存所选文本" : "显示或隐藏片段浮窗" }
     public var defaultShortcut: KeyboardShortcuts.Shortcut {
-        .init(self == .captureSelection ? .s : .r, modifiers: [.control, .option])
+        switch self {
+        case .captureSelection:
+            .init(.s, modifiers: [.control, .option, .shift, .command])
+        case .toggleHUD:
+            .init(.r, modifiers: [.control, .option])
+        }
     }
     public var name: KeyboardShortcuts.Name { .init(rawValue, initial: defaultShortcut) }
     public var command: AppCommand { self == .captureSelection ? .captureSelectionHotkey : .toggleHUD }
@@ -48,7 +53,11 @@ public final class AppShortcuts {
         KeyboardShortcuts.configure(userDefaults: preferences(environment: environment, dataDirectory: dataDirectory))
     }
 
+    private static let captureSelectionSchemaKey = "CodingRewind.captureSelectionShortcutSchemaVersion"
+    private static let legacyCaptureSelectionShortcut = KeyboardShortcuts.Shortcut(.s, modifiers: [.control, .option])
+
     public init(onCommand: @escaping @MainActor (AppCommand) -> Void) {
+        Self.migrateCaptureSelectionShortcutIfNeeded()
         for action in ShortcutAction.allCases {
             KeyboardShortcuts.onKeyUp(for: action.name) { onCommand(action.command) }
         }
@@ -65,6 +74,27 @@ public final class AppShortcuts {
                 }
             })
         }
+    }
+
+    private static func migrateCaptureSelectionShortcutIfNeeded() {
+        let defaults = KeyboardShortcuts.configuredUserDefaults
+        guard defaults.integer(forKey: captureSelectionSchemaKey) < 2 else { return }
+        defer { defaults.set(2, forKey: captureSelectionSchemaKey) }
+
+        guard let raw = defaults.object(forKey: "KeyboardShortcuts_captureSelection") as? String,
+              let stored = try? JSONDecoder().decode(KeyboardShortcuts.Shortcut.self, from: Data(raw.utf8)),
+              stored == legacyCaptureSelectionShortcut else {
+            return
+        }
+
+        let newDefault = ShortcutAction.captureSelection.defaultShortcut
+        if let hudRaw = defaults.object(forKey: "KeyboardShortcuts_toggleHUD") as? String,
+           let hudShortcut = try? JSONDecoder().decode(KeyboardShortcuts.Shortcut.self, from: Data(hudRaw.utf8)),
+           hudShortcut == newDefault {
+            return
+        }
+
+        KeyboardShortcuts.setShortcut(newDefault, for: ShortcutAction.captureSelection.name)
     }
 
     public func stop() {
