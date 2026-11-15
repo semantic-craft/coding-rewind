@@ -3,7 +3,7 @@
     "message": "Coding Rewind Web Clipper"
   },
   "extDescription": {
-    "message": "Save selected web text and surrounding chat context to Coding Rewind for review and reuse."
+    "message": "Save selected Markdown from any web page via the floating stash pill or shortcut, with automatic chat context on AI pages."
   },
   "actionTitle": {
     "message": "Coding Rewind Settings"

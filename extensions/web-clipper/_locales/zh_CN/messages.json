@@ -3,7 +3,7 @@
     "message": "Coding Rewind 网页扩展"
   },
   "extDescription": {
-    "message": "保存网页中选中的文本和相关对话，在 Coding Rewind 中查看和复用。"
+    "message": "在任意网页划词弹出暂存胶囊或按快捷键保存 Markdown 片段，并在对话页面自动附带上下文。"
   },
   "actionTitle": {
     "message": "Coding Rewind 设置"

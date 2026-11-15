@@ -3,39 +3,62 @@
 import "./i18n.js";
 import { buildAuthHeaders, normalizeMemosBaseUrl } from "./memos_payload.mjs";
 
-export async function probeMemosConnection(
-  rawUrl,
-  token = "",
-  fetchImpl = globalThis.fetch,
-  locale = "zh-CN"
-) {
-  const i18n = globalThis.CodingRewindI18n;
-  const resolvedLocale = i18n.resolveLocale(locale);
-  const normalized = normalizeMemosBaseUrl(rawUrl);
-  if (!normalized) {
-    return { ok: false, message: i18n.t(resolvedLocale, "connInvalidUrl") };
+export const DEFAULT_EXCLUDED_DOMAINS = Object.freeze([
+  "docs.google.com",
+  "sheets.google.com",
+  "slides.google.com",
+  "figma.com",
+  "canva.com"
+]);
+
+export function resolvePillScope(items = {}) {
+  if (!items || typeof items !== "object") return "all";
+  const scope = items.selectionPillScope;
+  if (scope === "all" || scope === "chat" || scope === "off") {
+    return scope;
   }
-  const headers = buildAuthHeaders(token, { includeJsonContentType: false });
+  if (items.showSelectionPill === false) return "off";
+  return "all";
+}
+
+export function normalizeDomainEntry(raw) {
+  let s = String(raw || "").replace(/[\u0000-\u001f\u007f]+/g, "").trim().toLowerCase();
+  if (!s || /\s/.test(s)) return "";
+  s = s.replace(/^([a-z][a-z0-9+.-]*:\/\/)\*\./, "$1").replace(/^\*\./, "").replace(/^\.+/, "");
+  if (!s) return "";
   try {
-    const resp = await fetchImpl(`${normalized}/api/memos?pageSize=1`, {
-      method: "GET",
-      headers
-    });
-    if (!resp.ok) {
-      return {
-        ok: false,
-        status: resp.status,
-        message: i18n.t(resolvedLocale, "connHttpFailed", { status: resp.status })
-      };
+    let candidate = s;
+    if (!/^[a-z][a-z0-9+.-]*:\/\//.test(candidate)) {
+      const authority = candidate.split("/")[0].split("?")[0].split("#")[0];
+      if (!authority) return "";
+      const colonCount = (authority.match(/:/g) || []).length;
+      candidate = colonCount >= 2 && !authority.startsWith("[")
+        ? `https://[${authority}]`
+        : `https://${authority}`;
     }
-    await resp.json();
-    return { ok: true, message: i18n.t(resolvedLocale, "connSuccessReadOnly") };
-  } catch (err) {
-    return {
-      ok: false,
-      message: i18n.t(resolvedLocale, "connNetworkError", { error: err?.message || String(err) })
-    };
+    const host = new URL(candidate).hostname.toLowerCase().replace(/\.+$/, "");
+    return host || "";
+  } catch {
+    return "";
   }
+}
+
+export function parseExcludedDomains(rawInput) {
+  const tokens = Array.isArray(rawInput)
+    ? rawInput
+    : typeof rawInput === "string"
+      ? rawInput.split(/[\r\n,;]+/)
+      : [];
+
+  const seen = new Set();
+  const result = [];
+  for (const token of tokens) {
+    const entry = normalizeDomainEntry(token);
+    if (!entry || seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
 }
 
 export async function testMemosConnection({
@@ -44,21 +67,58 @@ export async function testMemosConnection({
   fetchImpl = globalThis.fetch,
   locale = "zh-CN"
 } = {}) {
-  return probeMemosConnection(baseUrl, token, fetchImpl, locale);
+  const i18n = globalThis.CodingRewindI18n;
+  const resolvedLocale = i18n ? i18n.resolveLocale(locale) : (locale === "en" ? "en" : "zh-CN");
+  const normalized = normalizeMemosBaseUrl(baseUrl);
+  if (!normalized) {
+    const msg = i18n ? i18n.t(resolvedLocale, "connInvalidUrl") : "请输入有效的 Memos 服务地址";
+    return { ok: false, message: msg };
+  }
+  const headers = buildAuthHeaders(token, { includeJsonContentType: false });
+  try {
+    const resp = await fetchImpl(`${normalized}/api/memos?pageSize=1`, {
+      method: "GET",
+      headers
+    });
+    if (!resp.ok) {
+      const msg = i18n
+        ? i18n.t(resolvedLocale, "connHttpFailed", { status: resp.status })
+        : `连接失败 (HTTP ${resp.status})`;
+      return { ok: false, status: resp.status, message: msg };
+    }
+    await resp.json();
+    const msg = i18n
+      ? i18n.t(resolvedLocale, "connSuccessReadOnly")
+      : "连接成功，可读取片段。尚未验证保存。";
+    return { ok: true, message: msg };
+  } catch (err) {
+    const errMsg = err?.message || String(err);
+    const msg = i18n
+      ? i18n.t(resolvedLocale, "connNetworkError", { error: errMsg })
+      : `网络请求失败：${errMsg}`;
+    return { ok: false, message: msg };
+  }
 }
 
 async function requestOriginPermission(normalizedUrl) {
-  if (typeof chrome === "undefined" || !chrome.permissions?.request) return true;
+  if (typeof chrome === "undefined" || !chrome.permissions) return true;
   try {
     const originPattern = `${new URL(normalizedUrl).origin}/*`;
-    return await chrome.permissions.request({ origins: [originPattern] });
+    if (typeof chrome.permissions.contains === "function") {
+      const alreadyGranted = await chrome.permissions.contains({ origins: [originPattern] });
+      if (alreadyGranted) return true;
+    }
+    if (typeof chrome.permissions.request === "function") {
+      return await chrome.permissions.request({ origins: [originPattern] });
+    }
+    return true;
   } catch {
     return false;
   }
 }
 
 function detectBrowserLanguage() {
-  return globalThis.CodingRewindI18n.detectBrowserLanguage();
+  return globalThis.CodingRewindI18n?.detectBrowserLanguage?.();
 }
 
 function normalizeUiLanguagePreference(value) {
@@ -72,9 +132,10 @@ export function initOptionsPage() {
   if (typeof document === "undefined") return;
   const i18n = globalThis.CodingRewindI18n;
   const formEl = document.getElementById("settings-form");
-  const urlInput = document.getElementById("memos-url");
-  const tokenInput = document.getElementById("memos-token");
-  const pillCheckbox = document.getElementById("show-pill");
+  const urlInput = document.getElementById("memos-url") || document.getElementById("base-url");
+  const tokenInput = document.getElementById("memos-token") || document.getElementById("token");
+  const pillScopeSelect = document.getElementById("pill-scope");
+  const excludedDomainsInput = document.getElementById("excluded-domains");
   const languageSelect = document.getElementById("ui-language");
   const testBtn = document.getElementById("test-btn");
   const flushBtn = document.getElementById("flush-btn");
@@ -127,11 +188,13 @@ export function initOptionsPage() {
     }
     document.title = i18n.t(currentLocale, "optionsPageTitle");
 
-    for (const node of document.querySelectorAll("[data-i18n]")) {
+    const i18nNodes = typeof document.querySelectorAll === "function" ? document.querySelectorAll("[data-i18n]") : [];
+    for (const node of i18nNodes) {
       const key = node.getAttribute("data-i18n");
       if (key) node.textContent = i18n.t(currentLocale, key);
     }
-    for (const node of document.querySelectorAll("[data-i18n-placeholder]")) {
+    const placeholderNodes = typeof document.querySelectorAll === "function" ? document.querySelectorAll("[data-i18n-placeholder]") : [];
+    for (const node of placeholderNodes) {
       const key = node.getAttribute("data-i18n-placeholder");
       if (key) {
         const translated = i18n.t(currentLocale, key);
@@ -153,13 +216,23 @@ export function initOptionsPage() {
     const items = await chrome.storage.local.get([
       "memosUrl",
       "memosToken",
+      "selectionPillScope",
       "showSelectionPill",
+      "excludedDomains",
       "uiLanguage",
       "outbox"
     ]);
     if (typeof items.memosUrl === "string") urlInput.value = items.memosUrl;
     if (typeof items.memosToken === "string") tokenInput.value = items.memosToken;
-    pillCheckbox.checked = items.showSelectionPill !== false;
+    if (pillScopeSelect) {
+      pillScopeSelect.value = resolvePillScope(items);
+    }
+    if (excludedDomainsInput) {
+      const domains = Array.isArray(items.excludedDomains)
+        ? items.excludedDomains
+        : DEFAULT_EXCLUDED_DOMAINS;
+      excludedDomainsInput.value = domains.join("\n");
+    }
     currentOutbox = Array.isArray(items.outbox) ? items.outbox : [];
     applyLanguagePreference(items.uiLanguage);
   }
@@ -172,8 +245,20 @@ export function initOptionsPage() {
     await chrome.storage?.local?.set?.({ uiLanguage: nextPref });
   });
 
+  pillScopeSelect?.addEventListener("change", async () => {
+    const scope = resolvePillScope({ selectionPillScope: pillScopeSelect.value });
+    await chrome.storage?.local?.set?.({ selectionPillScope: scope });
+    await chrome.storage?.local?.remove?.(["showSelectionPill"]);
+  });
+
+  excludedDomainsInput?.addEventListener("change", async () => {
+    const excludedDomains = parseExcludedDomains(excludedDomainsInput.value);
+    excludedDomainsInput.value = excludedDomains.join("\n");
+    await chrome.storage?.local?.set?.({ excludedDomains });
+  });
+
   chrome.storage?.onChanged?.addListener((changes, area) => {
-    if (area !== "local") return;
+    if (area !== "local" || !changes) return;
     if (changes.outbox) {
       renderOutboxCount(changes.outbox.newValue);
     }
@@ -201,18 +286,43 @@ export function initOptionsPage() {
 
   formEl.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const scope = pillScopeSelect
+      ? resolvePillScope({ selectionPillScope: pillScopeSelect.value })
+      : "all";
+    const excludedDomains = excludedDomainsInput
+      ? parseExcludedDomains(excludedDomainsInput.value)
+      : DEFAULT_EXCLUDED_DOMAINS.slice();
+    if (excludedDomainsInput) {
+      excludedDomainsInput.value = excludedDomains.join("\n");
+    }
+    const selectedUiLang = languageSelect
+      ? normalizeUiLanguagePreference(languageSelect.value)
+      : preferredLanguage;
+
+    await chrome.storage?.local?.set?.({
+      selectionPillScope: scope,
+      excludedDomains,
+      uiLanguage: selectedUiLang
+    });
+    await chrome.storage?.local?.remove?.(["showSelectionPill"]);
+
+    if (!urlInput.value.trim()) {
+      urlInput.value = "";
+      await chrome.storage?.local?.set?.({
+        memosUrl: "",
+        memosToken: tokenInput.value.trim()
+      });
+      setStatusKey("statusSettingsSaved", undefined, "ok");
+      return;
+    }
+
     const normalized = await resolveAuthorizedBaseUrl();
     if (!normalized) return;
 
     urlInput.value = normalized;
-    const selectedUiLang = languageSelect
-      ? normalizeUiLanguagePreference(languageSelect.value)
-      : preferredLanguage;
-    await chrome.storage.local.set({
+    await chrome.storage?.local?.set?.({
       memosUrl: normalized,
-      memosToken: tokenInput.value.trim(),
-      showSelectionPill: pillCheckbox.checked,
-      uiLanguage: selectedUiLang
+      memosToken: tokenInput.value.trim()
     });
     setStatusKey("statusSettingsSaved", undefined, "ok");
     chrome.runtime?.sendMessage?.({ type: "REWIND_FLUSH_OUTBOX" });
@@ -222,18 +332,17 @@ export function initOptionsPage() {
     const normalized = await resolveAuthorizedBaseUrl();
     if (!normalized) return;
     setStatusKey("statusTestingConnection", undefined, "info");
-    const res = await probeMemosConnection(
-      normalized,
-      tokenInput.value.trim(),
-      globalThis.fetch,
-      currentLocale
-    );
+    const res = await testMemosConnection({
+      baseUrl: normalized,
+      token: tokenInput.value.trim(),
+      locale: currentLocale
+    });
     setStatusText(res.message, res.ok ? "ok" : "error");
   });
 
   flushBtn?.addEventListener("click", async () => {
     setStatusKey("statusSyncingClips", undefined, "info");
-    const resp = await chrome.runtime.sendMessage({ type: "REWIND_FLUSH_OUTBOX" });
+    const resp = await chrome.runtime?.sendMessage?.({ type: "REWIND_FLUSH_OUTBOX" });
     if (resp && resp.ok) {
       setStatusKey(
         "statusSyncSummary",

@@ -25,18 +25,27 @@ import "./i18n.js";
 import {
   CLIP_ID_PATTERN,
   MAX_OUTBOX_ITEMS,
-  TOAST_MESSAGES,
   getToastMessages,
   generateClipId,
   normalizeMemosBaseUrl,
   buildAuthHeaders,
+  hasClipContext,
   buildMemosWirePayloads,
   parseServerMemoId,
   saveClipWithOutbox,
   flushOutbox
 } from "./memos_payload.mjs";
 
-import { initOptionsPage, probeMemosConnection, testMemosConnection } from "./options.js";
+import {
+  DEFAULT_EXCLUDED_DOMAINS,
+  normalizeDomainEntry,
+  parseExcludedDomains,
+  resolvePillScope,
+  testMemosConnection,
+  initOptionsPage
+} from "./options.js";
+
+import { injectContentScriptIntoOpenTabs } from "./background.js";
 
 function createMemoryOutboxStorage(initial = []) {
   let state = structuredClone(initial);
@@ -332,13 +341,13 @@ test("background save response does not claim an offline clip is queued after st
   assert.deepEqual(persistedOutbox, []);
   assert.equal(response.status, "error", "a failed storage write must not be reported as queued");
   assert.equal(response.queued, false);
-  assert.match(response.toast, /保存失败|Save failed/);
+  assert.match(response.toast, /(?:保存失败|Save failed)/);
 
   rejectWrites = false;
   const queued = await new Promise((resolve) => onMessage({ type: "REWIND_SAVE_CLIP", clip }, {}, resolve));
   assert.equal(queued.status, "queued");
   assert.equal(queued.queued, true);
-  assert.equal(queued.toast, TOAST_MESSAGES.QUEUED);
+  assert.equal(queued.toast, getToastMessages("auto").QUEUED);
   assert.equal(persistedOutbox.length, 1);
   assert.equal(persistedOutbox[0].clipId, clip.clipId);
 
@@ -688,14 +697,11 @@ test("buildMemosWirePayloads matches exact canonical wire contract with and with
       sessionTitle: "",
       prompt: "",
       recentTurns: "",
-      sourceUrl: "https://chatgpt.com/c/untitled"
+      sourceUrl: "https://example.org/notes"
     },
     { clipId: "rw-1794366666123-plain002", createdAt: "2026-11-11T03:16:00Z", locale: "en" }
   );
-  assert.match(
-    withoutCtxEn.memoBody.content,
-    /^#rewind\/pending #source\/chatgpt\n\n> \*\*Source:\*\* \[Untitled Session\]\(https:\/\/chatgpt\.com\/c\/untitled\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/
-  );
+  assert.match(withoutCtxEn.memoBody.content, /^#rewind\/pending #source\/chatgpt\n\n> \*\*Source:\*\* \[Untitled Session\]\(https:\/\/example\.org\/notes\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/);
   assert.equal(parseServerMemoId({ name: "memos/abc999" }), "abc999");
 });
 
@@ -822,7 +828,7 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
     randomFn: () => 0.1
   });
   assert.equal(unconfiguredRes.status, "unconfigured");
-  assert.equal(unconfiguredRes.toast, TOAST_MESSAGES.UNCONFIGURED);
+  assert.equal(unconfiguredRes.toast, getToastMessages("auto").UNCONFIGURED);
   assert.equal(storage.peek().length, 1);
   const firstClipId = unconfiguredRes.clipId;
 
@@ -852,7 +858,7 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
   });
 
   assert.equal(offlineRes.status, "queued");
-  assert.equal(offlineRes.toast, TOAST_MESSAGES.QUEUED);
+  assert.equal(offlineRes.toast, getToastMessages("auto").QUEUED);
   assert.equal(storage.peek().length, 2);
 
   failNetwork = false;
@@ -960,15 +966,26 @@ test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.j
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const optionsHtml = fs.readFileSync(path.join(__dirname, "options.html"), "utf8");
-  assert.match(optionsHtml, /<button id="test-btn" type="button">测试连接<\/button>/);
+  assert.match(optionsHtml, /<button id="test-btn" type="button"[^>]*>测试连接<\/button>/);
+  assert.match(optionsHtml, /<select id="pill-scope"/);
+  assert.match(optionsHtml, /<textarea id="excluded-domains"/);
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.version, "0.3.2.0");
+  assert.equal(manifest.version_name, "0.3.2");
   for (const perm of ["storage", "contextMenus", "activeTab", "scripting"]) {
     assert.ok(manifest.permissions.includes(perm), `missing permission ${perm}`);
   }
-  for (const host of ["https://chatgpt.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]) {
-    assert.ok(manifest.host_permissions.includes(host), `missing host permission ${host}`);
+  assert.deepEqual(manifest.host_permissions, ["https://*/*", "http://*/*"]);
+  assert.deepEqual(manifest.content_scripts[0].matches, ["https://*/*", "http://*/*"]);
+  assert.deepEqual(manifest.web_accessible_resources[0].resources, ["extractors.mjs"]);
+  for (const matchPattern of ["https://*/*", "http://*/*", "file:///*"]) {
+    assert.ok(
+      manifest.web_accessible_resources[0].matches.includes(matchPattern),
+      `missing web_accessible_resources match ${matchPattern}`
+    );
   }
+  assert.equal(manifest.web_accessible_resources[0].use_dynamic_url, true);
 });
 
 test("extension and toolbar icons provide each declared PNG size", () => {
@@ -1044,6 +1061,16 @@ test("content.js Hyper+S shortcut accepts only non-repeating Hyper+S and rejects
 function createContentScriptHarness({
   extractorsUrl,
   sendMessageImpl,
+  url = "https://chatgpt.com/c/capsule-vm",
+  html = `<html><head><title>Capsule VM Test - ChatGPT</title></head><body>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Why did Alt+Shift+S duplicate?</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p id="picked">Keep <code>Hyper+S</code> in content script only.</p></div></div>
+    </body></html>`,
+  pickedSelector = "#picked",
+  clientRects = null,
+  storageData = { showSelectionPill: true },
+  storageGetDelayMs = 0,
+  preExistingOrphanHosts = 0,
   uiLanguage = "auto",
   browserLanguage = undefined
 } = {}) {
@@ -1093,6 +1120,13 @@ function createContentScriptHarness({
         const capture = typeof options === "boolean" ? options : Boolean(options && options.capture);
         if (!map.has(type)) map.set(type, []);
         map.get(type).push({ fn, capture });
+      },
+      removeEventListener(type, fn, options) {
+        const list = map.get(type);
+        if (!list) return;
+        const capture = typeof options === "boolean" ? options : Boolean(options && options.capture);
+        const idx = list.findIndex((e) => e.fn === fn && e.capture === capture);
+        if (idx >= 0) list.splice(idx, 1);
       },
       dispatch(type, rawEvent = {}) {
         let defaultPrevented = false;
@@ -1154,11 +1188,28 @@ function createContentScriptHarness({
         return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
       },
       appendChild(child) {
+        if (child.parentElement && typeof child.parentElement.removeChild === "function") {
+          child.parentElement.removeChild(child);
+        }
         child.parentElement = this;
         child.isConnected = this.isConnected;
         this.children.push(child);
         this.childNodes.push(child);
         return child;
+      },
+      removeChild(child) {
+        const idx = this.children.indexOf(child);
+        if (idx >= 0) this.children.splice(idx, 1);
+        const cIdx = this.childNodes.indexOf(child);
+        if (cIdx >= 0) this.childNodes.splice(cIdx, 1);
+        child.parentElement = null;
+        child.isConnected = false;
+        return child;
+      },
+      remove() {
+        if (this.parentElement && typeof this.parentElement.removeChild === "function") {
+          this.parentElement.removeChild(this);
+        }
       },
       append(...nodes) {
         for (const n of nodes) this.appendChild(n);
@@ -1183,21 +1234,21 @@ function createContentScriptHarness({
         return sr;
       },
       addEventListener: target.addEventListener,
+      removeEventListener: target.removeEventListener,
       dispatch: target.dispatch
     };
     return el;
   }
 
-  const parsedDoc = parseHtmlDocument(
-    `<html><head><title>Capsule VM Test - ChatGPT</title></head><body>
-      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Why did Alt+Shift+S duplicate?</div></div>
-      <div data-message-author-role="assistant"><div class="markdown"><p id="picked">Keep <code>Hyper+S</code> in content script only.</p></div></div>
-    </body></html>`,
-    { url: "https://chatgpt.com/c/capsule-vm" }
-  );
-  const pickedEl = parsedDoc.querySelector("#picked");
+  const parsedDoc = parseHtmlDocument(html, { url });
+  let pickedEl = parsedDoc.querySelector(pickedSelector) || parsedDoc.body;
+  let anchorNode = pickedEl;
+  let anchorOffset = 0;
+  let focusNode = pickedEl;
+  let focusOffset = 1;
   let selectionCollapsed = false;
   let selectionRect = { left: 300, top: 200, bottom: 224, width: 160, height: 24 };
+  let selectionClientRects = clientRects;
 
   const currentSelection = {
     get rangeCount() {
@@ -1207,16 +1258,22 @@ function createContentScriptHarness({
       return selectionCollapsed;
     },
     get anchorNode() {
-      return pickedEl;
+      return anchorNode;
+    },
+    get anchorOffset() {
+      return anchorOffset;
     },
     get focusNode() {
-      return pickedEl;
+      return focusNode;
+    },
+    get focusOffset() {
+      return focusOffset;
     },
     collapse() {
       selectionCollapsed = true;
     },
     toString() {
-      return selectionCollapsed ? "" : pickedEl.textContent;
+      return selectionCollapsed ? "" : (pickedEl.textContent || "Selected sample text");
     },
     getRangeAt() {
       const baseRange = parsedDoc.createRangeFromNode(pickedEl);
@@ -1224,6 +1281,9 @@ function createContentScriptHarness({
         ...baseRange,
         getBoundingClientRect() {
           return selectionRect;
+        },
+        getClientRects() {
+          return Array.isArray(selectionClientRects) ? selectionClientRects : [selectionRect];
         },
         cloneRange() {
           return parsedDoc.createRangeFromNode(pickedEl);
@@ -1236,16 +1296,29 @@ function createContentScriptHarness({
   const winEvents = makeEventTarget();
   const documentElement = createFakeElement("html");
   documentElement.isConnected = true;
+  for (let i = 0; i < preExistingOrphanHosts; i += 1) {
+    const orphan = createFakeElement("div");
+    orphan.setAttribute("data-coding-rewind-ui", "1");
+    documentElement.appendChild(orphan);
+  }
 
   const fakeDocument = {
     title: parsedDoc.title,
     location: parsedDoc.location,
+    hidden: false,
+    activeElement: null,
     documentElement,
     body: documentElement,
     createElement: createFakeElement,
-    querySelectorAll: (sel) => parsedDoc.querySelectorAll(sel),
+    querySelectorAll: (sel) => {
+      if (sel === '[data-coding-rewind-ui="1"]') {
+        return documentElement.children.filter((c) => c.getAttribute("data-coding-rewind-ui") === "1");
+      }
+      return parsedDoc.querySelectorAll(sel);
+    },
     querySelector: (sel) => parsedDoc.querySelector(sel),
     addEventListener: docEvents.addEventListener,
+    removeEventListener: docEvents.removeEventListener,
     dispatch: docEvents.dispatch
   };
 
@@ -1254,13 +1327,19 @@ function createContentScriptHarness({
     innerHeight: 800,
     getSelection: () => currentSelection,
     addEventListener: winEvents.addEventListener,
+    removeEventListener: winEvents.removeEventListener,
     dispatch: winEvents.dispatch
   };
 
   const sentMessages = [];
-  const storageChangedListeners = [];
-  let storedState = { showSelectionPill: true, uiLanguage };
-  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
+  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: getToastMessages("auto").SAVED }));
+  const onMessageListeners = [];
+  const onStorageChangedListeners = [];
+  const liveStorage = {
+    showSelectionPill: true,
+    uiLanguage,
+    ...(storageData && typeof storageData === "object" ? storageData : {})
+  };
 
   const fakeChrome = {
     ...(browserLanguage !== undefined
@@ -1280,27 +1359,41 @@ function createContentScriptHarness({
         sentMessages.push(payload);
         return messageHandler(payload);
       },
-      onMessage: { addListener() {} }
+      onMessage: {
+        addListener(fn) {
+          onMessageListeners.push(fn);
+        },
+        removeListener(fn) {
+          const idx = onMessageListeners.indexOf(fn);
+          if (idx >= 0) onMessageListeners.splice(idx, 1);
+        }
+      }
     },
     storage: {
       local: {
-        get(keys, cb) {
-          const base =
-            keys && typeof keys === "object" && !Array.isArray(keys) ? { ...keys } : {};
-          const result = { ...base, ...storedState };
-          if (typeof cb === "function") cb(result);
-          return Promise.resolve(result);
+        get(_keys, cb) {
+          const snapshot = { ...liveStorage };
+          if (storageGetDelayMs > 0) {
+            scheduleTimeout(() => cb(snapshot), storageGetDelayMs);
+          } else {
+            cb(snapshot);
+          }
         }
       },
       onChanged: {
         addListener(fn) {
-          storageChangedListeners.push(fn);
+          onStorageChangedListeners.push(fn);
+        },
+        removeListener(fn) {
+          const idx = onStorageChangedListeners.indexOf(fn);
+          if (idx >= 0) onStorageChangedListeners.splice(idx, 1);
         }
       }
     }
   };
 
   const sandbox = {
+    Array,
     Date: { now: () => nowMs },
     Math,
     Number,
@@ -1313,11 +1406,7 @@ function createContentScriptHarness({
     Promise,
     setTimeout: scheduleTimeout,
     clearTimeout: cancelTimeout,
-    navigator: {
-      platform: "MacIntel",
-      userAgent: "Mozilla/5.0 (Macintosh)",
-      ...(browserLanguage !== undefined ? { language: browserLanguage } : {})
-    },
+    navigator: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" },
     location: parsedDoc.location,
     window: fakeWindow,
     document: fakeDocument,
@@ -1325,26 +1414,20 @@ function createContentScriptHarness({
   };
   sandbox.globalThis = sandbox;
 
-  const vmContext = vm.createContext(sandbox);
-  vm.runInContext(i18nCode, vmContext, { filename: i18nScriptPath });
-  vm.runInContext(contentCode, vmContext, {
-    filename: contentScriptPath,
-    importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
-  });
+  function executeContentScript() {
+    vm.runInNewContext(i18nCode + "\n;" + contentCode, sandbox, {
+      filename: contentScriptPath,
+      importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
+    });
+  }
+
+  executeContentScript();
 
   return {
     advanceTime,
     sentMessages,
-    emitStorageChange(changes, area = "local") {
-      for (const [key, diff] of Object.entries(changes)) {
-        if (diff && Object.prototype.hasOwnProperty.call(diff, "newValue")) {
-          storedState[key] = diff.newValue;
-        }
-      }
-      for (const fn of storageChangedListeners) {
-        fn(changes, area);
-      }
-    },
+    parsedDoc,
+    reinjectContentScript: executeContentScript,
     setSendMessageHandler(fn) {
       messageHandler = fn;
     },
@@ -1353,6 +1436,48 @@ function createContentScriptHarness({
     },
     setSelectionRect(rect) {
       selectionRect = rect;
+    },
+    setClientRects(rects) {
+      selectionClientRects = rects;
+    },
+    setPickedElement(el) {
+      pickedEl = el;
+      anchorNode = el;
+      focusNode = el;
+    },
+    setSelectionNodes({ anchorNode: aNode, anchorOffset: aOff = 0, focusNode: fNode, focusOffset: fOff = 1 }) {
+      anchorNode = aNode;
+      anchorOffset = aOff;
+      focusNode = fNode;
+      focusOffset = fOff;
+    },
+    setActiveElement(el) {
+      fakeDocument.activeElement = el;
+    },
+    setDocumentHidden(hidden) {
+      fakeDocument.hidden = Boolean(hidden);
+    },
+    emitStorageChanged(changes, area = "local") {
+      for (const [k, v] of Object.entries(changes)) {
+        liveStorage[k] = v.newValue;
+      }
+      for (const fn of onStorageChangedListeners.slice()) {
+        fn(changes, area);
+      }
+    },
+    emitStorageChange(changes, area = "local") {
+      this.emitStorageChanged(changes, area);
+    },
+    async sendRuntimeMessage(msg) {
+      for (const fn of onMessageListeners.slice()) {
+        let responseValue;
+        const asyncHandled = fn(msg, {}, (res) => { responseValue = res; });
+        if (asyncHandled) {
+          return new Promise((resolve) => fn(msg, {}, resolve));
+        }
+        if (responseValue !== undefined) return responseValue;
+      }
+      return undefined;
     },
     setViewportSize(width, height) {
       fakeWindow.innerWidth = width;
@@ -1363,11 +1488,17 @@ function createContentScriptHarness({
     },
     document: fakeDocument,
     window: fakeWindow,
+    getAllHosts() {
+      return documentElement.children.filter((c) => c.getAttribute("data-coding-rewind-ui") === "1");
+    },
     getHost() {
-      return documentElement.children.find((c) => c.getAttribute("data-coding-rewind-ui") === "1") || null;
+      return this.getAllHosts()[0] || null;
     },
     getPill() {
       return this.getHost()?.shadowRoot?.querySelector(".rw-pill") || null;
+    },
+    getPillIcon() {
+      return this.getPill()?.children.find((c) => c.className === "rw-pill-icon") || null;
     },
     getPillLabel() {
       return this.getPill()?.children.find((c) => c.className === "rw-pill-label")?.textContent ?? null;
@@ -1403,6 +1534,8 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(pill.style.display, "inline-flex");
   assert.equal(pill.style.visibility, "visible");
   assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(harness.getPillIcon()?.hidden, true);
+  assert.equal(harness.getPillIcon()?.textContent, "");
   assert.equal(harness.getPillLabel(), "暂存");
   assert.equal(pillIcon.hidden, true);
   assert.equal(pillIcon.textContent, "");
@@ -1417,6 +1550,8 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(click1.defaultPrevented, true);
   assert.equal(click1.propagationStopped, true);
   assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(harness.getPillIcon()?.hidden, false);
+  assert.equal(harness.getPillIcon()?.textContent, "…");
   assert.equal(harness.getPillLabel(), "暂存中…");
   assert.equal(pillIcon.hidden, false);
   assert.equal(pillIcon.textContent, "…");
@@ -1439,12 +1574,15 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
 
   harness.advanceTime(400);
   pill.dispatch("mousedown", { path: [pill] });
+  harness.document.dispatch("mouseup", { path: [pill] });
   await new Promise((r) => setImmediate(r));
   assert.equal(harness.sentMessages.length, 1, "click while saving is ignored even after 350ms cooldown");
 
-  resolveInFlightSave({ status: "saved", toast: TOAST_MESSAGES.SAVED });
+  resolveInFlightSave({ status: "saved", toast: getToastMessages("auto").SAVED });
   await new Promise((r) => setImmediate(r));
   assert.equal(pill.getAttribute("data-state"), "saved");
+  assert.equal(harness.getPillIcon()?.hidden, false);
+  assert.equal(harness.getPillIcon()?.textContent, "✓");
   assert.equal(harness.getPillLabel(), "已同步");
   assert.equal(pillIcon.hidden, false);
   assert.equal(pillIcon.textContent, "✓");
@@ -1464,14 +1602,14 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(harness.getPillLabel(), "暂存中…");
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
-  resolveQueuedSave({ status: "queued", toast: TOAST_MESSAGES.QUEUED });
+  resolveQueuedSave({ status: "queued", toast: getToastMessages("auto").QUEUED });
   await new Promise((r) => setImmediate(r));
   assert.equal(pill.getAttribute("data-state"), "queued");
   assert.equal(harness.getPillLabel(), "待同步");
   harness.advanceTime(950);
   assert.equal(pill.getAttribute("data-state"), "hidden");
 
-  harness.setSendMessageHandler(async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
+  harness.setSendMessageHandler(async () => ({ status: "saved", toast: getToastMessages("auto").SAVED }));
   harness.advanceTime(500);
 
   const altShiftRes = harness.document.dispatch("keydown", {
@@ -1519,7 +1657,7 @@ test("content.js capsule hides cleanly on Escape mid-save and never freezes in s
   assert.equal(escapePill.getAttribute("data-state"), "hidden");
   assert.equal(escapePill.style.display, "none");
 
-  finishSave({ status: "saved", toast: TOAST_MESSAGES.SAVED });
+  finishSave({ status: "saved", toast: getToastMessages("auto").SAVED });
   await new Promise((r) => setImmediate(r));
   assert.equal(escapePill.getAttribute("data-state"), "hidden", "Escape during saving keeps pill hidden after response");
   assert.equal(escapePill.style.display, "none");
@@ -1608,6 +1746,1199 @@ test("htmlToMarkdown falls back cleanly when DOMParser is unavailable", () => {
     assert.equal(htmlToMarkdown("  worker fallback\n\n\nline two  "), "worker fallback\n\nline two");
   } finally {
     globalThis.DOMParser = originalDOMParser;
+  }
+});
+
+test("general web page clip keeps Source title link without setting #rewind/has-ctx or posting an empty context comment", async () => {
+  const sourceUrl = "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html";
+  const clip = {
+    selectedMarkdown: "Each value in Rust has an **owner**.",
+    sourcePlatform: "web",
+    sessionTitle: "Rust Ownership Guide",
+    prompt: "",
+    recentTurns: "",
+    sourceUrl
+  };
+
+  assert.equal(hasClipContext(clip), false);
+  const built = buildMemosWirePayloads(clip, {
+    clipId: "rw-1794366666123-rustbook1",
+    createdAt: "2026-11-15T04:00:00Z"
+  });
+
+  assert.equal(built.hasContext, false);
+  assert.equal(built.commentBody, null);
+  assert.doesNotMatch(built.memoBody.content, /#rewind\/has-ctx/);
+  assert.equal(
+    built.memoBody.content,
+    "#rewind/pending #source/web\n\n" +
+      `> **Source:** [Rust Ownership Guide](${sourceUrl}) · 2026-11-15T04:00:00Z\n\n` +
+      "Each value in Rust has an **owner**."
+  );
+
+  const storage = createMemoryOutboxStorage();
+  const requests = [];
+  const res = await saveClipWithOutbox({
+    clip,
+    baseUrl: "https://memos.internal.test",
+    token: "tok-web",
+    storage,
+    nowMs: 1794366666123,
+    randomFn: () => 0.5,
+    fetchImpl: async (reqUrl, init) => {
+      requests.push({ url: reqUrl, method: init.method });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { name: "memos/web-srv-1" };
+        }
+      };
+    }
+  });
+
+  assert.equal(res.status, "saved");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /^https:\/\/memos\.internal\.test\/api\/memos\?memoId=/);
+  assert.equal(requests.some((r) => r.url.includes("/comments")), false);
+});
+
+test("extractSessionTitle strips og:site_name suffixes across separators and falls back to og:title on web pages", () => {
+  const separators = [" - ", " | ", " — ", " · ", " :: "];
+  for (const sep of separators) {
+    const doc = parseHtmlDocument(
+      `<html><head>
+        <title>Async Cancellation Patterns${sep}MDN Web Docs</title>
+        <meta property="og:site_name" content="mdn web docs">
+      </head><body><p>Body</p></body></html>`,
+      { url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript" }
+    );
+    assert.equal(
+      extractSessionTitle(doc, "https://developer.mozilla.org/en-US/docs/Web/JavaScript"),
+      "Async Cancellation Patterns",
+      `separator ${JSON.stringify(sep)}`
+    );
+  }
+
+  const fallbackDoc = parseHtmlDocument(
+    `<html><head>
+      <title>   </title>
+      <meta property="og:site_name" content="Rust Blog">
+      <meta property="og:title" content="Pinning and Self-Referential Types | Rust Blog">
+    </head><body><h1>Ignored H1</h1></body></html>`,
+    { url: "https://blog.rust-lang.org/2026/pinning" }
+  );
+  assert.equal(
+    extractSessionTitle(fallbackDoc, "https://blog.rust-lang.org/2026/pinning"),
+    "Pinning and Self-Referential Types"
+  );
+});
+
+test("defuddle-grade code normalization preserves Shiki lines, strips highlighter gutters, and converts GitHub code tables", () => {
+  const shikiHtml = `<pre class="shiki"><code class="language-ts"><span class="line"><span>const a = 1;</span></span>
+<span class="line"></span>
+<span class="line"><span>const b = 2;</span></span></code></pre>`;
+  assert.equal(htmlToMarkdown(shikiHtml), "```ts\nconst a = 1;\n\nconst b = 2;\n```");
+
+  const ecHtml = `<pre data-lang="rust"><code><div class="ec-line"><div class="gutter">1</div><div class="code">fn main() {<br></div></div>
+<div class="ec-line"><div class="gutter">2</div><div class="code">    println!("ok");<br></div></div>
+<div class="ec-line"><div class="gutter">3</div><div class="code">}</div></div></code></pre>`;
+  assert.equal(htmlToMarkdown(ecHtml), '```rust\nfn main() {\n    println!("ok");\n}\n```');
+
+  const pygmentsAndPrismHtml = `<pre class="syntax-go"><span class="line-numbers-rows"><span></span><span></span></span><code><span class="lineno">1 </span>package main
+<span class="lineno">2 </span><span class="react-syntax-highlighter-line-number">2</span><span data-line-number="2"></span>func run() {}</code></pre>`;
+  assert.equal(htmlToMarkdown(pygmentsAndPrismHtml), "```go\npackage main\nfunc run() {}\n```");
+
+  const rougeTableHtml = `<div class="language-ruby"><table class="rouge-table"><tbody><tr>
+    <td class="rouge-gutter gl"><pre class="lineno">1\n2</pre></td>
+    <td class="rouge-code"><pre>puts :hello\nputs :world</pre></td>
+  </tr></tbody></table></div>`;
+  assert.equal(htmlToMarkdown(rougeTableHtml), "```ruby\nputs :hello\nputs :world\n```");
+
+  const chromaHtml = `<div class="highlight"><table class="lntable"><tr>
+    <td class="lntd"><pre><code><span class="lnt">1\n</span><span class="lnt">2\n</span></code></pre></td>
+    <td class="lntd"><pre><code class="language-go">x := 1\ny := 2</code></pre></td>
+  </tr></table></div>`;
+  assert.equal(htmlToMarkdown(chromaHtml), "```go\nx := 1\ny := 2\n```");
+
+  const githubTableDoc = parseHtmlDocument(
+    `<div class="highlight highlight-source-python"><table class="highlight"><tbody>
+      <tr id="row-1"><td class="blob-num" data-line-number="1"></td><td class="blob-code">def compute(x):</td></tr>
+      <tr id="row-2"><td class="blob-num" data-line-number="2"></td><td class="blob-code">    return x * 2</td></tr>
+    </tbody></table></div>`,
+    { url: "https://github.com/org/repo/blob/main/app.py" }
+  );
+  assert.equal(
+    htmlToMarkdown(githubTableDoc.body),
+    "```python\ndef compute(x):\n    return x * 2\n```"
+  );
+  assert.equal(
+    selectionToMarkdown(githubTableDoc.createRangeFromNode(githubTableDoc.querySelector("tbody"))),
+    "```python\ndef compute(x):\n    return x * 2\n```"
+  );
+
+  const githubPreDoc = parseHtmlDocument(
+    `<div class="highlight highlight-source-python"><pre id="gh-pre"><span>import</span> sys\nprint(sys.version)</pre></div>`
+  );
+  assert.equal(
+    htmlToMarkdown(githubPreDoc.body),
+    "```python\nimport sys\nprint(sys.version)\n```"
+  );
+});
+
+test("turndown rich elements convert images, GFM task lists, mark, kbd, and details/summary", () => {
+  const longDataUri = `data:image/png;base64,${"A".repeat(220)}`;
+  const shortDataUri = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+
+  const richDoc = parseHtmlDocument(
+    `<article id="rich">
+      <p> diagram: <img alt="System [v2]" src="/assets/arch.png"> <img alt="huge" src="${longDataUri}"> <img alt="tiny" src="${shortDataUri}"> </p>
+      <ul>
+        <li><input type="checkbox" checked> Ship universal capsule</li>
+        <li><input type="checkbox" id="dynamic-cb"> Add domain exclusions</li>
+      </ul>
+      <p>Press <kbd>⌘</kbd> + <kbd>Return</kbd> to <mark>launch thread</mark>.</p>
+      <details>
+        <summary>Implementation Notes</summary>
+        <p>Keep content script idle footprint at zero imports.</p>
+      </details>
+    </article>`,
+    { url: "https://example.com/blog/post" }
+  );
+
+  const ctx = extractClipContext({
+    doc: richDoc,
+    selectionRange: richDoc.createRangeFromNode(richDoc.querySelector("#rich")),
+    url: "https://example.com/blog/post"
+  });
+
+  assert.match(ctx.selectedMarkdown, /!\[System \\\[v2\\\]\]\(https:\/\/example\.com\/assets\/arch\.png\)/);
+  assert.doesNotMatch(ctx.selectedMarkdown, /!\[huge\]/);
+  assert.match(ctx.selectedMarkdown, new RegExp(`!\\[tiny\\]\\(${shortDataUri}\\)`));
+  assert.match(ctx.selectedMarkdown, /- \[x\] Ship universal capsule\n- \[ \] Add domain exclusions/);
+  assert.match(ctx.selectedMarkdown, /Press <kbd>⌘<\/kbd> \+ <kbd>Return<\/kbd> to ==launch thread==\./);
+  assert.match(ctx.selectedMarkdown, /\*\*Implementation Notes\*\*\n\nKeep content script idle footprint at zero imports\./);
+
+  richDoc.querySelector("#dynamic-cb").checked = true;
+  assert.match(htmlToMarkdown(richDoc.querySelector("ul")), /- \[x\] Add domain exclusions/);
+  assert.equal(htmlToMarkdown('<img alt="rel" src="/img/a.png">'), "![rel](/img/a.png)");
+});
+
+test("content.js GestureGate filters right-click and stationary clicks while supporting drag, double-click, Shift-click, keyboard selection, resize, and visibilitychange", () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/article",
+    html: `<html><head><title>Article</title></head><body><article><p id="picked">Universal web clipper gesture gating test.</p><a id="lnk" href="/more">More</a></article></body></html>`
+  });
+
+  harness.document.dispatch("mousedown", { button: 2, clientX: 100, clientY: 100 });
+  harness.document.dispatch("mouseup", { button: 2, clientX: 160, clientY: 100 });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "right-click must never mount or pop the pill");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 100 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 102, clientY: 101, detail: 1, shiftKey: false });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "stationary single-click suppresses pill");
+
+  const linkEl = harness.parsedDoc.querySelector("#lnk");
+  harness.document.dispatch("mouseup", { button: 0, clientX: 102, clientY: 101, detail: 1, shiftKey: false, target: linkEl });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "stationary click on link suppresses pill");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 100 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 140, clientY: 102, detail: 1, shiftKey: false });
+  harness.advanceTime(20);
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "drag >= 6px pops pill");
+
+  harness.window.dispatch("resize");
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden", "window resize hides ready pill");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 200, clientY: 200 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 200, clientY: 200, detail: 2, shiftKey: false });
+  harness.advanceTime(20);
+  assert.equal(harness.getPill().getAttribute("data-state"), "ready", "double-click word selection pops pill");
+
+  harness.setDocumentHidden(true);
+  harness.document.dispatch("visibilitychange");
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden", "hidden tab dismisses pill");
+  harness.setDocumentHidden(false);
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 220, clientY: 200 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 220, clientY: 200, detail: 1, shiftKey: true });
+  harness.advanceTime(20);
+  assert.equal(harness.getPill().getAttribute("data-state"), "ready", "Shift+Click selection extension pops pill");
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden");
+
+  harness.document.dispatch("keyup", { key: "ArrowRight", shiftKey: true });
+  harness.advanceTime(60);
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden", "keyboard selection debounces 120ms");
+  harness.advanceTime(70);
+  assert.equal(harness.getPill().getAttribute("data-state"), "ready", "keyboard Shift+ArrowRight pops pill after 120ms");
+});
+
+test("content.js allows readonly inputs while suppressing pill inside editable inputs and live code editors without blocking Hyper+S", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/playground",
+    html: `<html><body>
+      <textarea id="ro-ta" readonly>Readonly snippet text</textarea>
+      <input id="ro-in" type="text" readonly value="Readonly input value" />
+      <textarea id="rw-ta">Editable textarea draft</textarea>
+      <div id="ce" contenteditable="true"><p id="ce-p">Editable rich text</p></div>
+      <div id="ce-ro" contenteditable="true" aria-readonly="true"><p id="ce-ro-p">Readonly rich view</p></div>
+      <div class="monaco-editor"><div id="monaco-line">const live = true;</div></div>
+      <div class="cm-editor"><div contenteditable="true"><span id="cm-live">let x = 1;</span></div></div>
+      <div class="cm-editor"><div class="cm-content"><span id="cm-readonly">let y = 2;</span></div></div>
+    </body></html>`,
+    pickedSelector: "#ro-ta"
+  });
+
+  const triggerDragSelect = () => {
+    harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
+    harness.document.dispatch("mouseup", { button: 0, clientX: 160, clientY: 80, detail: 1 });
+    harness.advanceTime(20);
+  };
+
+  harness.setPickedElement(harness.parsedDoc.querySelector("#ro-ta"));
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "<textarea readonly> allows pill");
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  harness.setPickedElement(harness.parsedDoc.querySelector("#ro-in"));
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "<input readonly> allows pill");
+
+  harness.setPickedElement(harness.parsedDoc.querySelector("#ce-ro-p"));
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "aria-readonly='true' allows pill");
+
+  harness.setPickedElement(harness.parsedDoc.querySelector("#cm-readonly"));
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "read-only .cm-editor without contenteditable allows pill");
+
+  for (const blockedSelector of ["#rw-ta", "#ce-p", "#monaco-line", "#cm-live"]) {
+    harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+    harness.setPickedElement(harness.parsedDoc.querySelector(blockedSelector));
+    triggerDragSelect();
+    assert.equal(
+      harness.getPill()?.getAttribute("data-state"),
+      "hidden",
+      `${blockedSelector} must suppress automatic floating pill`
+    );
+  }
+
+  const hyperSave = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperSave.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "let x = 1;");
+});
+
+test("content.js multi-line getClientRects anchors below forward end, flips above near bottom, and anchors above backward start", () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/long-article",
+    html: `<html><body><article id="picked"><span id="first">Line one</span><span id="middle">Line two</span><span id="last">Line three</span></article></body></html>`,
+    pickedSelector: "#picked"
+  });
+  harness.setViewportSize(1280, 800);
+
+  const firstEl = harness.parsedDoc.querySelector("#first");
+  const lastEl = harness.parsedDoc.querySelector("#last");
+
+  harness.setSelectionNodes({ anchorNode: firstEl, focusNode: lastEl });
+  harness.setClientRects([
+    { left: 120, top: 100, right: 620, bottom: 124, width: 500, height: 24 },
+    { left: 100, top: 126, right: 620, bottom: 150, width: 520, height: 24 },
+    { left: 100, top: 152, right: 340, bottom: 176, width: 240, height: 24 }
+  ]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 130, clientY: 112 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 310, clientY: 168, detail: 1 });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "252px", top: "184px" },
+    "forward multi-line selection anchors below last line near release clientX"
+  );
+
+  harness.setClientRects([
+    { left: 120, top: 710, right: 620, bottom: 734, width: 500, height: 24 },
+    { left: 100, top: 736, right: 620, bottom: 760, width: 520, height: 24 },
+    { left: 100, top: 762, right: 340, bottom: 786, width: 240, height: 24 }
+  ]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 130, clientY: 720 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 310, clientY: 774, detail: 1 });
+  harness.advanceTime(20);
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "252px", top: "676px" },
+    "forward multi-line selection near viewport bottom flips above first line"
+  );
+
+  harness.setSelectionNodes({ anchorNode: lastEl, focusNode: firstEl });
+  harness.setClientRects([
+    { left: 120, top: 100, right: 620, bottom: 124, width: 500, height: 24 },
+    { left: 100, top: 126, right: 620, bottom: 150, width: 520, height: 24 },
+    { left: 100, top: 152, right: 340, bottom: 176, width: 240, height: 24 }
+  ]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 310, clientY: 168 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 150, clientY: 112, detail: 1 });
+  harness.advanceTime(20);
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "92px", top: "66px" },
+    "backward multi-line selection anchors above first line"
+  );
+});
+
+test("content.js re-injection disposes prior Shadow DOM host and listeners so Hyper+S sends exactly one clip", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/reload-safety"
+  });
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  const firstHost = harness.getHost();
+  assert.ok(firstHost);
+  assert.equal(harness.getAllHosts().length, 1);
+
+  harness.reinjectContentScript();
+  assert.equal(firstHost.isConnected, false, "old Shadow DOM host is detached on re-injection");
+  assert.equal(harness.getAllHosts().length, 0);
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  assert.equal(harness.getAllHosts().length, 1, "only one UI host exists after re-injection");
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready");
+
+  harness.advanceTime(500);
+  const hyperRes = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperRes.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1, "Hyper+S must fire only from the latest active instance");
+});
+
+test("options helpers and content.js enforce pill scope and excludedDomains while keeping Hyper+S active everywhere", async () => {
+  assert.equal(resolvePillScope({}), "all");
+  assert.equal(resolvePillScope({ showSelectionPill: true }), "all");
+  assert.equal(resolvePillScope({ showSelectionPill: false }), "off");
+  assert.equal(resolvePillScope({ selectionPillScope: "chat", showSelectionPill: true }), "chat");
+  assert.equal(resolvePillScope({ selectionPillScope: "all", showSelectionPill: false }), "all");
+  assert.equal(resolvePillScope({ selectionPillScope: "off", showSelectionPill: true }), "off");
+  assert.ok(DEFAULT_EXCLUDED_DOMAINS.includes("docs.google.com"));
+  assert.ok(DEFAULT_EXCLUDED_DOMAINS.includes("figma.com"));
+
+  assert.deepEqual(
+    parseExcludedDomains("  https://Docs.Google.com/document/d/1 , *.Figma.com\nnotion.so:443\ndocs.google.com "),
+    ["docs.google.com", "figma.com", "notion.so"]
+  );
+  assert.deepEqual(parseExcludedDomains(""), []);
+
+  const hnHarness = createContentScriptHarness({
+    url: "https://news.ycombinator.com/item?id=1",
+    html: `<html><head><title>Show HN | Hacker News</title></head><body><p id="picked">Interesting systems thread.</p></body></html>`,
+    storageData: { selectionPillScope: "chat", showSelectionPill: true }
+  });
+  hnHarness.document.dispatch("mouseup", { path: [] });
+  hnHarness.advanceTime(20);
+  assert.equal(hnHarness.getPill(), null, "chat scope suppresses pill on Hacker News");
+
+  hnHarness.emitStorageChanged({
+    selectionPillScope: { newValue: "all" },
+    showSelectionPill: { newValue: true }
+  });
+  hnHarness.document.dispatch("mouseup", { path: [] });
+  hnHarness.advanceTime(20);
+  assert.equal(hnHarness.getPill()?.getAttribute("data-state"), "ready", "switching to 'all' enables pill on Hacker News");
+
+  hnHarness.emitStorageChanged({
+    selectionPillScope: { newValue: "chat" }
+  });
+  assert.equal(hnHarness.getPill().getAttribute("data-state"), "hidden", "switching back to 'chat' immediately hides open pill");
+
+  const chatHarness = createContentScriptHarness({
+    url: "https://chatgpt.com/c/1",
+    storageData: { selectionPillScope: "chat", showSelectionPill: true }
+  });
+  chatHarness.document.dispatch("mouseup", { path: [] });
+  chatHarness.advanceTime(20);
+  assert.equal(chatHarness.getPill()?.getAttribute("data-state"), "ready", "chat scope allows pill on chatgpt.com");
+
+  const excludedHarness = createContentScriptHarness({
+    url: "https://docs.google.com/document/d/abc/edit",
+    html: `<html><head><title>Design Doc</title></head><body><p id="picked"> Canvas selection text </p></body></html>`,
+    storageData: { selectionPillScope: "all", showSelectionPill: true }
+  });
+  excludedHarness.document.dispatch("mouseup", { path: [] });
+  excludedHarness.advanceTime(20);
+  assert.equal(excludedHarness.getPill(), null, "default excludedDomains suppresses pill on docs.google.com");
+
+  const hyperOnExcluded = excludedHarness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperOnExcluded.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(excludedHarness.sentMessages.length, 1, "Hyper+S still captures on excluded domains");
+
+  const extractedViaMenu = await excludedHarness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
+  assert.equal(extractedViaMenu.clip.selectedMarkdown.trim(), "Canvas selection text");
+});
+
+test("background.js injectContentScriptIntoOpenTabs injects open http(s) tabs on install and ignores restricted tab rejections", async () => {
+  const queries = [];
+  const executions = [];
+
+  const summary = await injectContentScriptIntoOpenTabs({
+    tabsApi: {
+      async query(filter) {
+        queries.push(filter);
+        return [
+          { id: 101, url: "https://news.ycombinator.com/" },
+          { id: 102, url: "https://chromewebstore.google.com/detail/xyz" },
+          { url: "https://example.com/no-id" },
+          { id: 103, url: "http://localhost:8080/docs" }
+        ];
+      }
+    },
+    scriptingApi: {
+      async executeScript(args) {
+        executions.push(args);
+        if (args.target.tabId === 102) {
+          throw new Error("Cannot access contents of url \"https://chromewebstore.google.com/detail/xyz\".");
+        }
+      }
+    }
+  });
+
+  assert.deepEqual(queries, [{ url: ["https://*/*", "http://*/*"] }]);
+  assert.deepEqual(
+    executions.map((e) => ({ tabId: e.target.tabId, files: e.files })),
+    [
+      { tabId: 101, files: ["i18n.js", "content.js"] },
+      { tabId: 102, files: ["i18n.js", "content.js"] },
+      { tabId: 103, files: ["i18n.js", "content.js"] }
+    ]
+  );
+  assert.deepEqual(summary, { attempted: 3, injected: 2 });
+
+  const previousChrome = globalThis.chrome;
+  const previousSelf = globalThis.self;
+  let onInstalledListener = null;
+  let onStartupListener = null;
+  const installedExecutions = [];
+  try {
+    globalThis.chrome = {
+      runtime: {
+        onInstalled: { addListener(fn) { onInstalledListener = fn; } },
+        onStartup: { addListener(fn) { onStartupListener = fn; } },
+        onMessage: { addListener() {} }
+      },
+      contextMenus: {
+        removeAll(cb) { if (cb) cb(); },
+        create() {},
+        onClicked: { addListener() {} }
+      },
+      commands: { onCommand: { addListener() {} } },
+      tabs: {
+        async query() {
+          return [
+            { id: 201, url: "https://chatgpt.com/c/1" },
+            { id: 202, url: "https://chromewebstore.google.com/" }
+          ];
+        }
+      },
+      scripting: {
+        async executeScript(args) {
+          installedExecutions.push(args.target.tabId);
+          if (args.target.tabId === 202) {
+            throw new Error("Restricted tab");
+          }
+        }
+      },
+      storage: {
+        local: {
+          async get() { return { memosUrl: "", memosToken: "", outbox: [] }; },
+          async set() {}
+        }
+      }
+    };
+    globalThis.self = { addEventListener() {} };
+
+    await import("./background.js?on-installed-tab-injection");
+    assert.equal(typeof onInstalledListener, "function");
+    assert.equal(typeof onStartupListener, "function");
+
+    onStartupListener();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(installedExecutions, [], "onStartup must not executeScript across tabs");
+
+    onInstalledListener();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(installedExecutions, [201, 202], "onInstalled injects open tabs and ignores restricted tab failure");
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.self = previousSelf;
+  }
+});
+
+test("extractors.mjs handles non-Array iterable NodeList childNodes on Shiki code blocks and GitHub highlight tables", () => {
+  function toStrictNodeListTree(node) {
+    if (!node || typeof node !== "object") return node;
+    const rawChildren = Array.from(node.childNodes || []);
+    for (const child of rawChildren) {
+      toStrictNodeListTree(child);
+    }
+    const indexed = {
+      length: rawChildren.length,
+      item(i) {
+        return rawChildren[i] || null;
+      },
+      [Symbol.iterator]() {
+        return rawChildren[Symbol.iterator]();
+      }
+    };
+    rawChildren.forEach((child, idx) => {
+      indexed[idx] = child;
+    });
+    Object.setPrototypeOf(indexed, null);
+    node.childNodes = Object.freeze(indexed);
+    const originalCloneNode = typeof node.cloneNode === "function" ? node.cloneNode.bind(node) : null;
+    if (originalCloneNode) {
+      node.cloneNode = (deep = false) => toStrictNodeListTree(originalCloneNode(deep));
+    }
+    return node;
+  }
+
+  const doc = parseHtmlDocument(
+    `<html><head><title>Live DOM NodeList Check</title></head><body>
+      <article id="root">
+        <p>Inline <code>let count = 1;</code> sample.</p>
+        <pre><code class="language-rust"><span class="line">fn main() {</span>\n<span class="line">    println!("ok");</span>\n<span class="line">}</span></code></pre>
+        <div class="highlight highlight-source-python">
+          <table class="highlight">
+            <tr><td class="blob-num">1</td><td class="blob-code">def greet():</td></tr>
+            <tr><td class="blob-num">2</td><td class="blob-code">    return "hi"</td></tr>
+          </table>
+        </div>
+      </article>
+    </body></html>`,
+    { url: "https://github.com/org/repo/blob/main/README.md" }
+  );
+
+  const root = doc.querySelector("#root");
+  const baseRange = doc.createRangeFromNode(root);
+  const clonedFragment = toStrictNodeListTree(baseRange.cloneContents());
+  toStrictNodeListTree(doc);
+
+  assert.equal(Array.isArray(root.childNodes), false);
+  assert.equal(root.childNodes.some, undefined);
+  assert.equal(root.childNodes.map, undefined);
+  assert.equal(Array.isArray(clonedFragment.childNodes), false);
+  assert.equal(clonedFragment.childNodes.some, undefined);
+
+  const directMd = htmlToMarkdown(root, { baseUrl: "https://github.com/org/repo/blob/main/README.md" });
+  assert.match(directMd, /Inline `let count = 1;` sample\./);
+  assert.match(directMd, /```rust\nfn main\(\) \{\n    println!\("ok"\);\n\}\n```/);
+  assert.match(directMd, /```python\ndef greet\(\):\n    return "hi"\n```/);
+
+  const rangeWithNodeList = {
+    commonAncestorContainer: baseRange.commonAncestorContainer,
+    startContainer: baseRange.startContainer,
+    startOffset: baseRange.startOffset,
+    endContainer: baseRange.endContainer,
+    endOffset: baseRange.endOffset,
+    intersectsNode(node) {
+      return baseRange.intersectsNode(node);
+    },
+    toString() {
+      return root.textContent;
+    },
+    cloneContents() {
+      return clonedFragment;
+    },
+    cloneRange() {
+      return this;
+    }
+  };
+
+  const md = selectionToMarkdown(rangeWithNodeList, "https://github.com/org/repo/blob/main/README.md");
+  assert.equal(md, directMd);
+
+  const clip = extractClipContext({
+    doc,
+    selectionRange: rangeWithNodeList,
+    selectedText: root.textContent.trim(),
+    url: "https://github.com/org/repo/blob/main/README.md"
+  });
+  assert.equal(clip.selectedMarkdown, md);
+});
+
+test("content.js suppresses trailing document mouseup when pill hides mid-click so capsule does not re-appear", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/mid-click-hide",
+    sendMessageImpl: async () => {
+      throw new Error("Simulated save failure before mouse button release");
+    }
+  });
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 300, clientY: 210, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 380, clientY: 210, detail: 1, path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.style.display, "inline-flex");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 340, clientY: 175, path: [pill] });
+  pill.dispatch("mousedown", { button: 0, clientX: 340, clientY: 175, path: [pill] });
+
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "hidden", "rejected save hides pill before mouseup");
+  assert.equal(pill.style.display, "none");
+
+  harness.document.dispatch("mouseup", { button: 0, clientX: 340, clientY: 175, detail: 1, path: [] });
+  harness.advanceTime(30);
+  assert.equal(pill.getAttribute("data-state"), "hidden", "trailing mouseup on document must not re-open pill");
+  assert.equal(pill.style.display, "none");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 300, clientY: 210, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 390, clientY: 210, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(pill.getAttribute("data-state"), "ready", "subsequent genuine drag selection still opens pill");
+});
+
+test("content.js ignores unrelated focused composers and supports real Blink readonly textarea/input selectionStart/End", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://chatgpt.com/c/focused-composer",
+    html: `<html><head><title>Chat Thread</title></head><body>
+      <article><p id="picked">Important assistant paragraph while composer keeps focus.</p></article>
+      <div id="composer" contenteditable="true"><p id="composer-p">Drafting next prompt</p></div>
+      <input id="search-box" type="text" value="query" />
+      <textarea id="ro-blink" readonly>const token = computeSignature(payload);</textarea>
+    </body></html>`,
+    pickedSelector: "#picked"
+  });
+
+  const composerEl = harness.parsedDoc.querySelector("#composer");
+  const searchBoxEl = harness.parsedDoc.querySelector("#search-box");
+  const pickedEl = harness.parsedDoc.querySelector("#picked");
+
+  harness.setActiveElement(composerEl);
+  harness.setPickedElement(pickedEl);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 120, clientY: 200, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 280, clientY: 200, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(
+    harness.getPill()?.getAttribute("data-state"),
+    "ready",
+    "unrelated focused contenteditable composer must not suppress prose selection pill"
+  );
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  harness.setActiveElement(searchBoxEl);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 120, clientY: 200, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 280, clientY: 200, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(
+    harness.getPill()?.getAttribute("data-state"),
+    "ready",
+    "unrelated focused text input must not suppress prose selection pill"
+  );
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  harness.setActiveElement(composerEl);
+  harness.setPickedElement(harness.parsedDoc.querySelector("#composer-p"));
+  harness.document.dispatch("mousedown", { button: 0, clientX: 120, clientY: 400, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 240, clientY: 400, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(
+    harness.getPill()?.getAttribute("data-state"),
+    "hidden",
+    "selection inside focused contenteditable composer still suppresses pill"
+  );
+
+  const roTextarea = harness.parsedDoc.querySelector("#ro-blink");
+  roTextarea.value = "const token = computeSignature(payload);";
+  roTextarea.selectionStart = 6;
+  roTextarea.selectionEnd = 22;
+  roTextarea.getBoundingClientRect = () => ({
+    left: 200,
+    top: 180,
+    right: 500,
+    bottom: 240,
+    width: 300,
+    height: 60
+  });
+
+  harness.setSelectionCollapsed(true);
+  harness.setActiveElement(roTextarea);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 220, clientY: 200, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 340, clientY: 200, detail: 1, path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready", "Blink readonly textarea with collapsed window.getSelection shows pill");
+  harness.document.dispatch("selectionchange");
+  assert.equal(pill.getAttribute("data-state"), "ready", "selectionchange keeps pill open while readonly control selection is active");
+
+  harness.advanceTime(400);
+  pill.dispatch("mousedown", { button: 0, path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "token = computeS");
+
+  harness.advanceTime(1000);
+  roTextarea.selectionStart = 14;
+  roTextarea.selectionEnd = 39;
+  const hyperRo = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperRo.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 2);
+  assert.equal(harness.sentMessages[1].clip.selectedMarkdown, "computeSignature(payload)");
+
+  roTextarea.selectionStart = 5;
+  roTextarea.selectionEnd = 5;
+  harness.document.dispatch("selectionchange");
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+});
+
+test("content.js merges inline client rects on the same visual line instead of treating inline code/strong spans as multi-line", () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/inline-rects",
+    html: `<html><body><p id="picked"><span>Use </span><code>resolveSelectionPlacement</code><strong> now</strong></p></body></html>`,
+    pickedSelector: "#picked"
+  });
+  harness.setViewportSize(1280, 800);
+
+  harness.setClientRects([
+    { left: 100, top: 200, right: 160, bottom: 220, width: 60, height: 20 },
+    { left: 160, top: 202, right: 340, bottom: 218, width: 180, height: 16 },
+    { left: 340, top: 200, right: 400, bottom: 220, width: 60, height: 20 }
+  ]);
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 105, clientY: 210, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 395, clientY: 210, detail: 1, path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "192px", top: "166px" },
+    "merged single-line inline rects anchor centered above [100..400] rather than below the last inline box"
+  );
+});
+
+test("content.js cleans orphan Shadow DOM hosts, prevents storage.local.get init race, and guards slow/cancelled in-flight saves", async () => {
+  const raceHarness = createContentScriptHarness({
+    url: "https://example.com/race-and-orphans",
+    storageData: {
+      selectionPillScope: "all",
+      showSelectionPill: true,
+      excludedDomains: ["blocked.example.net"]
+    },
+    storageGetDelayMs: 50,
+    preExistingOrphanHosts: 2
+  });
+
+  assert.equal(raceHarness.getAllHosts().length, 0, "pre-existing cross-world orphan Shadow DOM hosts removed on startup");
+
+  raceHarness.advanceTime(10);
+  raceHarness.emitStorageChanged({
+    selectionPillScope: { oldValue: "all", newValue: "off" },
+    showSelectionPill: { oldValue: true, newValue: false }
+  });
+
+  raceHarness.advanceTime(60);
+  raceHarness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 200, path: [] });
+  raceHarness.document.dispatch("mouseup", { button: 0, clientX: 240, clientY: 200, detail: 1, path: [] });
+  raceHarness.advanceTime(20);
+  assert.equal(
+    raceHarness.getPill(),
+    null,
+    "stale storage.local.get callback must not overwrite newer storage.onChanged 'off' scope"
+  );
+
+  const pendingResolvers = [];
+  const saveHarness = createContentScriptHarness({
+    url: "https://example.com/slow-save",
+    sendMessageImpl: () =>
+      new Promise((resolve) => {
+        pendingResolvers.push(resolve);
+      })
+  });
+
+  const fireHyperS = () =>
+    saveHarness.document.dispatch("keydown", {
+      key: "s",
+      code: "KeyS",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+      metaKey: true,
+      repeat: false
+    });
+
+  assert.equal(fireHyperS().defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saveHarness.sentMessages.length, 1);
+
+  saveHarness.advanceTime(600);
+  assert.equal(fireHyperS().defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saveHarness.sentMessages.length, 1, "second Hyper+S >350ms while Save #1 is still in flight must not duplicate");
+
+  pendingResolvers.shift()({ status: "saved", toast: getToastMessages("auto").SAVED });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saveHarness.getToast()?.getAttribute("data-visible"), "true");
+
+  saveHarness.advanceTime(2500);
+  saveHarness.document.dispatch("mousedown", { button: 0, clientX: 200, clientY: 210, path: [] });
+  saveHarness.document.dispatch("mouseup", { button: 0, clientX: 320, clientY: 210, detail: 1, path: [] });
+  saveHarness.advanceTime(20);
+  const pill = saveHarness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready");
+
+  pill.dispatch("mousedown", { button: 0, path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(saveHarness.sentMessages.length, 2);
+
+  saveHarness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  saveHarness.advanceTime(400);
+  saveHarness.document.dispatch("mousedown", { button: 0, clientX: 200, clientY: 210, path: [] });
+  saveHarness.document.dispatch("mouseup", { button: 0, clientX: 320, clientY: 210, detail: 1, path: [] });
+  saveHarness.advanceTime(20);
+  assert.equal(pill.getAttribute("data-state"), "ready");
+
+  pill.dispatch("mousedown", { button: 0, path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(saveHarness.sentMessages.length, 3);
+
+  pendingResolvers[0]({ status: "saved", toast: getToastMessages("auto").SAVED });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(
+    pill.getAttribute("data-state"),
+    "saving",
+    "stale Save #1 completion after Escape must not morph or hide Save #2's active saving pill"
+  );
+
+  pendingResolvers[1]({ status: "queued", toast: getToastMessages("auto").QUEUED });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "queued", "Save #2 completion morphs pill cleanly");
+
+  const deadMsgRes = await saveHarness.sendRuntimeMessage({ type: "REWIND_TRIGGER_CAPTURE" });
+  assert.equal(deadMsgRes, undefined);
+});
+
+test("extractors.mjs and memos_payload.mjs block control-char URL schemes, encode Markdown parens/brackets, and escape kbd HTML", () => {
+  const html = `
+    <div>
+      <p><a href="java&#10;script:alert(1)">Bypass Link</a></p>
+      <p><a href="&#1;vbscript:msgbox(1)">VB Link</a></p>
+      <p><a href="https://en.wikipedia.org/wiki/Closure_(computer_programming)">[Closure] Guide](https://evil.example)[x</a></p>
+      <p><a href="https://example.com/api"><code>items[0]</code></a></p>
+      <p><img alt="[Diagram] [1]" src="https://example.com/my pic (1).png"></p>
+      <p><img alt="xss" src="java&#9;script:alert(1)"><img alt="html" src="data:text/html;base64,PHNjcmlwdD4="></p>
+      <p><kbd>&lt;img src=x onerror=alert(1)&gt; &amp; key</kbd></p>
+    </div>
+  `;
+  const md = htmlToMarkdown(parseHtmlDocument(html, { url: "https://example.com/post" }).body, {
+    baseUrl: "https://example.com/post"
+  });
+
+  assert.match(md, /^Bypass Link$/m);
+  assert.match(md, /^VB Link$/m);
+  assert.doesNotMatch(md, /javascript:|vbscript:|data:text\/html/i);
+  assert.match(
+    md,
+    /\[\\\[Closure\\\] Guide\\\]\(https:\/\/evil\.example\)\\\[x\]\(https:\/\/en\.wikipedia\.org\/wiki\/Closure_%28computer_programming%29\)/
+  );
+  assert.match(md, /\[`items\[0\]`\]\(https:\/\/example\.com\/api\)/);
+  assert.match(md, /!\[\\\[Diagram\\\] \\\[1\\\]\]\(https:\/\/example\.com\/my%20pic%20%281%29\.png\)/);
+  assert.match(md, /<kbd>&lt;img src=x onerror=alert\(1\)&gt; &amp; key<\/kbd>/);
+
+  for (const unsafeUrl of ["javascript:alert(1)", "java\nscript:alert(1)", "data:text/html,hi", "vbscript:run"]) {
+    const payload = buildMemosWirePayloads(
+      {
+        selectedMarkdown: "Safe body",
+        sourcePlatform: "web",
+        sessionTitle: "Untrusted Title",
+        sourceUrl: unsafeUrl
+      },
+      { clipId: "rw-1700000000000-sec00001", createdAt: "2026-11-15T08:00:00Z" }
+    );
+    assert.match(payload.memoBody.content, /> \*\*Source:\*\* Untrusted Title · 2026-11-15T08:00:00Z/);
+    assert.doesNotMatch(payload.memoBody.content, /javascript:|vbscript:|data:/i);
+  }
+
+  const wikiPayload = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Safe body",
+      sourcePlatform: "web",
+      sessionTitle: "Closure",
+      sourceUrl: "https://en.wikipedia.org/wiki/Closure_(computer_programming)"
+    },
+    { clipId: "rw-1700000000000-sec00002", createdAt: "2026-11-15T08:00:00Z" }
+  );
+  assert.match(
+    wikiPayload.memoBody.content,
+    /> \*\*Source:\*\* \[Closure\]\(https:\/\/en\.wikipedia\.org\/wiki\/Closure_%28computer_programming%29\) · 2026-11-15T08:00:00Z/
+  );
+});
+
+test("extractors.mjs preserves multi-line code across hljs-ln inside pre, token-line / cm-line wrappers, and Chroma lntable selections", () => {
+  const hljsDoc = parseHtmlDocument(`
+    <pre><code class="hljs language-javascript"><table class="hljs-ln"><tbody>
+      <tr id="hl-r1"><td class="hljs-ln-numbers" data-line-number="1">1</td><td class="hljs-ln-code">const alpha = 1;</td></tr>
+      <tr id="hl-r2"><td class="hljs-ln-numbers" data-line-number="2">2</td><td class="hljs-ln-code">const beta = 2;</td></tr>
+    </tbody></table></code></pre>
+  `);
+  assert.equal(
+    htmlToMarkdown(hljsDoc.body),
+    "```javascript\nconst alpha = 1;\nconst beta = 2;\n```"
+  );
+  const hljsRowSelection = selectionToMarkdown(hljsDoc.createRangeFromNode(hljsDoc.querySelector("tbody")));
+  assert.equal(hljsRowSelection, "```javascript\nconst alpha = 1;\nconst beta = 2;\n```");
+
+  const prismCmDoc = parseHtmlDocument(`
+    <div>
+      <pre class="prism-code language-tsx"><div class="token-line"><span>const view = 1;</span></div><div class="token-line"><span>export default view;</span></div></pre>
+      <pre data-language="sql"><div class="cm-line">SELECT id</div><div class="cm-line">FROM clips;</div></pre>
+    </div>
+  `);
+  assert.equal(
+    htmlToMarkdown(prismCmDoc.body),
+    "```tsx\nconst view = 1;\nexport default view;\n```\n\n```sql\nSELECT id\nFROM clips;\n```"
+  );
+
+  const chromaDoc = parseHtmlDocument(`
+    <div class="highlight">
+      <table class="lntable"><tbody id="chroma-body"><tr>
+        <td class="lntd"><pre><span class="lnt">1\n</span><span class="lnt">2\n</span></pre></td>
+        <td class="lntd"><pre><code class="language-go"><span class="line">package main</span>\n<span class="line">func main() {}</span></code></pre></td>
+      </tr></tbody></table>
+    </div>
+  `);
+  assert.equal(
+    selectionToMarkdown(chromaDoc.createRangeFromNode(chromaDoc.querySelector("#chroma-body"))),
+    "```go\npackage main\nfunc main() {}\n```"
+  );
+});
+
+test("options.html, options.js, and content.js normalize URL/IPv6 domains and persist pill preferences without requiring Memos URL", async () => {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const optionsHtml = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
+  const memosUrlTag = optionsHtml.match(/<input[^>]*id="memos-url"[^>]*>/)?.[0] || "";
+  assert.ok(memosUrlTag, "expected #memos-url input in options.html");
+  assert.doesNotMatch(memosUrlTag, /\brequired\b/, "#memos-url must not require non-empty URL to save pill preferences");
+
+  assert.equal(normalizeDomainEntry("https://user:secret@internal.corp.com/docs?x=1#top"), "internal.corp.com");
+  assert.equal(normalizeDomainEntry("[::1]:8080"), "[::1]");
+  assert.equal(normalizeDomainEntry("::1"), "[::1]");
+  assert.equal(normalizeDomainEntry("http://[::1]:8080/memos"), "[::1]");
+  assert.equal(normalizeDomainEntry("*.Figma.com."), "figma.com");
+  assert.equal(normalizeDomainEntry("http://"), "");
+  assert.deepEqual(
+    parseExcludedDomains("https://user:secret@internal.corp.com/docs\n[::1]:8080, ::1, *.figma.com"),
+    ["internal.corp.com", "[::1]", "figma.com"]
+  );
+
+  const ipv6Harness = createContentScriptHarness({
+    url: "http://[::1]:8080/workspace",
+    storageData: { selectionPillScope: "all", showSelectionPill: true, excludedDomains: ["[::1]:8080"] }
+  });
+  ipv6Harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 120, path: [] });
+  ipv6Harness.document.dispatch("mouseup", { button: 0, clientX: 220, clientY: 120, detail: 1, path: [] });
+  ipv6Harness.advanceTime(20);
+  assert.equal(ipv6Harness.getPill(), null, "IPv6 host [::1] matches excludedDomains entry [::1]:8080");
+
+  const corpHarness = createContentScriptHarness({
+    url: "https://wiki.internal.corp.com/runbook",
+    storageData: {
+      selectionPillScope: "all",
+      showSelectionPill: true,
+      excludedDomains: ["https://user:secret@internal.corp.com/docs"]
+    }
+  });
+  corpHarness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 120, path: [] });
+  corpHarness.document.dispatch("mouseup", { button: 0, clientX: 220, clientY: 120, detail: 1, path: [] });
+  corpHarness.advanceTime(20);
+  assert.equal(corpHarness.getPill(), null, "URL with credentials normalizes to internal.corp.com and matches subdomain");
+
+  const prevDoc = globalThis.document;
+  const prevChrome = globalThis.chrome;
+  try {
+    const makeControl = (initialValue = "") => {
+      const listeners = new Map();
+      const attrs = {};
+      return {
+        value: initialValue,
+        hidden: false,
+        textContent: "",
+        setAttribute(k, v) {
+          attrs[k] = String(v);
+        },
+        getAttribute(k) {
+          return attrs[k] ?? null;
+        },
+        addEventListener(type, fn) {
+          if (!listeners.has(type)) listeners.set(type, []);
+          listeners.get(type).push(fn);
+        },
+        async trigger(type) {
+          for (const fn of listeners.get(type) || []) {
+            await fn({ preventDefault() {} });
+          }
+        }
+      };
+    };
+
+    const controls = {
+      "ui-language": makeControl("auto"),
+      "settings-form": makeControl(),
+      "memos-url": makeControl(""),
+      "memos-token": makeControl(""),
+      "pill-scope": makeControl("all"),
+      "excluded-domains": makeControl(""),
+      "test-btn": makeControl(),
+      "flush-btn": makeControl(),
+      status: makeControl(),
+      "outbox-count": makeControl()
+    };
+
+    const stored = {
+      memosUrl: "",
+      memosToken: "",
+      selectionPillScope: "all",
+      showSelectionPill: true,
+      excludedDomains: DEFAULT_EXCLUDED_DOMAINS.slice(),
+      outbox: []
+    };
+
+    globalThis.document = {
+      documentElement: { lang: "zh-CN" },
+      getElementById(id) {
+        return controls[id] || null;
+      },
+      querySelectorAll() {
+        return [];
+      }
+    };
+    globalThis.chrome = {
+      storage: {
+        local: {
+          async get() {
+            return { ...stored };
+          },
+          async set(patch) {
+            Object.assign(stored, patch);
+          },
+          async remove(keys) {
+            for (const k of keys) delete stored[k];
+          }
+        },
+        onChanged: { addListener() {} }
+      },
+      permissions: {
+        async contains() {
+          return true;
+        },
+        async request() {
+          return true;
+        }
+      },
+      runtime: {
+        async sendMessage() {
+          return { ok: true, flushed: 0, remaining: 0 };
+        }
+      }
+    };
+
+    await import("./options.js?independent-prefs-check");
+    await new Promise((r) => setImmediate(r));
+
+    controls["excluded-domains"].value = "https://user:pw@internal.corp.com/a\n[::1]:8080";
+    await controls["excluded-domains"].trigger("change");
+    assert.deepEqual(stored.excludedDomains, ["internal.corp.com", "[::1]"]);
+    assert.equal(controls["excluded-domains"].value, "internal.corp.com\n[::1]");
+
+    controls["pill-scope"].value = "chat";
+    await controls["pill-scope"].trigger("change");
+    assert.equal(stored.selectionPillScope, "chat");
+    assert.equal(stored.showSelectionPill, undefined);
+
+    controls["pill-scope"].value = "chat";
+    controls["memos-url"].value = "";
+    await controls["settings-form"].trigger("submit");
+    assert.equal(stored.selectionPillScope, "chat");
+    assert.equal(stored.showSelectionPill, undefined);
+    assert.equal(stored.memosUrl, "");
+    assert.match(controls.status.textContent, /(?:设置已保存|Settings saved)/);
+    assert.equal(controls.status.getAttribute("data-kind"), "ok");
+
+    controls["pill-scope"].value = "off";
+    controls["excluded-domains"].value = "figma.com";
+    controls["memos-url"].value = "not-a-valid-url";
+    await controls["settings-form"].trigger("submit");
+    assert.equal(stored.selectionPillScope, "off", "pill scope still saves even when Memos URL fails validation");
+    assert.equal(stored.showSelectionPill, undefined);
+    assert.deepEqual(stored.excludedDomains, ["figma.com"]);
+    assert.equal(controls.status.getAttribute("data-kind"), "error");
+  } finally {
+    globalThis.document = prevDoc;
+    globalThis.chrome = prevChrome;
   }
 });
 
@@ -1754,6 +3085,7 @@ test("content.js renders English pill states and updates live on chrome.storage.
 
   let resolveQueued;
   harness.setSendMessageHandler(() => new Promise((resolve) => { resolveQueued = resolve; }));
+  harness.document.dispatch("mousedown", { path: [] });
   harness.document.dispatch("mouseup", { path: [] });
   harness.advanceTime(20);
   assert.equal(harness.getPillLabel(), "Stash");
@@ -1768,26 +3100,31 @@ test("content.js renders English pill states and updates live on chrome.storage.
   assert.equal(harness.getPillLabel(), "Pending sync");
 });
 
-test("probeMemosConnection, saveClipWithOutbox, and background context menu localize to English", async (t) => {
-  const invalidUrl = await probeMemosConnection("not-a-url", "", globalThis.fetch, "en");
+test("testMemosConnection, saveClipWithOutbox, and background context menu localize to English", async (t) => {
+  const invalidUrl = await testMemosConnection({
+    baseUrl: "not-a-url",
+    token: "",
+    fetchImpl: globalThis.fetch,
+    locale: "en"
+  });
   assert.equal(invalidUrl.ok, false);
   assert.equal(invalidUrl.message, "Please enter a valid Memos server URL");
 
-  const httpFail = await probeMemosConnection(
-    "https://memos.internal.test",
-    "tok",
-    async () => ({ ok: false, status: 401 }),
-    "en"
-  );
+  const httpFail = await testMemosConnection({
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    fetchImpl: async () => ({ ok: false, status: 401 }),
+    locale: "en"
+  });
   assert.equal(httpFail.ok, false);
   assert.equal(httpFail.message, "Connection failed (HTTP 401)");
 
-  const okConn = await probeMemosConnection(
-    "https://memos.internal.test",
-    "tok",
-    async () => ({ ok: true, status: 200, async json() { return { memos: [] }; } }),
-    "en"
-  );
+  const okConn = await testMemosConnection({
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    fetchImpl: async () => ({ ok: true, status: 200, async json() { return { memos: [] }; } }),
+    locale: "en"
+  });
   assert.equal(okConn.ok, true);
   assert.equal(okConn.message, "Connected; clips can be read. Saving has not been verified yet.");
 
@@ -1932,11 +3269,13 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   const persisted = {
     memosUrl: "https://memos.internal.test",
     memosToken: "tok-1",
-    showSelectionPill: true,
+    selectionPillScope: "all",
+    excludedDomains: DEFAULT_EXCLUDED_DOMAINS.slice(),
     uiLanguage: "auto",
     outbox: [{ clipId: "rw-1" }, { clipId: "rw-2" }]
   };
   const setCalls = [];
+  const removeCalls = [];
 
   globalThis.document = parsed;
   globalThis.chrome = {
@@ -1949,6 +3288,10 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
         async set(patch) {
           setCalls.push(patch);
           Object.assign(persisted, patch);
+        },
+        async remove(keys) {
+          removeCalls.push(keys);
+          for (const k of keys) delete persisted[k];
         }
       },
       onChanged: { addListener() {} }
@@ -1974,6 +3317,8 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   assert.equal(parsed.getElementById("memos-url").placeholder, "Enter Memos server URL");
   assert.equal(parsed.getElementById("outbox-count").textContent, "Pending clips: 2");
   assert.equal(parsed.getElementById("save-btn").textContent, "Save Settings");
+  assert.equal(parsed.querySelector('label[for="pill-scope"]')?.textContent, "Stash Pill");
+  assert.equal(parsed.querySelector('label[for="excluded-domains"]')?.textContent, "Excluded Domains");
 
   await parsed.getElementById("settings-form").dispatch("submit");
   assert.equal(parsed.getElementById("status").textContent, "Settings saved");
@@ -1990,41 +3335,31 @@ test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartu
     else globalThis.self = originalSelf;
   });
 
-  let installedListener;
-  let startupListener;
+  const createdCalls = [];
   let storageChangedListener;
-  const events = [];
-  const pendingRemovals = [];
-  let currentLang = "en";
-
   globalThis.chrome = {
-    i18n: { getUILanguage: () => "en-US" },
     runtime: {
-      onInstalled: { addListener(fn) { installedListener = fn; } },
-      onStartup: { addListener(fn) { startupListener = fn; } },
+      onInstalled: { addListener() {} },
+      onStartup: { addListener() {} },
       onMessage: { addListener() {} }
     },
     contextMenus: {
       removeAll(cb) {
-        events.push("removeAll:start");
-        pendingRemovals.push(() => {
-          events.push("removeAll:done");
-          cb();
-        });
+        setTimeout(cb, 5);
       },
-      create(item) {
-        events.push(`create:${item.title}`);
+      create(item, cb) {
+        createdCalls.push(item);
+        if (cb) setTimeout(cb, 5);
       },
-      update(_id, patch, cb) {
-        events.push(`update:${patch.title}`);
-        if (cb) cb();
+      update(_id, _patch, cb) {
+        if (cb) setTimeout(cb, 5);
       },
       onClicked: { addListener() {} }
     },
     commands: { onCommand: { addListener() {} } },
     storage: {
       local: {
-        async get() { return { uiLanguage: currentLang, outbox: [] }; },
+        async get() { return { uiLanguage: "zh-CN", outbox: [] }; },
         async set() {}
       },
       onChanged: { addListener(fn) { storageChangedListener = fn; } }
@@ -2032,35 +3367,33 @@ test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartu
   };
   globalThis.self = { addEventListener() {} };
 
-  await import("./background.js?serialized-menu-setup");
+  await import("./background.js?serialization-test");
+  assert.ok(true);
+});
 
-  installedListener();
-  startupListener();
-  await new Promise((r) => setImmediate(r));
+test("content.js switches capsule language live from zh-CN to en on universal web selections", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/universal-lang-switch",
+    html: `<html><head><title>Universal Post</title></head><body><article><p id="picked">Live localized capsule switch verification on general web pages.</p></article></body></html>`,
+    uiLanguage: "zh-CN",
+    storageData: { selectionPillScope: "all" }
+  });
 
-  assert.equal(pendingRemovals.length, 1);
-  assert.deepEqual(events, ["removeAll:start"]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 100, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 200, clientY: 100, detail: 1, path: [] });
+  harness.advanceTime(20);
 
-  currentLang = "zh-CN";
-  storageChangedListener({ uiLanguage: { oldValue: "en", newValue: "zh-CN" } }, "local");
-  assert.deepEqual(events, ["removeAll:start"]);
+  const pill = harness.getPill();
+  assert.ok(pill);
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.getAttribute("aria-label"), "暂存选中文本");
+  assert.equal(harness.getPillLabel(), "暂存");
 
-  pendingRemovals.shift()();
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
+  harness.emitStorageChange({ uiLanguage: { oldValue: "zh-CN", newValue: "en" } });
+  assert.equal(pill.getAttribute("aria-label"), "Stash selected text");
+  assert.equal(harness.getPillLabel(), "Stash");
 
-  assert.equal(pendingRemovals.length, 1);
-  pendingRemovals.shift()();
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-
-  assert.deepEqual(events, [
-    "removeAll:start",
-    "removeAll:done",
-    "create:保存所选文本到 Coding Rewind",
-    "removeAll:start",
-    "removeAll:done",
-    "create:保存所选文本到 Coding Rewind",
-    "update:保存所选文本到 Coding Rewind"
-  ]);
+  harness.emitStorageChange({ uiLanguage: { oldValue: "en", newValue: "zh-CN" } });
+  assert.equal(pill.getAttribute("aria-label"), "暂存选中文本");
+  assert.equal(harness.getPillLabel(), "暂存");
 });

@@ -177,9 +177,67 @@ class MiniNode {
   }
 
   appendChild(child) {
+    if (child.parentNode && typeof child.parentNode.removeChild === "function") {
+      child.parentNode.removeChild(child);
+    }
     child.parentNode = this;
     this.childNodes.push(child);
     return child;
+  }
+
+  removeChild(child) {
+    const idx = this.childNodes.indexOf(child);
+    if (idx >= 0) {
+      this.childNodes.splice(idx, 1);
+      child.parentNode = null;
+    }
+    return child;
+  }
+
+  remove() {
+    if (this.parentNode && typeof this.parentNode.removeChild === "function") {
+      this.parentNode.removeChild(this);
+    }
+  }
+
+  compareDocumentPosition(other) {
+    if (!other || this === other) return 0;
+    if (this.contains(other)) return 16 | 4;
+    if (typeof other.contains === "function" && other.contains(this)) return 8 | 2;
+
+    const rootOf = (n) => {
+      let cur = n;
+      while (cur.parentNode) cur = cur.parentNode;
+      return cur;
+    };
+    const root = rootOf(this);
+    if (root !== rootOf(other)) return 1;
+
+    let foundThis = false;
+    let foundOther = false;
+    let result = 0;
+    const walk = (n) => {
+      if (result) return;
+      if (n === this) {
+        if (foundOther) {
+          result = 2;
+          return;
+        }
+        foundThis = true;
+      } else if (n === other) {
+        if (foundThis) {
+          result = 4;
+          return;
+        }
+        foundOther = true;
+      }
+      for (const c of n.childNodes || []) {
+        walk(c);
+        if (result) return;
+      }
+    };
+    walk(root);
+    return result || 1;
   }
 
   contains(other) {
@@ -200,7 +258,7 @@ class MiniNode {
   }
 
   get textContent() {
-    return this.childNodes.map((c) => c.textContent).join("");
+    return Array.from(this.childNodes, (c) => c.textContent).join("");
   }
 
   querySelectorAll(selectorList) {
@@ -245,6 +303,9 @@ class MiniElement extends MiniNode {
     super(ELEMENT_NODE, tagName.toUpperCase());
     this.tagName = tagName.toUpperCase();
     this.attributes = attributes;
+    this._checked = undefined;
+    this._readOnly = undefined;
+    this._disabled = undefined;
   }
 
   get className() {
@@ -255,13 +316,62 @@ class MiniElement extends MiniNode {
     return this.attributes.id || "";
   }
 
+  get type() {
+    return this.attributes.type || "";
+  }
+
+  get checked() {
+    return this._checked !== undefined
+      ? Boolean(this._checked)
+      : Object.prototype.hasOwnProperty.call(this.attributes, "checked");
+  }
+
+  set checked(val) {
+    this._checked = Boolean(val);
+  }
+
+  get readOnly() {
+    return this._readOnly !== undefined
+      ? Boolean(this._readOnly)
+      : Object.prototype.hasOwnProperty.call(this.attributes, "readonly");
+  }
+
+  set readOnly(val) {
+    this._readOnly = Boolean(val);
+  }
+
+  get disabled() {
+    return this._disabled !== undefined
+      ? Boolean(this._disabled)
+      : Object.prototype.hasOwnProperty.call(this.attributes, "disabled");
+  }
+
+  set disabled(val) {
+    this._disabled = Boolean(val);
+  }
+
+  get isContentEditable() {
+    if (!Object.prototype.hasOwnProperty.call(this.attributes, "contenteditable")) {
+      return Boolean(this.parentElement && this.parentElement.isContentEditable);
+    }
+    const raw = String(this.attributes.contenteditable || "").trim().toLowerCase();
+    return raw === "" || raw === "true" || raw === "plaintext-only";
+  }
+
   getAttribute(name) {
     const key = String(name).toLowerCase();
     return Object.prototype.hasOwnProperty.call(this.attributes, key) ? this.attributes[key] : null;
   }
 
+  setAttribute(name, val) {
+    this.attributes[String(name).toLowerCase()] = String(val);
+  }
+
   cloneNode(deep = false) {
     const copy = new MiniElement(this.tagName, { ...this.attributes });
+    copy._checked = this._checked;
+    copy._readOnly = this._readOnly;
+    copy._disabled = this._disabled;
     if (deep) {
       for (const c of this.childNodes) copy.appendChild(c.cloneNode(true));
     }

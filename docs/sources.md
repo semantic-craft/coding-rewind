@@ -6,7 +6,7 @@
 
 ## 直接复用或裁剪模式的 MIT 上游项目
 
-以下九个项目均已核实仓库根目录 `LICENSE` 全文与 GitHub API `license.spdx_id` 为标准 `MIT`，构成本仓库四端实现的技术底座：
+以下十五个项目均已核实仓库根目录 `LICENSE` 全文与 GitHub API `license.spdx_id` 为标准 `MIT`，构成本仓库四端实现的技术底座：
 
 | 项目 | 仓库与许可证据 | 在本项目中的具体复用与适配 |
 | --- | --- | --- |
@@ -19,6 +19,12 @@
 | `mem0ai/mem0-chrome-extension` | [mem0ai/mem0-chrome-extension](https://github.com/mem0ai/mem0-chrome-extension)，`MIT License` | 在 `extensions/web-clipper/` 适配其 Manifest V3 划选捕获、右键菜单加快捷键触发、后台 Service Worker 直连远端 REST 接口以及右上角 2.2 秒轻量非抢焦点提示条交互，彻底替代自定义 URL 协议唤醒 |
 | `revivalstack/ai-chat-exporter` | [revivalstack/ai-chat-exporter](https://github.com/revivalstack/ai-chat-exporter)，`MIT License` | 在 `extensions/web-clipper/extractors.mjs` 参考其跨 AI 聊天站点的消息轮次角色识别、会话标题清洗及代码块与列表 HTML 转 Markdown 规则 |
 | `pionxzh/chatgpt-exporter` | [pionxzh/chatgpt-exporter](https://github.com/pionxzh/chatgpt-exporter)，`MIT License` | 在 `extensions/web-clipper/extractors.mjs` 参考其针对聊天 DOM 选区与围栏代码块语言类名的稳健清洗转换策略，提取选中内容与前序 4 轮问答脉络 |
+| `obsidianmd/obsidian-clipper` | [obsidianmd/obsidian-clipper](https://github.com/obsidianmd/obsidian-clipper)，`MIT License`，Copyright (c) 2024 Obsidian，commit `6d56d618b00b` | 在 `extensions/web-clipper/content.js` 适配其内容脚本重注入生命周期清理（`__CODING_REWIND_HOOK__.dispose()`），统一卸载旧 Shadow DOM 宿主、页面事件与 `chrome.runtime` 监听，防止扩展更新或重注入后残留僵尸监听器 |
+| `crimx/ext-saladict` | [crimx/ext-saladict](https://github.com/crimx/ext-saladict)，`MIT License`，Copyright (c) 2018 Crimx，commit `1673df156908` | 在 `extensions/web-clipper/content.js` 与 `options.js` 适配其划词手势门控（主按键拖拽距离、双击、Shift 扩展选区与键盘 `Shift+Arrow` 防抖）、可编辑控件与在线代码编辑器避让（放行只读框与 `aria-readonly="true"`）以及排除域名匹配 |
+| `floating-ui/floating-ui` | [floating-ui/floating-ui](https://github.com/floating-ui/floating-ui)，`MIT License`，Copyright (c) 2021 Floating UI contributors，commit `c3042f1f37d9` | 在 `extensions/web-clipper/content.js` 适配其基于 `Range.getClientRects()` 的多矩形选区锚定策略，单行居中悬浮于选区上方，多行按正向尾行或反向首行就近定位并在视口边缘翻转夹紧 |
+| `kepano/defuddle` | [kepano/defuddle](https://github.com/kepano/defuddle)，`MIT License`，Copyright (c) 2025 Steph Ango，commit `3e8bde9f5f85` | 在 `extensions/web-clipper/extractors.mjs` 适配其语法高亮器行号列剥离、GitHub `table.highlight` 与 Rouge 代码表格还原、Shiki / Expressive Code 逐行换行保留以及网页 `og:site_name` 标题后缀清洗与 `og:title` 回退规则 |
+| `mixmark-io/turndown` | [mixmark-io/turndown](https://github.com/mixmark-io/turndown)，`MIT License`，Copyright (c) 2017 Dom Christie，commit `b86e2b18539f` | 在 `extensions/web-clipper/extractors.mjs` 适配其富文本行内与块级 HTML 转 Markdown 规则，覆盖图片相对链接解析、GFM 任务列表复选框、`<mark>`、`<kbd>` 与 `<details>/<summary>` |
+| `ChatGPTBox-dev/chatGPTBox` | [ChatGPTBox-dev/chatGPTBox](https://github.com/ChatGPTBox-dev/chatGPTBox)，`MIT License`，commit `f0717a154e75` | 在 `extensions/web-clipper/` 参考其全网 `http(s)` 内容脚本挂载、Shadow DOM 样式隔离以及生效范围切换（全部网页 / 仅 AI 聊天网站 / 关闭）与排除域名设置模型 |
 
 ## 因协议不兼容或缺失许可而严格排除代码复用的项目
 
@@ -36,6 +42,10 @@
 | `Solveneers/ai-chat-navigator-pro` | [Solveneers/ai-chat-navigator-pro](https://github.com/Solveneers/ai-chat-navigator-pro)，无 `LICENSE` | 仓库无扩展实现源码且无许可文件，不当作开源软件 |
 | `ericmjl/canvas-chat` | [ericmjl/canvas-chat](https://github.com/ericmjl/canvas-chat)，无 `LICENSE` | 仓库未提供开源许可文件，仅记录公开 README 中的多选分支交互概念，零代码复用 |
 | `lee-jet/chat-highlight` | [lee-jet/chat-highlight](https://github.com/lee-jet/chat-highlight)，闭源 | 仓库仅作问题反馈页，扩展本体闭源 |
+| `nextai-translator/nextai-translator` | [nextai-translator/nextai-translator](https://github.com/nextai-translator/nextai-translator)，`AGPL-3.0` | 全网划词浮标扩展采用强传染性 `AGPL-3.0` 协议，严格排除代码阅读与复用 |
+| `webclipper/web-clipper` | [webclipper/web-clipper](https://github.com/webclipper/web-clipper)，`NOASSERTION` | GitHub 许可识别为 `NOASSERTION`，授权边界不符合标准 `MIT` 要求，严格排除代码复用 |
+| `hcfyapp/crx-selection-translate` | [hcfyapp/crx-selection-translate](https://github.com/hcfyapp/crx-selection-translate)，无 `LICENSE` | 划词翻译扩展缺失开源许可文件，按默认保留全部权利原则排除一切代码参考与复用 |
+| `deathau/markdownload` | [deathau/markdownload](https://github.com/deathau/markdownload)，`Apache-2.0` | 网页转 Markdown 扩展采用 `Apache-2.0` 协议；本项目代码级裁剪限定在标准 `MIT` 上游（`kepano/defuddle` 与 `mixmark-io/turndown`），保持零代码复用 |
 
 ## 目标宿主与早期机制对照来源
 
@@ -64,7 +74,7 @@
 | `jrnt30/tangent` 与 `fernandosmither/claude-tangents` | [tangent](https://github.com/jrnt30/tangent) 与 [claude-tangents](https://github.com/fernandosmither/claude-tangents)，均为 `MIT` | 印证了主对话推进中不愿当场分叉污染主线的延迟分叉心理，本项目将其延伸为跨应用的 72 小时热流池 |
 | `egroup-labs/kept` 与 `aliabdm/ContextVault` | [kept](https://github.com/egroup-labs/kept) 与 [ContextVault](https://github.com/aliabdm/ContextVault)，均为 `MIT` | 对照了多采集端汇入单一存储并经 MCP 反哺桌面 Agent 的拓扑形态 |
 | `benjaminfh/researchtree` 与 `MemPalace/mempalace` | [researchtree](https://github.com/benjaminfh/researchtree) 与 [mempalace](https://github.com/MemPalace/mempalace)，均为 `MIT` | 分别对照了围绕片段追问成文的消费流与 Antigravity 2.x 钩子载荷字段核查方法 |
-| `obsidianmd/obsidian-clipper` | [obsidian-clipper](https://github.com/obsidianmd/obsidian-clipper)，`MIT` | 早期曾评估其自定义 URL Scheme 唤醒方案，实测浏览器会弹系统确认框并抢夺焦点，已在 v0.2 弃用并记入 [lessons.md](../lessons.md) |
+| `obsidianmd/obsidian-clipper` | [obsidian-clipper](https://github.com/obsidianmd/obsidian-clipper)，`MIT` | 早期曾评估其自定义 URL Scheme 唤醒方案，实测浏览器会弹系统确认框并抢夺焦点，已在 v0.2 弃用并记入 [lessons.md](../lessons.md)；其内容脚本重注入生命周期清理模式已按 MIT 适配入 `extensions/web-clipper/content.js` |
 
 ## 文档与隐私参考规范
 
