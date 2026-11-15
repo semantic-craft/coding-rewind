@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "58e29cfc8188c3f13b35b76f735e50bc668c84a8",
+    "main": "a5209ffd42f5cfd9987000c89a3df303fdf25120",
     "open_pulls": [],
     "pulls": [
       {
@@ -243,6 +243,14 @@
         "merged": true,
         "number": 31,
         "state": "closed"
+      },
+      {
+        "base": "34dfa00ddee000482a05f482183017c6a6732d7b",
+        "head": "8de2abb72c1135bc634cbc059863374e35f91725",
+        "merge_commit": "a5209ffd42f5cfd9987000c89a3df303fdf25120",
+        "merged": true,
+        "number": 32,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -280,7 +288,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-15T11:13:58.414127Z",
+  "observed_at": "2026-11-15T11:24:03.309404Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -293,6 +301,65 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "settings-about-sidebar-and-menu-streamlining",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash 合并至 main（a5209ffd42f5cfd9987000c89a3df303fdf25120），精简菜单栏并将「关于」与检查更新收入设置侧栏。",
+              "ref": 32
+            },
+            {
+              "kind": "file",
+              "note": "从 StatusItemController 下拉菜单移除检查更新与关于项，保留主菜单 .showAbout 与 .checkForUpdates 入口。",
+              "ref": "Sources/CodingRewindApp/AppMenusAndStatusBar.swift"
+            },
+            {
+              "kind": "file",
+              "note": "新增 SettingsPage.about（info.circle），将软件更新区迁出通用页，缓存 AppIcon 并通过 coordinator.openURL 打开仓库与更新日志。",
+              "ref": "Sources/CodingRewindApp/SettingsViews.swift"
+            },
+            {
+              "kind": "file",
+              "note": "将应用菜单 .showAbout 与 .checkForUpdates 统一导向 settingsWindowController?.show(page: .about)，移除标准关于面板调用。",
+              "ref": "Sources/CodingRewindApp/CodingRewindAppMain.swift"
+            }
+          ],
+          "id": "settings-about-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "右侧菜单栏下拉菜单不再显示「检查更新…」与「关于 Coding Rewind」，仅保留「设置…」与退出项；设置侧栏新增「关于」分页，集中展示应用图标、版本与构建号、MIT 许可证、GitHub 仓库与 Releases 按钮及原属「通用」的手动「检查更新」与「自动检查更新」开关。左上角应用主菜单的「关于 Coding Rewind」与「检查更新…」均改为打开设置窗口并切到「关于」页，且已随多模型对抗审查意见缓存 896KB 图标、隔离测试宿主 Bundle.main 元数据、对齐按钮排版并补齐无障碍标签。README.md 已同步修订。",
+          "title": "菜单栏精简、设置「关于」侧栏与主菜单路由"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "基于 a5209ffd42f5cfd9987000c89a3df303fdf25120 运行 ./scripts/check 六道门禁全部通过，并在标准 /Applications 目录完成签名安装与后台重拉。",
+              "ref": 32
+            },
+            {
+              "kind": "file",
+              "note": "新增主菜单/状态栏路由、AppAboutMetadata 缓存与版本边界及中英双语文案测试。",
+              "ref": "Tests/CodingRewindAppTests/LifecycleAndUpdaterTests.swift"
+            },
+            {
+              "kind": "note",
+              "note": "Developer ID 签名校验通过（TeamIdentifier LQAVR62TK2，CDHash ad91fb81147864dc1173e404af88ea8d6655a104，二进制 SHA-256 75f1e502a92753228371b09c68b6b6a97b5e407f7112fb5acee4a8e6b73fb5ec），辅助程序已同步至 ~/Library/Application Support/CodingRewind/bin/，后台运行 PID 20787。",
+              "ref": "2026-11-15 设置「关于」侧栏全仓门禁与本机重装"
+            }
+          ],
+          "id": "settings-about-verification-and-local-install",
+          "next": "按需在桌面点击状态栏菜单与设置侧栏「关于」完成实机视觉与交互点检。",
+          "status": "done",
+          "summary": "合并前完成双模型对抗审查修复（pro 与 flash；inherit 超时终止），变基至 origin/main 后重跑 ./scripts/check 六道门禁全部通过（Swift 核心 79 项、CLI 1 项、App 74 项、KeyboardShortcuts 92 项、enricher 14 项、Web Clipper 67 项、AppIconVerifierTests 6 项，无 QA plist 泄漏）。PR #32 合并后已重建 /Applications/CodingRewind.app 并通过 codesign 严格签名校验，刷新固定目录辅助程序并以 --background 静默重拉运行；本轮验收仅覆盖自动化单测与包签名启动，未做屏幕手工点击截图。",
+          "title": "全仓门禁通过、PR #32 合并与本机安装"
+        }
+      ],
+      "title": "设置侧栏「关于」与菜单栏精简"
+    },
     {
       "id": "cloud-sync-onboarding",
       "items": [
@@ -1932,7 +1999,8 @@
       28,
       29,
       30,
-      31
+      31,
+      32
     ]
   }
 }

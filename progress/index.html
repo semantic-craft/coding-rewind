@@ -3,8 +3,21 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-15T11:13:58.414127Z</p>
-<p>Main: <code>main: 58e29cfc8188c3f13b35b76f735e50bc668c84a8</code></p>
+<p>Observed: 2026-11-15T11:24:03.309404Z</p>
+<p>Main: <code>main: a5209ffd42f5cfd9987000c89a3df303fdf25120</code></p>
+<section id="settings-about-sidebar-and-menu-streamlining"><h2>设置侧栏「关于」与菜单栏精简</h2>
+<article id="settings-about-implementation"><h3>菜单栏精简、设置「关于」侧栏与主菜单路由</h3><span class="badge">done</span><p>右侧菜单栏下拉菜单不再显示「检查更新…」与「关于 Coding Rewind」，仅保留「设置…」与退出项；设置侧栏新增「关于」分页，集中展示应用图标、版本与构建号、MIT 许可证、GitHub 仓库与 Releases 按钮及原属「通用」的手动「检查更新」与「自动检查更新」开关。左上角应用主菜单的「关于 Coding Rewind」与「检查更新…」均改为打开设置窗口并切到「关于」页，且已随多模型对抗审查意见缓存 896KB 图标、隔离测试宿主 Bundle.main 元数据、对齐按钮排版并补齐无障碍标签。README.md 已同步修订。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/32">pull 32: squash 合并至 main（a5209ffd42f5cfd9987000c89a3df303fdf25120），精简菜单栏并将「关于」与检查更新收入设置侧栏。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/AppMenusAndStatusBar.swift">file Sources/CodingRewindApp/AppMenusAndStatusBar.swift: 从 StatusItemController 下拉菜单移除检查更新与关于项，保留主菜单 .showAbout 与 .checkForUpdates 入口。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/SettingsViews.swift">file Sources/CodingRewindApp/SettingsViews.swift: 新增 SettingsPage.about（info.circle），将软件更新区迁出通用页，缓存 AppIcon 并通过 coordinator.openURL 打开仓库与更新日志。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/CodingRewindAppMain.swift">file Sources/CodingRewindApp/CodingRewindAppMain.swift: 将应用菜单 .showAbout 与 .checkForUpdates 统一导向 settingsWindowController?.show(page: .about)，移除标准关于面板调用。</a></li>
+</ul><p>Next: </p></article>
+<article id="settings-about-verification-and-local-install"><h3>全仓门禁通过、PR #32 合并与本机安装</h3><span class="badge">done</span><p>合并前完成双模型对抗审查修复（pro 与 flash；inherit 超时终止），变基至 origin/main 后重跑 ./scripts/check 六道门禁全部通过（Swift 核心 79 项、CLI 1 项、App 74 项、KeyboardShortcuts 92 项、enricher 14 项、Web Clipper 67 项、AppIconVerifierTests 6 项，无 QA plist 泄漏）。PR #32 合并后已重建 /Applications/CodingRewind.app 并通过 codesign 严格签名校验，刷新固定目录辅助程序并以 --background 静默重拉运行；本轮验收仅覆盖自动化单测与包签名启动，未做屏幕手工点击截图。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/32">pull 32: 基于 a5209ffd42f5cfd9987000c89a3df303fdf25120 运行 ./scripts/check 六道门禁全部通过，并在标准 /Applications 目录完成签名安装与后台重拉。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/LifecycleAndUpdaterTests.swift">file Tests/CodingRewindAppTests/LifecycleAndUpdaterTests.swift: 新增主菜单/状态栏路由、AppAboutMetadata 缓存与版本边界及中英双语文案测试。</a></li>
+<li>note 2026-11-15 设置「关于」侧栏全仓门禁与本机重装: Developer ID 签名校验通过（TeamIdentifier LQAVR62TK2，CDHash ad91fb81147864dc1173e404af88ea8d6655a104，二进制 SHA-256 75f1e502a92753228371b09c68b6b6a97b5e407f7112fb5acee4a8e6b73fb5ec），辅助程序已同步至 ~/Library/Application Support/CodingRewind/bin/，后台运行 PID 20787。</li>
+</ul><p>Next: 按需在桌面点击状态栏菜单与设置侧栏「关于」完成实机视觉与交互点检。</p></article>
+</section>
 <section id="cloud-sync-onboarding"><h2>云端同步设置引导与保存时连接校验</h2>
 <article id="cloud-sync-implementation"><h3>三端改名、令牌占位与保存时探测</h3><span class="badge">done</span><p>桌面设置页与 Chrome 扩展设置页把「Memos 连接」改为「云端同步」，页首两行说明本机零配置可用、配置自建 Memos 后可跨设备同步并自动生成 AI 摘要，并附 deploy/vps 部署指南链接。访问令牌框不再回填已保存的值，已保存时提示留空保留，留空保存不覆盖原令牌。服务地址旁新增「打开后台拿令牌」按钮，地址规范化为有效 http(s) 后可点。保存时对 GET /api/memos?pageSize=1 探测，缺地址或令牌时不发请求，HTML 200 与非法 JSON 按失败处理。新增 deploy/vps/README.md，README.md 同步改名。Memos REST 线级契约、存储路径和钥匙串隔离未变。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/31">pull 31: squash 合并至 main（58e29cfc8188c3f13b35b76f735e50bc668c84a8），含桌面端、扩展与文档三组提交。</a></li>
