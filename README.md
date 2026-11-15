@@ -2,7 +2,7 @@
 
 本仓库是 **Coding-Rewind** 的产品规范与统一全栈实现，采用 [MIT License](LICENSE)。
 
-当前发布版本为 `v0.3.1`，同步更新 macOS 桌面应用与 Chrome 网页扩展，包含划词暂存胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获快捷键以及跨端融贯收敛更新。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14，采用 ad-hoc 签名，尚未经过 Developer ID 签名或 Apple 公证。公开包不包含个人 Memos 地址、令牌或 1Password 配置。首次使用需配置自己的 Memos 服务并授予辅助功能权限。
+当前发布版本为 `v0.3.1`，同步更新 macOS 桌面应用与 Chrome 网页扩展，包含划词暂存胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获快捷键以及跨端融贯收敛更新。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14，采用 ad-hoc 签名，尚未经过 Developer ID 签名或 Apple 公证。公开包不包含个人 Memos 地址、令牌或 1Password 配置。桌面端无须配置即可在本机暂存片段并开始对话，首次桌面捕获需授予辅助功能权限；如需跨设备同步、网页剪藏持久化与自动 AI 摘要，可在“云端同步”按需配置自托管 Memos 服务。
 
 当前版本仍有 Antigravity 会话归属、Chrome 扩展生命周期、多卡接聊和引用成文的实机覆盖待完成，见 [issue #14](https://github.com/semantic-craft/coding-rewind/issues/14)。当前状态见 [开发进度](progress/index.html)。修复和后续验收遵循 [代码质量标准](docs/code-quality.md)。
 
@@ -109,8 +109,8 @@ CODING_REWIND_MEMOS_TOKEN_REFERENCE='op://vault/item/password' \
 
 应用与 Chrome 扩展均支持 **跟随系统 / 简体中文 / English** 多语言显示，切换语言后菜单、片段浮窗、划词胶囊与设置窗口立即生效，无须重启应用；云端 `rewind-enricher` 默认按剪藏正文与对话脉络自动选择中文或英文摘要（可通过 `REWIND_SUMMARY_LANGUAGE` 固定为 `zh-Hans` 或 `en`），底层 Memos 标签与引用块字段名在各语言下保持统一。
 
-应用默认显示 Dock 图标，并在“设置 → 通用”提供显示语言、登录时自动打开（`SMAppService` 登录项后台静默启动，不自动弹出浮窗）、自动检查更新（后台定期从 GitHub Releases 下载并经 `SHA256SUMS.txt` 与 `SecStaticCode` 代码签名及 `TeamIdentifier` 防降级校验后一键重启替换，签名权限不兼容时自动转为引导前往 GitHub 手动查看以保护辅助功能授权）以及“选中文本时显示暂存胶囊”开关。点击 Dock 图标可重新打开片段浮窗。菜单栏、主菜单“检查更新…”、浮窗齿轮和 `⌘,` 都指向同一设置窗口。设置分为通用、Memos 连接、快捷键、插件与权限；通用开关与快捷键修改立即保存，连接设置单独保存。
+应用默认显示 Dock 图标，并在“设置 → 通用”提供显示语言、登录时自动打开（`SMAppService` 登录项后台静默启动，不自动弹出浮窗）、自动检查更新（后台定期从 GitHub Releases 下载并经 `SHA256SUMS.txt` 与 `SecStaticCode` 代码签名及 `TeamIdentifier` 防降级校验后一键重启替换，签名权限不兼容时自动转为引导前往 GitHub 手动查看以保护辅助功能授权）以及“选中文本时显示暂存胶囊”开关。点击 Dock 图标可重新打开片段浮窗。菜单栏、主菜单“检查更新…”、浮窗齿轮和 `⌘,` 都指向同一设置窗口。设置分为通用、云端同步、快捷键、插件与权限；通用开关与快捷键修改立即保存，云端同步设置单独保存。
 
 如果菜单栏图标消失，先从 Finder 打开应用，再进入“设置 → 通用 → 打开系统菜单栏设置”。在系统的“允许在菜单栏中显示”列表开启 CodingRewind。应用不会反复覆盖系统的隐藏选择。
 
-连接页会标明由启动环境管理的地址或令牌，并禁用这些字段的编辑。保存反馈保留在当前页；立即同步的反馈显示在“最近操作”中。菜单中的“已配置”只表示地址有效，不代表服务已经连通。
+不配置云端同步时，桌面端仍可在本机暂存片段、查看近 72 小时卡片并交付 Antigravity 或 Codex 开始对话；按需部署自托管 Memos（步骤见 [deploy/vps/README.md](deploy/vps/README.md)）后，可启用跨设备同步、网页剪藏持久化与自动 AI 摘要。在桌面端“设置 → 云端同步”或 Chrome 扩展设置页输入服务地址后，可点击地址旁的“打开后台拿令牌 ↗”按钮直达 Memos 网页获取访问令牌。已保存的访问令牌不会回填明文到输入框，仅调整地址时留空即可保留现有令牌。点击保存后，若服务地址与可用令牌（含已保存的令牌）均已就绪，客户端会自动调用 `/api/memos?pageSize=1` 验证服务连通性与 JSON 响应并直接在设置页显示结果；任一缺失则跳过网络探测。云端同步页会标明由启动环境管理的地址或令牌并禁用对应编辑；立即同步的反馈显示在“最近操作”中，菜单中的“已配置”只表示地址有效，不代表服务已经连通。
