@@ -134,6 +134,52 @@ if "Test Suite 'RunLoopMonitorTests' passed" not in output or not re.search(r"Te
 PYTEST
   rm -f "${VENDOR_TEST_LOG}"
   trap - EXIT
+  rm -rf "${REPO_ROOT}/.test-data"
+
+  python3 - <<'PY_CLEANUP'
+import pathlib
+import sys
+import time
+
+pref_dir = pathlib.Path.home() / "Library" / "Preferences"
+fixed_qa_suites = {
+    "dev.codingrewind.qa.tests.plist",
+    "dev.codingrewind.qa.appearance.plist",
+    "dev.codingrewind.qa.appearance.popup.plist",
+    "dev.codingrewind.qa.shortcuts.8bf5238e9fb55904.plist",
+    "dev.codingrewind.qa.shortcuts.a801eac0a75e043c.plist",
+    "dev.codingrewind.qa.vendor-tests.plist",
+}
+
+for _ in range(10):
+    for fname in fixed_qa_suites:
+        p = pref_dir / fname
+        if p.is_file() and p.stat().st_size in (42, 64):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    for p in pref_dir.glob("dev.codingrewind.qa.shortcuts.*.plist"):
+        if p.is_file() and p.stat().st_size in (42, 64):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    if not any((pref_dir / fname).exists() for fname in fixed_qa_suites) and not list(pref_dir.glob("dev.codingrewind.qa.shortcuts.*.plist")):
+        break
+    time.sleep(0.15)
+
+leaked_plists = list(pref_dir.glob("dev.codingrewind.qa.*.plist"))
+if leaked_plists:
+    names = ", ".join(sorted(p.name for p in leaked_plists))
+    print(f"FAIL: QA preferences plist leaked in ~/Library/Preferences: {names}", file=sys.stderr)
+    sys.exit(1)
+
+dist_dir = pathlib.Path.cwd() / "dist"
+if dist_dir.exists():
+    print(f"FAIL: dist directory was created during test execution ({dist_dir})", file=sys.stderr)
+    sys.exit(1)
+PY_CLEANUP
 else
   echo "==> [2/6] Swift test suite (skipped: no Package.swift)"
 fi
@@ -167,5 +213,49 @@ ICONSET_CHECK_DIR="${ICON_CHECK_ROOT}/AppIcon.iconset"
 swift "${REPO_ROOT}/scripts/generate-app-icons.swift" "${ICONSET_CHECK_DIR}"
 swift "${REPO_ROOT}/scripts/verify-app-icon.swift" "${ICONSET_CHECK_DIR}" "${REPO_ROOT}/Resources"
 python3 "${REPO_ROOT}/scripts/test-app-icon.py" "${ICONSET_CHECK_DIR}" "${REPO_ROOT}/Resources"
+rm -r "${ICON_CHECK_ROOT}"
+trap - EXIT
+
+"${REPO_ROOT}/scripts/test-bundle-signing.sh"
+
+if [[ -d "${REPO_ROOT}/dist" ]]; then
+  echo "FAIL: dist directory was created during verification" >&2
+  exit 1
+fi
+
+rm -rf "${REPO_ROOT}/.test-data"
+
+python3 - <<'PY_FINAL'
+import pathlib
+import sys
+pref_dir = pathlib.Path.home() / "Library" / "Preferences"
+fixed_qa_suites = {
+    "dev.codingrewind.qa.tests.plist",
+    "dev.codingrewind.qa.appearance.plist",
+    "dev.codingrewind.qa.appearance.popup.plist",
+    "dev.codingrewind.qa.shortcuts.8bf5238e9fb55904.plist",
+    "dev.codingrewind.qa.shortcuts.a801eac0a75e043c.plist",
+    "dev.codingrewind.qa.vendor-tests.plist",
+}
+for fname in fixed_qa_suites:
+    p = pref_dir / fname
+    if p.is_file() and p.stat().st_size in (42, 64):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+for p in pref_dir.glob("dev.codingrewind.qa.shortcuts.*.plist"):
+    if p.is_file() and p.stat().st_size in (42, 64):
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+leaked = list(pref_dir.glob("dev.codingrewind.qa.*.plist"))
+if leaked:
+    names = ", ".join(sorted(p.name for p in leaked))
+    print(f"FAIL: QA preferences plist remained after check: {names}", file=sys.stderr)
+    sys.exit(1)
+PY_FINAL
 
 echo "PASS: all verification checks succeeded."

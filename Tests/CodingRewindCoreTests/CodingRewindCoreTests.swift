@@ -201,7 +201,7 @@ struct CodingRewindCoreTests {
     }
 
     private func makeIsolatedDir() throws -> URL {
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/test-data", isDirectory: true)
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".test-data", isDirectory: true)
             .appendingPathComponent("coding-rewind-core-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
@@ -1077,8 +1077,8 @@ struct CodingRewindCoreTests {
         let installedSidecar = AntigravityIntegration.stableSidecarBinaryURL(in: dataDir)
         #expect(!installedSidecar.path.contains("/.build/"))
         #expect(FileManager.default.isExecutableFile(atPath: installedSidecar.path))
-        #expect(FileManager.default.isExecutableFile(atPath: installedLegacyHook.path))
-        #expect(try String(contentsOf: oldSnapshot, encoding: .utf8) == "old user snapshot")
+        #expect(!FileManager.default.fileExists(atPath: installedLegacyHook.path))
+        #expect(!FileManager.default.fileExists(atPath: oldSnapshot.path))
         #expect(FileManager.default.isExecutableFile(atPath: AntigravityIntegration.stableMCPBridgeURL(in: dataDir).path))
 
         let pluginJSON = try #require(

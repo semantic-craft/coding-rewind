@@ -283,16 +283,38 @@ public struct SettingsRootView: View {
             }
             SettingsSection("辅助功能") {
                 SettingsRow("读取所选文本") {
-                    Button(permissionState.isTrusted ? "重新核对权限" : "前往系统设置…") {
-                        onCommand(.requestAccessibility)
-                        permissionState.refresh()
+                    if permissionState.isTrusted {
+                        Button("重新核对权限") {
+                            onCommand(.requestAccessibility)
+                            permissionState.refresh()
+                        }
+                        .rewindButtonRole(.secondary)
+                        .accessibilityLabel("重新核对辅助功能权限")
+                    } else {
+                        HStack(spacing: 8) {
+                            Button("前往系统设置…") {
+                                onCommand(.requestAccessibility)
+                                permissionState.refresh()
+                            }
+                            .rewindButtonRole(.secondary)
+                            .accessibilityLabel("前往系统设置，允许读取所选文本")
+
+                            Button("重置失效授权…") {
+                                onCommand(.resetAccessibility)
+                                permissionState.refresh()
+                            }
+                            .rewindButtonRole(.secondary)
+                            .accessibilityIdentifier("settings.resetAccessibility")
+                        }
                     }
-                    .rewindButtonRole(.secondary)
-                    .accessibilityLabel(permissionState.isTrusted ? "重新核对辅助功能权限" : "前往系统设置，允许读取所选文本")
                 }
-                Text(permissionState.isTrusted ? "已授权，可读取其他应用中所选的文本。" : "未授权，需要在“辅助功能”中允许读取其他应用的所选文本。")
-                    .font(.callout)
-                    .foregroundStyle(permissionState.isTrusted ? Color.secondary : Color.orange)
+                Text(
+                    permissionState.isTrusted
+                        ? "已授权，可读取其他应用中所选的文本。"
+                        : "未授权，需要在系统设置中允许读取其他应用的所选文本。若升级后系统设置中已开启但仍未生效，点击“重置失效授权…”可清除旧版本的失效签名记录。"
+                )
+                .font(.callout)
+                .foregroundStyle(permissionState.isTrusted ? Color.secondary : Color.orange)
             }
         }
     }

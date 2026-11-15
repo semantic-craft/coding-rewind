@@ -6,6 +6,7 @@ import Foundation
 
 public enum AppBundleID {
     public static let selfApp = "dev.codingrewind.app"
+    public static let selfQAApp = "dev.codingrewind.app.qa"
     public static let antigravity = CapturedSelection.antigravityBundleIdentifier
     public static let gemini = "com.google.GeminiMacOS"
     public static let codex = "com.openai.codex"
@@ -19,7 +20,9 @@ public enum AppBundleID {
         _ bundleIdentifier: String?,
         mainBundleIdentifier: String? = Bundle.main.bundleIdentifier
     ) -> Bool {
-        bundleIdentifier == selfApp || bundleIdentifier == mainBundleIdentifier
+        bundleIdentifier == selfApp
+            || bundleIdentifier == selfQAApp
+            || bundleIdentifier == mainBundleIdentifier
     }
 
     public static func isSupportedBrowser(_ bundleIdentifier: String) -> Bool {

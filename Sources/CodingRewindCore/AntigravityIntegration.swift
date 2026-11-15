@@ -36,6 +36,15 @@ public enum AntigravityIntegration {
         let binDir = resolvedData.appendingPathComponent("bin", isDirectory: true)
         try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
 
+        let retiredActiveTurn = resolvedData.appendingPathComponent("active_turn.json")
+        if fm.fileExists(atPath: retiredActiveTurn.path) {
+            try? fm.removeItem(at: retiredActiveTurn)
+        }
+        let retiredHook = binDir.appendingPathComponent("coding-rewind-hook")
+        if fm.fileExists(atPath: retiredHook.path) {
+            try? fm.removeItem(at: retiredHook)
+        }
+
         if let srcBridge = sourceMCPBridgeURL?.standardizedFileURL,
            fm.fileExists(atPath: srcBridge.path) {
             let destBridge = stableMCPBridgeURL(in: resolvedData)

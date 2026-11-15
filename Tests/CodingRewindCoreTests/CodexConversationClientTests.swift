@@ -11,7 +11,7 @@ struct CodexConversationClientTests {
     @MainActor
     func verifyDelivery(mode: String) async throws {
         let repository = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let directory = repository.appendingPathComponent("dist/test-data/codex-" + UUID().uuidString)
+        let directory = repository.appendingPathComponent(".test-data/codex-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let stateURL = directory.appendingPathComponent("state.json")

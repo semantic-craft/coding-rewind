@@ -20,3 +20,4 @@ DerivedData/
 *.xcuserdata/
 dist/
 .scratch/
+.test-data/

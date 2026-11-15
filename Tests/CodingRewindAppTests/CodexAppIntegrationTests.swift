@@ -10,7 +10,7 @@ struct CodexAppIntegrationTests {
     @Test("A configured missing CLI does not fall through to a different installation")
     func explicitBinaryIsAuthoritative() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/codex-discovery-" + UUID().uuidString)
+            .appendingPathComponent(".test-data/codex-discovery-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let bundled = root.appendingPathComponent("Codex.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
         try FileManager.default.createDirectory(at: bundled.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -25,7 +25,7 @@ struct CodexAppIntegrationTests {
     @Test("Delivery merges caller environment overrides while stripping all CODING_REWIND_ keys")
     func deliveryPropagatesCallerEnvironmentWithoutSecrets() async throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/codex-env-" + UUID().uuidString)
+            .appendingPathComponent(".test-data/codex-env-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let dumpFile = root.appendingPathComponent("env.json")

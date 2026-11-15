@@ -9,7 +9,7 @@ import Testing
 struct ConversationHandoffTests {
     private func directory() throws -> URL {
         let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/handoff-" + UUID().uuidString, isDirectory: true)
+            .appendingPathComponent(".test-data/handoff-" + UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

@@ -16,6 +16,7 @@ public enum AppCommand: Equatable, Sendable {
     case openMemosWeb
     case installOrRepairPlugin
     case requestAccessibility
+    case resetAccessibility
     case openSettings
     case selectRecentCard(String)
     case showAbout
@@ -164,6 +165,7 @@ public enum MainMenuBuilder {
 @MainActor
 public final class StatusItemIcon {
     public static let pointSize = NSSize(width: 18, height: 18)
+    private static var cachedBaseTemplateImage: NSImage?
 
     public static func makeImage(
         pendingOutboxCount: Int,
@@ -217,22 +219,31 @@ public final class StatusItemIcon {
     }
 
     public static func loadBaseTemplateImage(bundle: Bundle = .main) -> NSImage {
+        if bundle == .main, let cached = cachedBaseTemplateImage {
+            return cached
+        }
+        let image: NSImage
         if let url1x = bundle.url(forResource: "MenuBarIcon", withExtension: "png"),
            let data1x = try? Data(contentsOf: url1x),
            let rep1x = NSBitmapImageRep(data: data1x) {
             rep1x.size = pointSize
-            let image = NSImage(size: pointSize)
-            image.addRepresentation(rep1x)
+            let loaded = NSImage(size: pointSize)
+            loaded.addRepresentation(rep1x)
             if let url2x = bundle.url(forResource: "MenuBarIcon@2x", withExtension: "png"),
                let data2x = try? Data(contentsOf: url2x),
                let rep2x = NSBitmapImageRep(data: data2x) {
                 rep2x.size = pointSize
-                image.addRepresentation(rep2x)
+                loaded.addRepresentation(rep2x)
             }
-            image.isTemplate = true
-            return image
+            loaded.isTemplate = true
+            image = loaded
+        } else {
+            image = renderFallbackTemplateImage()
         }
-        return renderFallbackTemplateImage()
+        if bundle == .main {
+            cachedBaseTemplateImage = image
+        }
+        return image
     }
 
     public static func renderFallbackTemplateImage() -> NSImage {
@@ -301,11 +312,17 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
     public let statusItem: NSStatusItem
     public let menu: NSMenu
 
+    private struct IconRenderKey: Equatable {
+        let hasPendingOutbox: Bool
+        let isDark: Bool
+    }
+
     private let shortcuts: AppShortcuts
     private let snapshotProvider: @MainActor () -> MenuStatusSnapshot
     private let onCommand: @MainActor (AppCommand) -> Void
     private var appearanceObservation: NSKeyValueObservation?
     private var isPoppingUpMenu = false
+    private var lastIconRenderKey: IconRenderKey?
 
     public init(
         shortcuts: AppShortcuts,
@@ -505,9 +522,16 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func applyIcon(for snapshot: MenuStatusSnapshot) {
+        let effective = statusItem.button?.effectiveAppearance ?? NSApplication.shared.effectiveAppearance
+        let isDark = effective.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let key = IconRenderKey(hasPendingOutbox: snapshot.pendingOutboxCount > 0, isDark: isDark)
+        if key == lastIconRenderKey && statusItem.button?.image != nil {
+            return
+        }
+        lastIconRenderKey = key
         statusItem.button?.image = StatusItemIcon.makeImage(
             pendingOutboxCount: snapshot.pendingOutboxCount,
-            appearance: statusItem.button?.effectiveAppearance
+            appearance: effective
         )
         statusItem.button?.imagePosition = .imageOnly
     }
@@ -518,6 +542,8 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     private let coordinator: AppCoordinator
     private let permissionState: AccessibilityPermissionState
     public let connectionDraft: SettingsConnectionDraft
+    private let permissionPollInterval: Duration
+    private var permissionPollTask: Task<Void, Never>?
     private var hasCenteredOnce = false
 
     public init(
@@ -526,12 +552,14 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         shortcuts: AppShortcuts,
         permissionState: AccessibilityPermissionState = AccessibilityPermissionState(),
         connectionDraft: SettingsConnectionDraft? = nil,
+        permissionPollInterval: Duration = .seconds(1),
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
         let draft = connectionDraft ?? SettingsConnectionDraft(memosURL: coordinator.connectionSettings.memosURL)
         self.coordinator = coordinator
         self.permissionState = permissionState
         self.connectionDraft = draft
+        self.permissionPollInterval = permissionPollInterval
 
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: SettingsLayout.contentSize),
@@ -576,6 +604,28 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         }
         NSApplication.shared.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
+        startPermissionPolling()
+    }
+
+    private func startPermissionPolling() {
+        permissionPollTask?.cancel()
+        permissionPollTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled && self.window?.isVisible == true {
+                try? await Task.sleep(for: self.permissionPollInterval)
+                guard !Task.isCancelled && self.window?.isVisible == true else { break }
+                self.permissionState.refresh()
+            }
+        }
+    }
+
+    public func windowWillClose(_ notification: Notification) {
+        permissionPollTask?.cancel()
+        permissionPollTask = nil
+    }
+
+    public func refreshPermissions() {
+        permissionState.refresh()
     }
 
     public func windowDidBecomeKey(_ notification: Notification) {
