@@ -20,10 +20,13 @@ import {
   extractClipContext
 } from "./extractors.mjs";
 
+import "./i18n.js";
+
 import {
   CLIP_ID_PATTERN,
   MAX_OUTBOX_ITEMS,
   TOAST_MESSAGES,
+  getToastMessages,
   generateClipId,
   normalizeMemosBaseUrl,
   buildAuthHeaders,
@@ -33,7 +36,7 @@ import {
   flushOutbox
 } from "./memos_payload.mjs";
 
-import { testMemosConnection } from "./options.js";
+import { initOptionsPage, probeMemosConnection, testMemosConnection } from "./options.js";
 
 function createMemoryOutboxStorage(initial = []) {
   let state = structuredClone(initial);
@@ -1024,9 +1027,13 @@ test("content.js Hyper+S shortcut accepts only non-repeating Hyper+S and rejects
 
 function createContentScriptHarness({
   extractorsUrl,
-  sendMessageImpl
+  sendMessageImpl,
+  uiLanguage = "auto",
+  browserLanguage = undefined
 } = {}) {
   const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const i18nScriptPath = path.join(extensionDir, "i18n.js");
+  const i18nCode = fs.readFileSync(i18nScriptPath, "utf8");
   const contentScriptPath = path.join(extensionDir, "content.js");
   const contentCode = fs.readFileSync(contentScriptPath, "utf8");
   const resolvedExtractorsUrl = extractorsUrl || pathToFileURL(path.join(extensionDir, "extractors.mjs")).href;
@@ -1235,9 +1242,20 @@ function createContentScriptHarness({
   };
 
   const sentMessages = [];
+  const storageChangedListeners = [];
+  let storedState = { showSelectionPill: true, uiLanguage };
   let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
 
   const fakeChrome = {
+    ...(browserLanguage !== undefined
+      ? {
+          i18n: {
+            getUILanguage() {
+              return browserLanguage;
+            }
+          }
+        }
+      : {}),
     runtime: {
       getURL() {
         return resolvedExtractorsUrl;
@@ -1250,11 +1268,19 @@ function createContentScriptHarness({
     },
     storage: {
       local: {
-        get(_keys, cb) {
-          cb({ showSelectionPill: true });
+        get(keys, cb) {
+          const base =
+            keys && typeof keys === "object" && !Array.isArray(keys) ? { ...keys } : {};
+          const result = { ...base, ...storedState };
+          if (typeof cb === "function") cb(result);
+          return Promise.resolve(result);
         }
       },
-      onChanged: { addListener() {} }
+      onChanged: {
+        addListener(fn) {
+          storageChangedListeners.push(fn);
+        }
+      }
     }
   };
 
@@ -1271,7 +1297,11 @@ function createContentScriptHarness({
     Promise,
     setTimeout: scheduleTimeout,
     clearTimeout: cancelTimeout,
-    navigator: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" },
+    navigator: {
+      platform: "MacIntel",
+      userAgent: "Mozilla/5.0 (Macintosh)",
+      ...(browserLanguage !== undefined ? { language: browserLanguage } : {})
+    },
     location: parsedDoc.location,
     window: fakeWindow,
     document: fakeDocument,
@@ -1279,7 +1309,9 @@ function createContentScriptHarness({
   };
   sandbox.globalThis = sandbox;
 
-  vm.runInNewContext(contentCode, sandbox, {
+  const vmContext = vm.createContext(sandbox);
+  vm.runInContext(i18nCode, vmContext, { filename: i18nScriptPath });
+  vm.runInContext(contentCode, vmContext, {
     filename: contentScriptPath,
     importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
   });
@@ -1287,6 +1319,16 @@ function createContentScriptHarness({
   return {
     advanceTime,
     sentMessages,
+    emitStorageChange(changes, area = "local") {
+      for (const [key, diff] of Object.entries(changes)) {
+        if (diff && Object.prototype.hasOwnProperty.call(diff, "newValue")) {
+          storedState[key] = diff.newValue;
+        }
+      }
+      for (const fn of storageChangedListeners) {
+        fn(changes, area);
+      }
+    },
     setSendMessageHandler(fn) {
       messageHandler = fn;
     },
@@ -1551,4 +1593,334 @@ test("htmlToMarkdown falls back cleanly when DOMParser is unavailable", () => {
   } finally {
     globalThis.DOMParser = originalDOMParser;
   }
+});
+
+test("MV3 _locales catalogs, manifest __MSG__ bindings, and CodingRewindI18n dictionary have full key parity", () => {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
+  const enMessages = JSON.parse(
+    fs.readFileSync(path.join(extensionDir, "_locales", "en", "messages.json"), "utf8")
+  );
+  const zhMessages = JSON.parse(
+    fs.readFileSync(path.join(extensionDir, "_locales", "zh_CN", "messages.json"), "utf8")
+  );
+
+  assert.equal(manifest.default_locale, "en");
+  assert.equal(manifest.name, "__MSG_extName__");
+  assert.equal(manifest.description, "__MSG_extDescription__");
+  assert.equal(manifest.action.default_title, "__MSG_actionTitle__");
+  assert.equal(manifest.commands["save-selection"].description, "__MSG_saveSelectionCommand__");
+  assert.deepEqual(manifest.content_scripts[0].js, ["i18n.js", "content.js"]);
+
+  const expectedLocaleKeys = ["actionTitle", "extDescription", "extName", "saveSelectionCommand"];
+  assert.deepEqual(Object.keys(enMessages).sort(), expectedLocaleKeys);
+  assert.deepEqual(Object.keys(zhMessages).sort(), expectedLocaleKeys);
+  for (const key of expectedLocaleKeys) {
+    assert.equal(typeof enMessages[key].message, "string");
+    assert.ok(enMessages[key].message.length > 0);
+    assert.equal(typeof zhMessages[key].message, "string");
+    assert.ok(zhMessages[key].message.length > 0);
+  }
+
+  const i18n = globalThis.CodingRewindI18n;
+  assert.deepEqual(i18n.SUPPORTED_UI_LANGUAGES, ["auto", "zh-CN", "en"]);
+  assert.deepEqual(
+    Object.keys(i18n.MESSAGES["zh-CN"]).sort(),
+    Object.keys(i18n.MESSAGES.en).sort()
+  );
+});
+
+test("resolveLocale and createTranslator resolve auto, browser languages, and explicit overrides", () => {
+  const { resolveLocale, createTranslator } = globalThis.CodingRewindI18n;
+
+  assert.equal(resolveLocale("auto", "en-US"), "en");
+  assert.equal(resolveLocale("auto", "zh-CN"), "zh-CN");
+  assert.equal(resolveLocale("auto", "zh_CN"), "zh-CN");
+  assert.equal(resolveLocale("auto", "zh-TW"), "zh-CN");
+  assert.equal(resolveLocale("auto", "ja-JP"), "en");
+  assert.equal(resolveLocale("auto", undefined), "zh-CN");
+  assert.equal(resolveLocale("auto", ""), "zh-CN");
+  assert.equal(resolveLocale("en", "zh-CN"), "en");
+  assert.equal(resolveLocale("zh-CN", "en-US"), "zh-CN");
+  assert.equal(resolveLocale("zh-Hans", "en-US"), "zh-CN");
+  assert.equal(resolveLocale("zh", "en-US"), "zh-CN");
+
+  const enTranslator = createTranslator({ preferredLanguage: "auto", browserLanguage: "en-US" });
+  assert.equal(enTranslator.locale, "en");
+  assert.equal(enTranslator("pillReady"), "Stash");
+  assert.equal(enTranslator.t("outboxCount", { count: 3 }), "Pending clips: 3");
+
+  const zhTranslator = createTranslator({ preferredLanguage: "zh-CN", browserLanguage: "en-US" });
+  assert.equal(zhTranslator.locale, "zh-CN");
+  assert.equal(zhTranslator("pillReady"), "暂存");
+  assert.equal(zhTranslator.t("outboxCount", { count: 3 }), "待同步片段：3 条");
+
+  assert.equal(cleanSessionTitle("New conversation - Claude"), "");
+  assert.equal(cleanSessionTitle("未命名对话 - ChatGPT"), "");
+});
+
+test("content.js renders English pill states and updates live on chrome.storage.onChanged", async () => {
+  let resolveSave;
+  const harness = createContentScriptHarness({
+    uiLanguage: "auto",
+    browserLanguage: "en-US",
+    sendMessageImpl: () =>
+      new Promise((resolve) => {
+        resolveSave = resolve;
+      })
+  });
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.ok(pill);
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.getAttribute("aria-label"), "Stash selected text");
+  assert.equal(harness.getPillLabel(), "Stash");
+
+  harness.emitStorageChange({ uiLanguage: { oldValue: "auto", newValue: "zh-CN" } });
+  assert.equal(pill.getAttribute("aria-label"), "暂存选中文本");
+  assert.equal(harness.getPillLabel(), "暂存");
+
+  harness.emitStorageChange({ uiLanguage: { oldValue: "zh-CN", newValue: "en" } });
+  assert.equal(pill.getAttribute("aria-label"), "Stash selected text");
+  assert.equal(harness.getPillLabel(), "Stash");
+
+  pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(harness.getPillLabel(), "Saving…");
+
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  resolveSave({ status: "saved", toast: getToastMessages("en").SAVED });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saved");
+  assert.equal(harness.getPillLabel(), "Synced");
+
+  harness.advanceTime(950);
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  let resolveQueued;
+  harness.setSendMessageHandler(() => new Promise((resolve) => { resolveQueued = resolve; }));
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  assert.equal(harness.getPillLabel(), "Stash");
+
+  pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(harness.getPillLabel(), "Saving…");
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  resolveQueued({ status: "queued", toast: getToastMessages("en").QUEUED });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "queued");
+  assert.equal(harness.getPillLabel(), "Pending sync");
+});
+
+test("probeMemosConnection, saveClipWithOutbox, and background context menu localize to English", async (t) => {
+  const invalidUrl = await probeMemosConnection("not-a-url", "", globalThis.fetch, "en");
+  assert.equal(invalidUrl.ok, false);
+  assert.equal(invalidUrl.message, "Please enter a valid Memos server URL");
+
+  const httpFail = await probeMemosConnection(
+    "https://memos.internal.test",
+    "tok",
+    async () => ({ ok: false, status: 401 }),
+    "en"
+  );
+  assert.equal(httpFail.ok, false);
+  assert.equal(httpFail.message, "Connection failed (HTTP 401)");
+
+  const okConn = await probeMemosConnection(
+    "https://memos.internal.test",
+    "tok",
+    async () => ({ ok: true, status: 200, async json() { return { memos: [] }; } }),
+    "en"
+  );
+  assert.equal(okConn.ok, true);
+  assert.equal(okConn.message, "Connected; clips can be read. Saving has not been verified yet.");
+
+  const storage = createMemoryOutboxStorage();
+  const sampleClip = { selectedMarkdown: "English clip test", sourcePlatform: "chatgpt" };
+
+  const unconf = await saveClipWithOutbox({
+    clip: sampleClip,
+    baseUrl: "",
+    token: "",
+    storage,
+    locale: "en"
+  });
+  assert.equal(unconf.status, "unconfigured");
+  assert.equal(unconf.toast, "Clip saved locally; check Memos URL and access token");
+
+  const queued = await saveClipWithOutbox({
+    clip: sampleClip,
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    storage,
+    fetchImpl: async () => ({ ok: false, status: 503, async json() { return {}; } }),
+    locale: "en"
+  });
+  assert.equal(queued.status, "queued");
+  assert.equal(queued.toast, "Clip saved locally; will retry sync automatically");
+
+  const saved = await saveClipWithOutbox({
+    clip: sampleClip,
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    storage: createMemoryOutboxStorage(),
+    fetchImpl: async () => ({ ok: true, status: 200, async json() { return { name: "memos/en-1" }; } }),
+    locale: "en"
+  });
+  assert.equal(saved.status, "saved");
+  assert.equal(saved.toast, "Clip saved to Memos");
+
+  const originalChrome = globalThis.chrome;
+  const originalSelf = globalThis.self;
+  t.after(() => {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalSelf === undefined) delete globalThis.self;
+    else globalThis.self = originalSelf;
+  });
+
+  let installedListener;
+  let storageChangedListener;
+  const createdMenus = [];
+  const updatedMenus = [];
+  let currentLang = "auto";
+  globalThis.chrome = {
+    i18n: { getUILanguage: () => "en-US" },
+    runtime: {
+      onInstalled: { addListener(fn) { installedListener = fn; } },
+      onStartup: { addListener() {} },
+      onMessage: { addListener() {} }
+    },
+    contextMenus: {
+      removeAll(cb) { cb(); },
+      create(item) { createdMenus.push(item); },
+      update(id, patch, cb) { updatedMenus.push({ id, patch }); if (cb) cb(); },
+      onClicked: { addListener() {} }
+    },
+    commands: { onCommand: { addListener() {} } },
+    storage: {
+      local: {
+        async get() { return { uiLanguage: currentLang, outbox: [] }; },
+        async set() {}
+      },
+      onChanged: { addListener(fn) { storageChangedListener = fn; } }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+
+  await import("./background.js?live-i18n-menu");
+  installedListener();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(createdMenus.at(-1)?.title, "Save selection to Coding Rewind");
+
+  currentLang = "zh-CN";
+  storageChangedListener({ uiLanguage: { oldValue: "auto", newValue: "zh-CN" } }, "local");
+  assert.equal(updatedMenus.at(-1)?.patch.title, "保存所选文本到 Coding Rewind");
+
+  currentLang = "en";
+  storageChangedListener({ uiLanguage: { oldValue: "zh-CN", newValue: "en" } }, "local");
+  assert.equal(updatedMenus.at(-1)?.patch.title, "Save selection to Coding Rewind");
+});
+
+test("options.html and initOptionsPage switch UI language live and persist uiLanguage immediately", async (t) => {
+  const originalDocument = globalThis.document;
+  const originalChrome = globalThis.chrome;
+  t.after(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  });
+
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const optionsHtml = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
+  const parsed = parseHtmlDocument(optionsHtml);
+
+  const enhanceNode = (node) => {
+    const listeners = new Map();
+    let customText = null;
+    Object.defineProperty(node, "textContent", {
+      configurable: true,
+      get() {
+        return customText !== null ? customText : node.childNodes.map((c) => c.textContent).join("");
+      },
+      set(val) {
+        customText = String(val);
+      }
+    });
+    node.setAttribute = (name, val) => {
+      node.attributes[String(name).toLowerCase()] = String(val);
+    };
+    node.addEventListener = (type, fn) => {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(fn);
+    };
+    node.dispatch = async (type, event = {}) => {
+      for (const fn of listeners.get(type) || []) {
+        await fn({ preventDefault() {}, ...event });
+      }
+    };
+    for (const child of node.children || []) {
+      enhanceNode(child);
+    }
+  };
+  enhanceNode(parsed.body);
+
+  parsed.documentElement = parsed.querySelector("html") || { lang: "zh-CN" };
+  parsed.getElementById = (id) => parsed.querySelector(`#${id}`);
+
+  const persisted = {
+    memosUrl: "https://memos.internal.test",
+    memosToken: "tok-1",
+    showSelectionPill: true,
+    uiLanguage: "auto",
+    outbox: [{ clipId: "rw-1" }, { clipId: "rw-2" }]
+  };
+  const setCalls = [];
+
+  globalThis.document = parsed;
+  globalThis.chrome = {
+    i18n: { getUILanguage: () => "zh-CN" },
+    permissions: { async request() { return true; } },
+    runtime: { async sendMessage() { return { ok: true, flushed: 2, remaining: 0 }; } },
+    storage: {
+      local: {
+        async get() { return { ...persisted }; },
+        async set(patch) {
+          setCalls.push(patch);
+          Object.assign(persisted, patch);
+        }
+      },
+      onChanged: { addListener() {} }
+    }
+  };
+
+  initOptionsPage();
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(parsed.title, "Coding Rewind 网页扩展设置");
+  assert.equal(parsed.getElementById("test-btn").textContent, "测试连接");
+  assert.equal(parsed.getElementById("outbox-count").textContent, "待同步片段：2 条");
+
+  const languageSelect = parsed.getElementById("ui-language");
+  languageSelect.value = "en";
+  await languageSelect.dispatch("change");
+
+  assert.deepEqual(setCalls.at(-1), { uiLanguage: "en" });
+  assert.equal(parsed.documentElement.lang, "en");
+  assert.equal(parsed.title, "Coding Rewind Web Clipper Settings");
+  assert.equal(parsed.getElementById("connection-heading").textContent, "Memos Connection");
+  assert.equal(parsed.getElementById("test-btn").textContent, "Test Connection");
+  assert.equal(parsed.getElementById("memos-url").placeholder, "Enter Memos server URL");
+  assert.equal(parsed.getElementById("outbox-count").textContent, "Pending clips: 2");
+  assert.equal(parsed.getElementById("save-btn").textContent, "Save Settings");
+
+  await parsed.getElementById("settings-form").dispatch("submit");
+  assert.equal(parsed.getElementById("status").textContent, "Settings saved");
+  assert.equal(persisted.uiLanguage, "en");
 });

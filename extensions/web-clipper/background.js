@@ -1,18 +1,29 @@
 // SPDX-License-Identifier: MIT
 // Adapted from MIT-licensed background dispatch patterns in mem0ai/mem0-chrome-extension.
 
+import "./i18n.js";
 import { buildFallbackClip } from "./extractors.mjs";
 import { flushOutbox, saveClipWithOutbox } from "./memos_payload.mjs";
 
 const CONTEXT_MENU_ID = "save-to-coding-rewind";
 const OUTBOX_ALARM_NAME = "rewind-outbox-flush";
+const i18n = globalThis.CodingRewindI18n;
 
 let serialQueue = Promise.resolve();
+let cachedUiLanguage = "auto";
 
 function runSerialized(task) {
   const next = serialQueue.then(task, task);
   serialQueue = next.catch(() => {});
   return next;
+}
+
+function resolveExtensionLocale(preferredLanguage = cachedUiLanguage) {
+  const browserLanguage =
+    typeof chrome !== "undefined" && chrome.i18n && typeof chrome.i18n.getUILanguage === "function"
+      ? chrome.i18n.getUILanguage()
+      : undefined;
+  return i18n.resolveLocale(preferredLanguage, browserLanguage);
 }
 
 const chromeOutboxStorage = {
@@ -26,18 +37,29 @@ const chromeOutboxStorage = {
 };
 
 async function getMemosSettings() {
-  const data = await chrome.storage.local.get(["memosUrl", "memosToken"]);
+  const data = await chrome.storage.local.get(["memosUrl", "memosToken", "uiLanguage"]);
+  if (typeof data?.uiLanguage === "string") {
+    cachedUiLanguage = data.uiLanguage;
+  }
   return {
-    baseUrl: typeof data.memosUrl === "string" ? data.memosUrl : "",
-    token: typeof data.memosToken === "string" ? data.memosToken : ""
+    baseUrl: typeof data?.memosUrl === "string" ? data.memosUrl : "",
+    token: typeof data?.memosToken === "string" ? data.memosToken : "",
+    locale: resolveExtensionLocale(cachedUiLanguage)
   };
 }
 
-function setupMenusAndAlarms() {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
+async function setupMenusAndAlarms() {
+  try {
+    const data = await chrome.storage?.local?.get?.(["uiLanguage"]);
+    if (typeof data?.uiLanguage === "string") {
+      cachedUiLanguage = data.uiLanguage;
+    }
+  } catch {}
+  const locale = resolveExtensionLocale(cachedUiLanguage);
+  chrome.contextMenus?.removeAll?.(() => {
+    chrome.contextMenus?.create?.({
       id: CONTEXT_MENU_ID,
-      title: "保存所选文本到 Coding Rewind",
+      title: i18n.t(locale, "contextMenuSaveSelection"),
       contexts: ["selection"]
     });
   });
@@ -53,7 +75,7 @@ async function ensureContentScriptAndExtract(tabId) {
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
-      files: ["content.js"]
+      files: ["i18n.js", "content.js"]
     });
     const retryResp = await chrome.tabs.sendMessage(tabId, { type: "REWIND_EXTRACT_SELECTION" });
     if (retryResp && retryResp.clip) return retryResp.clip;
@@ -75,16 +97,22 @@ async function notifyTabToast(tabId, result) {
 async function processClipSave(clip) {
   try {
     return await runSerialized(async () => {
-      const { baseUrl, token } = await getMemosSettings();
+      const { baseUrl, token, locale } = await getMemosSettings();
       return saveClipWithOutbox({
         clip,
         baseUrl,
         token,
-        storage: chromeOutboxStorage
+        storage: chromeOutboxStorage,
+        locale
       });
     });
   } catch {
-    return { status: "error", queued: false, toast: "保存失败，未能确认片段已保存到 Memos 或本机" };
+    const locale = resolveExtensionLocale(cachedUiLanguage);
+    return {
+      status: "error",
+      queued: false,
+      toast: i18n.t(locale, "toastSaveUnconfirmedError")
+    };
   }
 }
 
@@ -123,13 +151,28 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
 
 if (typeof chrome !== "undefined" && chrome.runtime) {
   chrome.runtime.onInstalled.addListener(() => {
-    setupMenusAndAlarms();
+    void setupMenusAndAlarms();
     void triggerFlushOutbox();
   });
 
   chrome.runtime.onStartup.addListener(() => {
-    setupMenusAndAlarms();
+    void setupMenusAndAlarms();
     void triggerFlushOutbox();
+  });
+
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area === "local" && changes.uiLanguage) {
+      cachedUiLanguage =
+        typeof changes.uiLanguage.newValue === "string" ? changes.uiLanguage.newValue : "auto";
+      const locale = resolveExtensionLocale(cachedUiLanguage);
+      chrome.contextMenus?.update?.(
+        CONTEXT_MENU_ID,
+        { title: i18n.t(locale, "contextMenuSaveSelection") },
+        () => {
+          void chrome.runtime?.lastError;
+        }
+      );
+    }
   });
 
   chrome.contextMenus.onClicked.addListener((info, tab) => {

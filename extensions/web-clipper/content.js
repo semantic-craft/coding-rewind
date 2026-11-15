@@ -11,6 +11,16 @@
     (globalThis.navigator && (navigator.platform || navigator.userAgent)) || ""
   );
   const CAPTURE_SHORTCUT_HINT = IS_APPLE_PLATFORM ? "⌃⌥⇧⌘S" : "Alt+Shift+S";
+  const i18n = globalThis.CodingRewindI18n;
+
+  function detectBrowserLanguage() {
+    return (
+      (typeof chrome !== "undefined" && chrome.i18n && typeof chrome.i18n.getUILanguage === "function"
+        ? chrome.i18n.getUILanguage()
+        : undefined) ||
+      (globalThis.navigator && typeof navigator.language === "string" ? navigator.language : undefined)
+    );
+  }
 
   let extractorsModulePromise = null;
   let shadowRootRef = null;
@@ -26,6 +36,7 @@
   let pillState = "hidden";
   let lastAnchorRect = null;
   let showSelectionPill = true;
+  let currentLocale = i18n.resolveLocale("auto", detectBrowserLanguage());
   let lastTriggerAt = 0;
 
   function isHyperCaptureShortcutEvent(event) {
@@ -240,7 +251,7 @@
     pillEl.type = "button";
     pillEl.className = "rw-pill";
     pillEl.tabIndex = -1;
-    pillEl.setAttribute("aria-label", "暂存选中文本");
+    pillEl.setAttribute("aria-label", i18n.t(currentLocale, "pillAriaLabel"));
 
     pillIconEl = document.createElement("span");
     pillIconEl.className = "rw-pill-icon";
@@ -273,27 +284,39 @@
     if (!pillEl) return;
     pillState = state;
     pillEl.setAttribute("data-state", state);
+    pillEl.setAttribute("aria-label", i18n.t(currentLocale, "pillAriaLabel"));
     if (state === "saving") {
       pillIconEl.hidden = false;
       pillIconEl.textContent = "…";
-      pillLabelEl.textContent = "暂存中…";
+      pillLabelEl.textContent = i18n.t(currentLocale, "pillSaving");
       pillShortcutEl.hidden = true;
     } else if (state === "saved") {
       pillIconEl.hidden = false;
       pillIconEl.textContent = "✓";
-      pillLabelEl.textContent = "已同步";
+      pillLabelEl.textContent = i18n.t(currentLocale, "pillSaved");
       pillShortcutEl.hidden = true;
     } else if (state === "queued") {
       pillIconEl.hidden = false;
       pillIconEl.textContent = "✓";
-      pillLabelEl.textContent = "待同步";
+      pillLabelEl.textContent = i18n.t(currentLocale, "pillQueued");
       pillShortcutEl.hidden = true;
     } else {
       pillIconEl.hidden = true;
       pillIconEl.textContent = "";
-      pillLabelEl.textContent = "暂存";
+      pillLabelEl.textContent = i18n.t(currentLocale, "pillReady");
       pillShortcutEl.textContent = CAPTURE_SHORTCUT_HINT;
       pillShortcutEl.hidden = false;
+    }
+  }
+
+  function refreshLocalizedPill() {
+    if (!pillEl) return;
+    pillEl.setAttribute("aria-label", i18n.t(currentLocale, "pillAriaLabel"));
+    if (pillState !== "hidden") {
+      applyPillVisualState(pillState);
+      if (lastAnchorRect && pillEl.style.display !== "none") {
+        positionPillAtRect(lastAnchorRect);
+      }
     }
   }
 
@@ -418,7 +441,7 @@
       }
     } catch {
       if (morphPill) hidePill();
-      showToast("保存失败，请重试", "error");
+      showToast(i18n.t(currentLocale, "toastSaveRetryError"), "error");
     }
   }
 
@@ -462,16 +485,26 @@
     pillEl.style.visibility = "visible";
   }
 
-  chrome.storage?.local?.get(["showSelectionPill"], (items) => {
+  chrome.storage?.local?.get({ showSelectionPill: true, uiLanguage: "auto" }, (items) => {
     if (items && typeof items.showSelectionPill === "boolean") {
       showSelectionPill = items.showSelectionPill;
     }
+    const nextPref = typeof items?.uiLanguage === "string" ? items.uiLanguage : "auto";
+    currentLocale = i18n.resolveLocale(nextPref, detectBrowserLanguage());
+    refreshLocalizedPill();
   });
 
   chrome.storage?.onChanged?.addListener((changes, area) => {
-    if (area === "local" && changes.showSelectionPill) {
+    if (area !== "local") return;
+    if (changes.showSelectionPill) {
       showSelectionPill = changes.showSelectionPill.newValue !== false;
       if (!showSelectionPill) hidePill();
+    }
+    if (changes.uiLanguage) {
+      const nextPref =
+        typeof changes.uiLanguage.newValue === "string" ? changes.uiLanguage.newValue : "auto";
+      currentLocale = i18n.resolveLocale(nextPref, detectBrowserLanguage());
+      refreshLocalizedPill();
     }
   });
 

@@ -1,13 +1,21 @@
 // SPDX-License-Identifier: MIT
 
+import "./i18n.js";
+
 export const CLIP_ID_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$/;
 export const MAX_OUTBOX_ITEMS = 50;
 
-export const TOAST_MESSAGES = Object.freeze({
-  SAVED: "片段已保存到 Memos",
-  QUEUED: "片段已保存到本机，稍后将自动重试同步",
-  UNCONFIGURED: "片段已保存到本机，请检查 Memos 服务地址和访问令牌"
-});
+export function getToastMessages(locale = "zh-CN") {
+  const i18n = globalThis.CodingRewindI18n;
+  const resolved = i18n.resolveLocale(locale);
+  return Object.freeze({
+    SAVED: i18n.t(resolved, "toastSaved"),
+    QUEUED: i18n.t(resolved, "toastQueued"),
+    UNCONFIGURED: i18n.t(resolved, "toastUnconfigured")
+  });
+}
+
+export const TOAST_MESSAGES = getToastMessages("zh-CN");
 
 const ALPHANUM = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -342,8 +350,10 @@ export async function saveClipWithOutbox({
   storage,
   fetchImpl = globalThis.fetch,
   nowMs,
-  randomFn
+  randomFn,
+  locale = "zh-CN"
 }) {
+  const toasts = getToastMessages(locale);
   const envelope = createOutboxEnvelope(clip, { nowMs, randomFn });
   const normalizedUrl = normalizeMemosBaseUrl(baseUrl);
 
@@ -352,7 +362,7 @@ export async function saveClipWithOutbox({
     await storage.setOutbox(updated);
     return {
       status: "unconfigured",
-      toast: TOAST_MESSAGES.UNCONFIGURED,
+      toast: toasts.UNCONFIGURED,
       clipId: envelope.clipId,
       queued: true,
       outboxSize: updated.length
@@ -371,7 +381,7 @@ export async function saveClipWithOutbox({
   if (delivery.ok) {
     return {
       status: "saved",
-      toast: TOAST_MESSAGES.SAVED,
+      toast: toasts.SAVED,
       clipId: envelope.clipId,
       serverId: delivery.serverId,
       queued: false
@@ -385,7 +395,7 @@ export async function saveClipWithOutbox({
   if (!delivery.retryable && (delivery.status === 401 || delivery.status === 403)) {
     return {
       status: "unconfigured",
-      toast: TOAST_MESSAGES.UNCONFIGURED,
+      toast: toasts.UNCONFIGURED,
       clipId: envelope.clipId,
       queued: true,
       outboxSize: updated.length
@@ -394,7 +404,7 @@ export async function saveClipWithOutbox({
 
   return {
     status: "queued",
-    toast: TOAST_MESSAGES.QUEUED,
+    toast: toasts.QUEUED,
     clipId: envelope.clipId,
     queued: true,
     outboxSize: updated.length
