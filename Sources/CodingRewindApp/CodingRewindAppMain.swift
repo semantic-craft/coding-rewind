@@ -235,7 +235,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             coordinator?.focusAndCheckCard(id: cardID)
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
         case .showAbout:
-            let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.3.1"
+            let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.3.2"
             NSApplication.shared.activate(ignoringOtherApps: true)
             NSApplication.shared.orderFrontStandardAboutPanel(options: [
                 .applicationName: "Coding Rewind",

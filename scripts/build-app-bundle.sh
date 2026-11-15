@@ -104,9 +104,9 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.1</string>
+    <string>0.3.2</string>
     <key>CFBundleVersion</key>
-    <string>5</string>
+    <string>6</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
@@ -121,13 +121,44 @@ PLIST
 
 if [[ "${CODING_REWIND_QA:-0}" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.codingrewind.app.qa" "${CONTENTS_DIR}/Info.plist"
+    SIGN_IDENTITY="-"
+elif [[ -n "${CODING_REWIND_SIGN_IDENTITY:-}" ]]; then
+    SIGN_IDENTITY="${CODING_REWIND_SIGN_IDENTITY}"
+else
+    SECURITY_OUTPUT="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null || true)"
+    DEV_ID="$(echo "${SECURITY_OUTPUT}" | grep -E '[0-9A-Fa-f]{40} "Developer ID Application:' | grep -oE '[0-9A-Fa-f]{40}' | head -n 1 || true)"
+    APPLE_DEV="$(echo "${SECURITY_OUTPUT}" | grep -E '[0-9A-Fa-f]{40} "Apple Development:' | grep -oE '[0-9A-Fa-f]{40}' | head -n 1 || true)"
+    if [[ -n "${DEV_ID}" ]]; then
+        SIGN_IDENTITY="${DEV_ID}"
+    elif [[ -n "${APPLE_DEV}" ]]; then
+        SIGN_IDENTITY="${APPLE_DEV}"
+    else
+        SIGN_IDENTITY="-"
+    fi
 fi
 
-codesign --force --deep --sign - "${APP_BUNDLE}"
+for helper in "${HELPERS_DIR}"/*; do
+    [[ -f "${helper}" ]] || continue
+    if [[ "${SIGN_IDENTITY}" == "-" ]]; then
+        codesign --force --sign - "${helper}"
+    else
+        codesign --force --sign "${SIGN_IDENTITY}" --timestamp=none "${helper}"
+    fi
+done
+
+if [[ "${SIGN_IDENTITY}" == "-" ]]; then
+    codesign --force --sign - "${APP_BUNDLE}"
+else
+    codesign --force --sign "${SIGN_IDENTITY}" --timestamp=none "${APP_BUNDLE}"
+fi
 codesign --verify --deep --strict "${APP_BUNDLE}"
 if [[ "$(/usr/bin/file -b "${MACOS_DIR}/CodingRewindApp")" != Mach-O* ]]; then
     echo "Error: the app bundle executable must be the native Mach-O application" >&2
     exit 1
+fi
+
+if [[ "${APP_BUNDLE}" != "/Applications/CodingRewind.app" ]]; then
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "${APP_BUNDLE}" >/dev/null 2>&1 || true
 fi
 
 echo "Built and verified app bundle at ${APP_BUNDLE}"
