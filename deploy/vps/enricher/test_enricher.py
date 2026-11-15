@@ -534,6 +534,159 @@ class EnricherUnitTests(unittest.TestCase):
             upstream_srv.shutdown()
             upstream_srv.server_close()
 
+    def test_detect_and_resolve_summary_language(self) -> None:
+        self.assertEqual(
+            enricher.detect_clip_language("如何使用 Swift Actor 隔离共享状态？"),
+            "zh-Hans",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "```swift\nactor Store { var items: [String] = [] }\n```",
+                "Session Title: 并发重构\nPrompt: 请给出最小示例",
+            ),
+            "zh-Hans",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "Use actor isolation to eliminate data races:\n```swift\n// 中文注释 inside fenced code\nactor Store {}\n```\nhttps://example.com/docs",
+                "Session Title: Swift Concurrency\nPrompt: How do we isolate mutable state?",
+            ),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "```python\ndef compute_digest(payload: bytes) -> str:\n    return payload.hex()\n```",
+                "Session Title: \nPrompt: \n\n### Recent Turns\nUser: ```python\nx = 1\n```\nAssistant: ```python\nx = 2\n```",
+            ),
+            "zh-Hans",
+        )
+        self.assertEqual(enricher.detect_clip_language("", None), "zh-Hans")
+
+        self.assertEqual(enricher.resolve_summary_language("zh", "English words here"), "zh-Hans")
+        self.assertEqual(enricher.resolve_summary_language("zh-CN", "English words here"), "zh-Hans")
+        self.assertEqual(enricher.resolve_summary_language("zh-Hans", "English words here"), "zh-Hans")
+        self.assertEqual(enricher.resolve_summary_language("en", "中文内容"), "en")
+        self.assertEqual(enricher.resolve_summary_language("auto", "Two English words"), "en")
+        self.assertEqual(enricher.resolve_summary_language("auto", "包含中文"), "zh-Hans")
+
+    def test_english_and_auto_summary_language_preserve_wire_headers_and_verbatim_body(self) -> None:
+        raw_en = (
+            "#rewind/pending #source/claude\n\n"
+            "> **Source:** [Actor Isolation](https://claude.ai/chat/en-1) · 2026-11-15T04:00:00Z\n\n"
+            "Keep `Sendable` checks strict across module boundaries."
+        )
+        parsed = enricher.parse_raw_memo(raw_en)
+        assert parsed is not None
+
+        fallback_en = enricher.build_enriched_content(parsed, {}, language="en")
+        self.assertIn("> **Title:** Code Snippet Excerpt", fallback_en)
+        self.assertIn("> **Session:** Direct Capture Session", fallback_en)
+        self.assertIn("> **Context:** Original clip preserved for follow-up synthesis.", fallback_en)
+        self.assertIn("> **Keywords:** rewind", fallback_en)
+
+        fallback_zh = enricher.build_enriched_content(parsed, {}, language="zh-Hans")
+        self.assertIn("> **Title:** 代码片段摘录", fallback_zh)
+        self.assertIn("> **Session:** 直接捕获会话", fallback_zh)
+        self.assertIn("> **Context:** 已保留原始片段供后续串联分析。", fallback_zh)
+
+        state = MockBackendState()
+        state.ai_response = {
+            "title": "Strict Sendable Boundaries",
+            "session_topic": "Actor Isolation",
+            "context_summary": "Enforces strict Sendable checking across Swift module boundaries.",
+            "keywords": ["Swift", "Sendable"],
+        }
+        srv, base_url = _start_mock_upstream(state)
+        try:
+            en_verbatim = "Keep `Sendable` checks strict across module boundaries.\n\n```swift\npublic struct Item: Sendable {}\n```"
+            zh_verbatim = "在模块边界保持严格的 `Sendable` 检查。"
+            code_only_verbatim = "```rust\nfn main() {}\n```"
+
+            state.memos["rw-auto-en"] = {
+                "name": "memos/rw-auto-en",
+                "createTime": "2026-11-15T04:00:00Z",
+                "content": (
+                    "#rewind/pending #rewind/has-ctx #source/claude\n\n"
+                    "> **Source:** [Actor Isolation](https://claude.ai/chat/en-1) · 2026-11-15T04:00:00Z\n\n"
+                    + en_verbatim
+                ),
+            }
+            state.comments["rw-auto-en"] = [
+                {
+                    "name": "memos/rw-auto-en-ctx",
+                    "content": (
+                        "<!-- rewind-context-v1 -->\n"
+                        "Session Title: Actor Isolation\n"
+                        "Prompt: How should we enforce Sendable across modules?\n"
+                    ),
+                }
+            ]
+            state.memos["rw-auto-zh"] = {
+                "name": "memos/rw-auto-zh",
+                "createTime": "2026-11-15T04:01:00Z",
+                "content": "#rewind/pending #source/chatgpt\n\n" + zh_verbatim,
+            }
+            state.memos["rw-auto-code"] = {
+                "name": "memos/rw-auto-code",
+                "createTime": "2026-11-15T04:02:00Z",
+                "content": "#rewind/pending #source/macos\n\n" + code_only_verbatim,
+            }
+
+            svc = enricher.EnricherService(
+                memos_url=base_url,
+                memos_token="memos-tok",
+                ai_base_url=f"{base_url}/v1",
+                ai_api_key="ai-tok",
+                ai_model="qwen-plus",
+                summary_language="auto",
+            )
+            self.assertEqual(svc.process_memo(state.memos["rw-auto-en"]), "enriched")
+            self.assertEqual(state.ai_calls[0]["messages"][0]["content"], enricher.SYSTEM_PROMPT_EN)
+            en_patched = state.memos["rw-auto-en"]["content"]
+            expected_en_prefix = (
+                "#rewind/ready #source/claude\n\n"
+                "> **Title:** Strict Sendable Boundaries\n"
+                "> **Session:** Actor Isolation\n"
+                "> **Context:** Enforces strict Sendable checking across Swift module boundaries.\n"
+                "> **Keywords:** Swift, Sendable\n"
+                "> **Source:** [Actor Isolation](https://claude.ai/chat/en-1) · 2026-11-15T04:00:00Z\n\n"
+            )
+            self.assertTrue(en_patched.startswith(expected_en_prefix))
+            self.assertEqual(en_patched[len(expected_en_prefix) :], en_verbatim)
+
+            self.assertEqual(svc.process_memo(state.memos["rw-auto-zh"]), "enriched")
+            self.assertEqual(state.ai_calls[1]["messages"][0]["content"], enricher.SYSTEM_PROMPT)
+            self.assertTrue(state.memos["rw-auto-zh"]["content"].endswith("\n\n" + zh_verbatim))
+
+            self.assertEqual(svc.process_memo(state.memos["rw-auto-code"]), "enriched")
+            self.assertEqual(state.ai_calls[2]["messages"][0]["content"], enricher.SYSTEM_PROMPT)
+            self.assertTrue(state.memos["rw-auto-code"]["content"].endswith("\n\n" + code_only_verbatim))
+
+            state.ai_response = {}
+            state.memos["rw-en-empty-meta"] = {
+                "name": "memos/rw-en-empty-meta",
+                "createTime": "2026-11-15T04:03:00Z",
+                "content": "#rewind/pending #source/web\n\n" + code_only_verbatim,
+            }
+            en_forced = enricher.EnricherService(
+                memos_url=base_url,
+                memos_token="memos-tok",
+                ai_base_url=f"{base_url}/v1",
+                ai_api_key="ai-tok",
+                ai_model="qwen-plus",
+                summary_language="en",
+            )
+            self.assertEqual(en_forced.process_memo(state.memos["rw-en-empty-meta"]), "enriched")
+            self.assertEqual(state.ai_calls[3]["messages"][0]["content"], enricher.SYSTEM_PROMPT_EN)
+            forced_patched = state.memos["rw-en-empty-meta"]["content"]
+            self.assertIn("> **Title:** Code Snippet Excerpt\n", forced_patched)
+            self.assertIn("> **Session:** Direct Capture Session\n", forced_patched)
+            self.assertIn("> **Context:** Original clip preserved for follow-up synthesis.\n", forced_patched)
+            self.assertTrue(forced_patched.endswith("\n\n" + code_only_verbatim))
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
 
 class MemosMcpBridgeTests(unittest.TestCase):
     def setUp(self) -> None:
