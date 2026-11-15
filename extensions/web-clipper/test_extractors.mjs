@@ -799,6 +799,258 @@ test("buildMemosWirePayloads blocks unsafe URL schemes and percent-encodes paren
   );
 });
 
+test("extractSessionTitle strips og:site_name suffixes across separators and falls back to og:title on web pages", () => {
+  const separators = [" - ", " | ", " — ", " · ", " :: "];
+  for (const sep of separators) {
+    const doc = parseHtmlDocument(
+      `<html><head>
+        <title>Async Cancellation Patterns${sep}MDN Web Docs</title>
+        <meta property="og:site_name" content="mdn web docs">
+      </head><body><p>Body</p></body></html>`,
+      { url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript" }
+    );
+    assert.equal(
+      extractSessionTitle(doc, "https://developer.mozilla.org/en-US/docs/Web/JavaScript"),
+      "Async Cancellation Patterns",
+      `separator ${JSON.stringify(sep)}`
+    );
+  }
+
+  const fallbackDoc = parseHtmlDocument(
+    `<html><head>
+      <title>   </title>
+      <meta property="og:site_name" content="Rust Blog">
+      <meta property="og:title" content="Pinning and Self-Referential Types | Rust Blog">
+    </head><body><h1>Ignored H1</h1></body></html>`,
+    { url: "https://blog.rust-lang.org/2026/pinning" }
+  );
+  assert.equal(
+    extractSessionTitle(fallbackDoc, "https://blog.rust-lang.org/2026/pinning"),
+    "Pinning and Self-Referential Types"
+  );
+});
+
+test("defuddle-grade code normalization preserves Shiki lines, strips highlighter gutters, and converts GitHub code tables", () => {
+  const shikiHtml = `<pre class="shiki"><code class="language-ts"><span class="line"><span>const a = 1;</span></span>
+<span class="line"></span>
+<span class="line"><span>const b = 2;</span></span></code></pre>`;
+  assert.equal(htmlToMarkdown(shikiHtml), "```ts\nconst a = 1;\n\nconst b = 2;\n```");
+
+  const ecHtml = `<pre data-lang="rust"><code><div class="ec-line"><div class="gutter">1</div><div class="code">fn main() {<br></div></div>
+<div class="ec-line"><div class="gutter">2</div><div class="code">    println!("ok");<br></div></div>
+<div class="ec-line"><div class="gutter">3</div><div class="code">}</div></div></code></pre>`;
+  assert.equal(htmlToMarkdown(ecHtml), '```rust\nfn main() {\n    println!("ok");\n}\n```');
+
+  const pygmentsAndPrismHtml = `<pre class="syntax-go"><span class="line-numbers-rows"><span></span><span></span></span><code><span class="lineno">1 </span>package main
+<span class="lineno">2 </span><span class="react-syntax-highlighter-line-number">2</span><span data-line-number="2"></span>func run() {}</code></pre>`;
+  assert.equal(htmlToMarkdown(pygmentsAndPrismHtml), "```go\npackage main\nfunc run() {}\n```");
+
+  const rougeTableHtml = `<div class="language-ruby"><table class="rouge-table"><tbody><tr>
+    <td class="rouge-gutter gl"><pre class="lineno">1\n2</pre></td>
+    <td class="rouge-code"><pre>puts :hello\nputs :world</pre></td>
+  </tr></tbody></table></div>`;
+  assert.equal(htmlToMarkdown(rougeTableHtml), "```ruby\nputs :hello\nputs :world\n```");
+
+  const chromaHtml = `<div class="highlight"><table class="lntable"><tr>
+    <td class="lntd"><pre><code><span class="lnt">1\n</span><span class="lnt">2\n</span></code></pre></td>
+    <td class="lntd"><pre><code class="language-go">x := 1\ny := 2</code></pre></td>
+  </tr></table></div>`;
+  assert.equal(htmlToMarkdown(chromaHtml), "```go\nx := 1\ny := 2\n```");
+
+  const githubTableDoc = parseHtmlDocument(
+    `<div class="highlight highlight-source-python"><table class="highlight"><tbody>
+      <tr id="row-1"><td class="blob-num" data-line-number="1"></td><td class="blob-code">def compute(x):</td></tr>
+      <tr id="row-2"><td class="blob-num" data-line-number="2"></td><td class="blob-code">    return x * 2</td></tr>
+    </tbody></table></div>`,
+    { url: "https://github.com/org/repo/blob/main/app.py" }
+  );
+  assert.equal(
+    htmlToMarkdown(githubTableDoc.body),
+    "```python\ndef compute(x):\n    return x * 2\n```"
+  );
+  assert.equal(
+    selectionToMarkdown(githubTableDoc.createRangeFromNode(githubTableDoc.querySelector("tbody"))),
+    "```python\ndef compute(x):\n    return x * 2\n```"
+  );
+
+  const githubPreDoc = parseHtmlDocument(
+    `<div class="highlight highlight-source-python"><pre id="gh-pre"><span>import</span> sys\nprint(sys.version)</pre></div>`
+  );
+  assert.equal(
+    htmlToMarkdown(githubPreDoc.body),
+    "```python\nimport sys\nprint(sys.version)\n```"
+  );
+});
+
+test("turndown rich elements convert images, GFM task lists, mark, kbd, and details/summary", () => {
+  const longDataUri = `data:image/png;base64,${"A".repeat(220)}`;
+  const shortDataUri = "data:image/gif;base64,R0lGODlhAQABAAAAACw=";
+
+  const richDoc = parseHtmlDocument(
+    `<article id="rich">
+      <p> diagram: <img alt="System [v2]" src="/assets/arch.png"> <img alt="huge" src="${longDataUri}"> <img alt="tiny" src="${shortDataUri}"> </p>
+      <ul>
+        <li><input type="checkbox" checked> Ship universal capsule</li>
+        <li><input type="checkbox" id="dynamic-cb"> Add domain exclusions</li>
+      </ul>
+      <p>Press <kbd>⌘</kbd> + <kbd>Return</kbd> to <mark>launch thread</mark>.</p>
+      <details>
+        <summary>Implementation Notes</summary>
+        <p>Keep content script idle footprint at zero imports.</p>
+      </details>
+    </article>`,
+    { url: "https://example.com/blog/post" }
+  );
+
+  const ctx = extractClipContext({
+    doc: richDoc,
+    selectionRange: richDoc.createRangeFromNode(richDoc.querySelector("#rich")),
+    url: "https://example.com/blog/post"
+  });
+
+  assert.match(ctx.selectedMarkdown, /!\[System \\\[v2\\\]\]\(https:\/\/example\.com\/assets\/arch\.png\)/);
+  assert.doesNotMatch(ctx.selectedMarkdown, /!\[huge\]/);
+  assert.match(ctx.selectedMarkdown, new RegExp(`!\\[tiny\\]\\(${shortDataUri.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+  assert.match(ctx.selectedMarkdown, /- \[x\] Ship universal capsule\n- \[ \] Add domain exclusions/);
+  assert.match(ctx.selectedMarkdown, /Press <kbd>⌘<\/kbd> \+ <kbd>Return<\/kbd> to ==launch thread==\./);
+  assert.match(ctx.selectedMarkdown, /\*\*Implementation Notes\*\*\n\nKeep content script idle footprint at zero imports\./);
+
+  richDoc.querySelector("#dynamic-cb").checked = true;
+  assert.match(htmlToMarkdown(richDoc.querySelector("ul")), /- \[x\] Add domain exclusions/);
+  assert.equal(htmlToMarkdown('<img alt="rel" src="/img/a.png">'), "![rel](/img/a.png)");
+});
+
+test("extractors.mjs handles non-Array iterable NodeList childNodes on Shiki code blocks and GitHub highlight tables", () => {
+  function toStrictNodeListTree(node) {
+    if (!node || typeof node !== "object") return node;
+    const rawChildren = Array.from(node.childNodes || []);
+    for (const child of rawChildren) {
+      toStrictNodeListTree(child);
+    }
+    const indexed = {
+      length: rawChildren.length,
+      item(i) {
+        return rawChildren[i] || null;
+      },
+      [Symbol.iterator]() {
+        return rawChildren[Symbol.iterator]();
+      }
+    };
+    rawChildren.forEach((child, idx) => {
+      indexed[idx] = child;
+    });
+    Object.setPrototypeOf(indexed, null);
+    node.childNodes = Object.freeze(indexed);
+    const originalCloneNode = typeof node.cloneNode === "function" ? node.cloneNode.bind(node) : null;
+    if (originalCloneNode) {
+      node.cloneNode = (deep = false) => toStrictNodeListTree(originalCloneNode(deep));
+    }
+    return node;
+  }
+
+  const doc = parseHtmlDocument(
+    `<html><head><title>Live DOM NodeList Check</title></head><body>
+      <article id="root">
+        <p>Inline <code>let count = 1;</code> sample.</p>
+        <pre><code class="language-rust"><span class="line">fn main() {</span>\n<span class="line">    println!("ok");</span>\n<span class="line">}</span></code></pre>
+        <div class="highlight highlight-source-python">
+          <table class="highlight">
+            <tr><td class="blob-num">1</td><td class="blob-code">def greet():</td></tr>
+            <tr><td class="blob-num">2</td><td class="blob-code">    return "hi"</td></tr>
+          </table>
+        </div>
+      </article>
+    </body></html>`,
+    { url: "https://github.com/org/repo/blob/main/README.md" }
+  );
+
+  const root = doc.querySelector("#root");
+  const baseRange = doc.createRangeFromNode(root);
+  const clonedFragment = toStrictNodeListTree(baseRange.cloneContents());
+  toStrictNodeListTree(doc);
+
+  assert.equal(Array.isArray(root.childNodes), false);
+  assert.equal(root.childNodes.some, undefined);
+  assert.equal(root.childNodes.map, undefined);
+  assert.equal(Array.isArray(clonedFragment.childNodes), false);
+  assert.equal(clonedFragment.childNodes.some, undefined);
+
+  const directMd = htmlToMarkdown(root, { baseUrl: "https://github.com/org/repo/blob/main/README.md" });
+  assert.match(directMd, /Inline `let count = 1;` sample\./);
+  assert.match(directMd, /```rust\nfn main\(\) \{\n    println!\("ok"\);\n\}\n```/);
+  assert.match(directMd, /```python\ndef greet\(\):\n    return "hi"\n```/);
+
+  const rangeWithNodeList = {
+    commonAncestorContainer: baseRange.commonAncestorContainer,
+    startContainer: baseRange.startContainer,
+    startOffset: baseRange.startOffset,
+    endContainer: baseRange.endContainer,
+    endOffset: baseRange.endOffset,
+    intersectsNode(node) {
+      return baseRange.intersectsNode(node);
+    },
+    toString() {
+      return root.textContent;
+    },
+    cloneContents() {
+      return clonedFragment;
+    },
+    cloneRange() {
+      return this;
+    }
+  };
+
+  const md = selectionToMarkdown(rangeWithNodeList, "https://github.com/org/repo/blob/main/README.md");
+  assert.equal(md, directMd);
+
+  const clip = extractClipContext({
+    doc,
+    selectionRange: rangeWithNodeList,
+    selectedText: root.textContent.trim(),
+    url: "https://github.com/org/repo/blob/main/README.md"
+  });
+  assert.equal(clip.selectedMarkdown, md);
+});
+
+test("extractors.mjs preserves multi-line code across hljs-ln inside pre, token-line / cm-line wrappers, and Chroma lntable selections", () => {
+  const hljsDoc = parseHtmlDocument(`
+    <pre><code class="hljs language-javascript"><table class="hljs-ln"><tbody>
+      <tr id="hl-r1"><td class="hljs-ln-numbers" data-line-number="1">1</td><td class="hljs-ln-code">const alpha = 1;</td></tr>
+      <tr id="hl-r2"><td class="hljs-ln-numbers" data-line-number="2">2</td><td class="hljs-ln-code">const beta = 2;</td></tr>
+    </tbody></table></code></pre>
+  `);
+  assert.equal(
+    htmlToMarkdown(hljsDoc.body),
+    "```javascript\nconst alpha = 1;\nconst beta = 2;\n```"
+  );
+  const hljsRowSelection = selectionToMarkdown(hljsDoc.createRangeFromNode(hljsDoc.querySelector("tbody")));
+  assert.equal(hljsRowSelection, "```javascript\nconst alpha = 1;\nconst beta = 2;\n```");
+
+  const prismCmDoc = parseHtmlDocument(`
+    <div>
+      <pre class="prism-code language-tsx"><div class="token-line"><span>const view = 1;</span></div><div class="token-line"><span>export default view;</span></div></pre>
+      <pre data-language="sql"><div class="cm-line">SELECT id</div><div class="cm-line">FROM clips;</div></pre>
+    </div>
+  `);
+  assert.equal(
+    htmlToMarkdown(prismCmDoc.body),
+    "```tsx\nconst view = 1;\nexport default view;\n```\n\n```sql\nSELECT id\nFROM clips;\n```"
+  );
+
+  const chromaDoc = parseHtmlDocument(`
+    <div class="highlight">
+      <table class="lntable"><tbody id="chroma-body"><tr>
+        <td class="lntd"><pre><span class="lnt">1\n</span><span class="lnt">2\n</span></pre></td>
+        <td class="lntd"><pre><code class="language-go"><span class="line">package main</span>\n<span class="line">func main() {}</span></code></pre></td>
+      </tr></tbody></table>
+    </div>
+  `);
+  assert.equal(
+    selectionToMarkdown(chromaDoc.createRangeFromNode(chromaDoc.querySelector("#chroma-body"))),
+    "```go\npackage main\nfunc main() {}\n```"
+  );
+});
+
 test("saveClipWithOutbox queues malformed successful responses for same-ID replay", async (t) => {
   const malformedResponseCases = [
     {
