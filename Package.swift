@@ -9,6 +9,7 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
+        .executable(name: "coding-rewind", targets: ["CodingRewindCLI"]),
         .executable(name: "coding-rewind-sidecar", targets: ["ConversationSidecar"]),
         .library(
             name: "CodingRewindCore",
@@ -21,6 +22,7 @@ let package = Package(
     ],
     dependencies: [.package(path: "Vendor/KeyboardShortcuts")],
     targets: [
+        .executableTarget(name: "CodingRewindCLI", dependencies: ["CodingRewindCore"]),
         .executableTarget(name: "ConversationSidecar", dependencies: ["CodingRewindCore"]),
         .target(
             name: "CodingRewindCore"
@@ -44,6 +46,7 @@ let package = Package(
         .testTarget(
             name: "CodingRewindCLITests",
             dependencies: [
+                "CodingRewindCLI",
                 "CodingRewindCore",
                 "ConversationSidecar"
             ]
