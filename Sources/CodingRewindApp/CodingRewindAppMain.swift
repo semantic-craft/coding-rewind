@@ -229,6 +229,15 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                 NSWorkspace.shared.open(url)
             }
+        case .resetAccessibility:
+            _ = Self.resetAccessibilityApproval(bundleIdentifier: Bundle.main.bundleIdentifier)
+            let trusted = AXSupport.isTrusted(prompt: true)
+            if !trusted,
+               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+            settingsWindowController?.refreshPermissions()
+            statusItemController?.refreshIcon()
         case .openSettings:
             settingsWindowController?.show()
         case .selectRecentCard(let cardID):
@@ -287,6 +296,30 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             sourceBridgeURL: dirs.map { $0.appendingPathComponent("memos-mcp-bridge.sh") }.first { fm.fileExists(atPath: $0.path) },
             sourceSidecarURL: dirs.map { $0.appendingPathComponent("coding-rewind-sidecar") }.first { fm.isExecutableFile(atPath: $0.path) }
         )
+    }
+
+    @discardableResult
+    public static func resetAccessibilityApproval(
+        bundleIdentifier: String?,
+        runner: (String, [String]) -> Int32 = { executable, arguments in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            do {
+                try process.run()
+                process.waitUntilExit()
+                return process.terminationStatus
+            } catch {
+                return -1
+            }
+        }
+    ) -> Bool {
+        guard let bundleID = bundleIdentifier,
+              bundleID == AppBundleID.selfApp || bundleID == AppBundleID.selfQAApp else {
+            return false
+        }
+        let status = runner("/usr/bin/tccutil", ["reset", "Accessibility", bundleID])
+        return status == 0
     }
 
     private func recordFrontmostExternalApp(_ app: NSRunningApplication?) {

@@ -579,6 +579,128 @@ struct AppShortcutsTests {
         #expect(hud.isVisible)
         #expect(coord.isErrorBanner)
     }
+
+    @Test("StatusItemController refreshIcon idempotence preserves image reference under identical key and updates across outbox transition")
+    func statusItemIconIdempotence() {
+        final class CountBox { var value = 0 }
+        let box = CountBox()
+        let shortcuts = AppShortcuts(onCommand: { _ in })
+        let controller = StatusItemController(
+            shortcuts: shortcuts,
+            snapshotProvider: {
+                MenuStatusSnapshot(
+                    isHUDVisible: false,
+                    hotCardCount: 0,
+                    checkedCardCount: 0,
+                    pendingOutboxCount: box.value,
+                    connection: .unconfigured,
+                    isPluginReady: false,
+                    pluginSummary: "",
+                    isAccessibilityTrusted: false,
+                    recentCards: []
+                )
+            },
+            onCommand: { _ in }
+        )
+        let initialImage = controller.statusItem.button?.image
+        #expect(initialImage != nil)
+
+        controller.refreshIcon()
+        let secondImage = controller.statusItem.button?.image
+        #expect(initialImage === secondImage)
+
+        box.value = 1
+        controller.refreshIcon()
+        let badgedImage = controller.statusItem.button?.image
+        #expect(badgedImage !== initialImage)
+
+        controller.refreshIcon()
+        let badgedImageSecond = controller.statusItem.button?.image
+        #expect(badgedImage === badgedImageSecond)
+
+        box.value = 0
+        controller.refreshIcon()
+        let unbadgedImage = controller.statusItem.button?.image
+        #expect(unbadgedImage !== badgedImage)
+    }
+
+    @Test("SettingsWindowController polls permissions while window is visible and stops polling when closed")
+    func settingsWindowPermissionPolling() async throws {
+        let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let dir = repoRoot.appendingPathComponent(".build/test-data/settings-polling-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let coord = try AppCoordinator(paths: paths, environment: [:], capturer: UnusedSelectionCapturer(), codexDelivery: nil)
+        let appearance = AppAppearancePreferences(defaults: UserDefaults(suiteName: "dev.codingrewind.qa.appearance")!)
+        let shortcuts = AppShortcuts(onCommand: { _ in })
+
+        final class FlagBox { var isTrusted = false }
+        let flagBox = FlagBox()
+        let permissionState = AccessibilityPermissionState(checkTrusted: { flagBox.isTrusted })
+        #expect(!permissionState.isTrusted)
+
+        let settings = SettingsWindowController(
+            coordinator: coord,
+            appearance: appearance,
+            shortcuts: shortcuts,
+            permissionState: permissionState,
+            permissionPollInterval: .milliseconds(20),
+            onCommand: { _ in }
+        )
+
+        settings.show()
+        #expect(settings.window?.isVisible == true)
+        #expect(!permissionState.isTrusted)
+
+        flagBox.isTrusted = true
+
+        let deadline = ContinuousClock.now + .milliseconds(200)
+        while !permissionState.isTrusted && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(permissionState.isTrusted)
+
+        settings.window?.close()
+        #expect(settings.window?.isVisible != true)
+
+        flagBox.isTrusted = false
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(permissionState.isTrusted)
+    }
+
+    @Test("CodingRewindAppDelegate.resetAccessibilityApproval only runs tccutil for approved bundle IDs")
+    func resetAccessibilityApprovalValidation() {
+        var executed: [(executable: String, arguments: [String])] = []
+        let runner: (String, [String]) -> Int32 = { exe, args in
+            executed.append((exe, args))
+            return 0
+        }
+
+        let nilResult = CodingRewindAppDelegate.resetAccessibilityApproval(bundleIdentifier: nil, runner: runner)
+        #expect(!nilResult)
+        #expect(executed.isEmpty)
+
+        let foreignResult = CodingRewindAppDelegate.resetAccessibilityApproval(bundleIdentifier: "com.apple.Safari", runner: runner)
+        #expect(!foreignResult)
+        #expect(executed.isEmpty)
+
+        let appResult = CodingRewindAppDelegate.resetAccessibilityApproval(bundleIdentifier: AppBundleID.selfApp, runner: runner)
+        #expect(appResult)
+        #expect(executed.count == 1)
+        #expect(executed[0].executable == "/usr/bin/tccutil")
+        #expect(executed[0].arguments == ["reset", "Accessibility", "dev.codingrewind.app"])
+
+        executed.removeAll()
+        let qaResult = CodingRewindAppDelegate.resetAccessibilityApproval(bundleIdentifier: AppBundleID.selfQAApp, runner: runner)
+        #expect(qaResult)
+        #expect(executed.count == 1)
+        #expect(executed[0].executable == "/usr/bin/tccutil")
+        #expect(executed[0].arguments == ["reset", "Accessibility", "dev.codingrewind.app.qa"])
+    }
 }
 
 private actor ImmediateAppSelectionCapturer: SelectionCapturing {
