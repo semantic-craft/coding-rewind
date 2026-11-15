@@ -15,8 +15,6 @@ export function getToastMessages(locale = "auto") {
   });
 }
 
-export const TOAST_MESSAGES = getToastMessages("auto");
-
 const ALPHANUM = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 export function generateClipId(nowMs = Date.now(), randomFn = Math.random) {
@@ -61,7 +59,6 @@ export function normalizePlatform(rawPlatform) {
 
 export function hasClipContext(clip = {}) {
   return Boolean(
-    (clip.sessionTitle && String(clip.sessionTitle).trim()) ||
     (clip.prompt && String(clip.prompt).trim()) ||
     (clip.recentTurns && String(clip.recentTurns).trim())
   );
@@ -75,9 +72,22 @@ function escapeMarkdownLinkLabel(label) {
   return cleanSingleLine(label).replace(/\[/g, "\\[").replace(/\]/g, "\\]");
 }
 
+const ALLOWED_SOURCE_PROTOCOLS = new Set(["http:", "https:", "file:", "conversation:"]);
+
 function sanitizeMarkdownUrl(rawUrl) {
-  return String(rawUrl || "")
-    .trim()
+  const cleaned = String(rawUrl || "")
+    .replace(/[\u0000-\u001f\u007f]+/g, "")
+    .trim();
+  if (!cleaned) return "";
+  try {
+    const parsed = new URL(cleaned);
+    if (!ALLOWED_SOURCE_PROTOCOLS.has(parsed.protocol.toLowerCase())) {
+      return "";
+    }
+  } catch {
+    return "";
+  }
+  return cleaned
     .replace(/\s+/g, "%20")
     .replace(/\(/g, "%28")
     .replace(/\)/g, "%29");
@@ -115,7 +125,7 @@ export function buildMemosWirePayloads(clip, options = {}) {
   const sourceUrl = sanitizeMarkdownUrl(clip?.sourceUrl);
   const createdAtIso = formatUtcIso(options.createdAt ?? clip?.createdAt);
 
-  const hasContext = hasClipContext({ sessionTitle, prompt, recentTurns });
+  const hasContext = hasClipContext({ prompt, recentTurns });
   const tagsLine = hasContext
     ? `#rewind/pending #rewind/has-ctx #source/${platform}`
     : `#rewind/pending #source/${platform}`;

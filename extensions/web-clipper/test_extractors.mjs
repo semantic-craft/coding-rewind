@@ -25,7 +25,6 @@ import "./i18n.js";
 import {
   CLIP_ID_PATTERN,
   MAX_OUTBOX_ITEMS,
-  TOAST_MESSAGES,
   getToastMessages,
   generateClipId,
   normalizeMemosBaseUrl,
@@ -33,8 +32,11 @@ import {
   buildMemosWirePayloads,
   parseServerMemoId,
   saveClipWithOutbox,
-  flushOutbox
+  flushOutbox,
+  hasClipContext
 } from "./memos_payload.mjs";
+
+const defaultToasts = getToastMessages("auto");
 
 import { initOptionsPage, probeMemosConnection, testMemosConnection } from "./options.js";
 
@@ -338,7 +340,7 @@ test("background save response does not claim an offline clip is queued after st
   const queued = await new Promise((resolve) => onMessage({ type: "REWIND_SAVE_CLIP", clip }, {}, resolve));
   assert.equal(queued.status, "queued");
   assert.equal(queued.queued, true);
-  assert.equal(queued.toast, TOAST_MESSAGES.QUEUED);
+  assert.equal(queued.toast, defaultToasts.QUEUED);
   assert.equal(persistedOutbox.length, 1);
   assert.equal(persistedOutbox[0].clipId, clip.clipId);
 
@@ -713,6 +715,90 @@ test("buildMemosWirePayloads validates selected text without trimming its conten
   );
 });
 
+test("general web page clip keeps Source title link without setting #rewind/has-ctx or posting an empty context comment", async () => {
+  const sourceUrl = "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html";
+  const clip = {
+    selectedMarkdown: "Each value in Rust has an **owner**.",
+    sourcePlatform: "web",
+    sessionTitle: "Rust Ownership Guide",
+    prompt: "",
+    recentTurns: "",
+    sourceUrl
+  };
+
+  assert.equal(hasClipContext(clip), false);
+  const built = buildMemosWirePayloads(clip, {
+    clipId: "rw-1794366666123-rustbook1",
+    createdAt: "2026-11-15T04:00:00Z"
+  });
+
+  assert.equal(built.hasContext, false);
+  assert.equal(built.commentBody, null);
+  assert.doesNotMatch(built.memoBody.content, /#rewind\/has-ctx/);
+  assert.equal(
+    built.memoBody.content,
+    "#rewind/pending #source/web\n\n" +
+      `> **Source:** [Rust Ownership Guide](${sourceUrl}) · 2026-11-15T04:00:00Z\n\n` +
+      "Each value in Rust has an **owner**."
+  );
+
+  const storage = createMemoryOutboxStorage();
+  const requests = [];
+  const res = await saveClipWithOutbox({
+    clip,
+    baseUrl: "https://memos.internal.test",
+    token: "tok-web",
+    storage,
+    nowMs: 1794366666123,
+    randomFn: () => 0.5,
+    fetchImpl: async (reqUrl, init) => {
+      requests.push({ url: reqUrl, method: init.method });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return { name: "memos/web-srv-1" };
+        }
+      };
+    }
+  });
+
+  assert.equal(res.status, "saved");
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /^https:\/\/memos\.internal\.test\/api\/memos\?memoId=/);
+  assert.equal(requests.some((r) => r.url.includes("/comments")), false);
+});
+
+test("buildMemosWirePayloads blocks unsafe URL schemes and percent-encodes parentheses", () => {
+  for (const unsafeUrl of ["javascript:alert(1)", "java\nscript:alert(1)", "data:text/html,hi", "vbscript:run"]) {
+    const payload = buildMemosWirePayloads(
+      {
+        selectedMarkdown: "Safe body",
+        sourcePlatform: "web",
+        sessionTitle: "Untrusted Title",
+        sourceUrl: unsafeUrl
+      },
+      { clipId: "rw-1700000000000-sec00001", createdAt: "2026-11-15T08:00:00Z" }
+    );
+    assert.match(payload.memoBody.content, /> \*\*Source:\*\* Untrusted Title · 2026-11-15T08:00:00Z/);
+    assert.doesNotMatch(payload.memoBody.content, /javascript:|vbscript:|data:/i);
+  }
+
+  const wikiPayload = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Safe body",
+      sourcePlatform: "web",
+      sessionTitle: "Closure",
+      sourceUrl: "https://en.wikipedia.org/wiki/Closure_(computer_programming)"
+    },
+    { clipId: "rw-1700000000000-sec00002", createdAt: "2026-11-15T08:00:00Z" }
+  );
+  assert.match(
+    wikiPayload.memoBody.content,
+    /> \*\*Source:\*\* \[Closure\]\(https:\/\/en\.wikipedia\.org\/wiki\/Closure_%28computer_programming%29\) · 2026-11-15T08:00:00Z/
+  );
+});
+
 test("saveClipWithOutbox queues malformed successful responses for same-ID replay", async (t) => {
   const malformedResponseCases = [
     {
@@ -822,7 +908,7 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
     randomFn: () => 0.1
   });
   assert.equal(unconfiguredRes.status, "unconfigured");
-  assert.equal(unconfiguredRes.toast, TOAST_MESSAGES.UNCONFIGURED);
+  assert.equal(unconfiguredRes.toast, defaultToasts.UNCONFIGURED);
   assert.equal(storage.peek().length, 1);
   const firstClipId = unconfiguredRes.clipId;
 
@@ -852,7 +938,7 @@ test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-it
   });
 
   assert.equal(offlineRes.status, "queued");
-  assert.equal(offlineRes.toast, TOAST_MESSAGES.QUEUED);
+  assert.equal(offlineRes.toast, defaultToasts.QUEUED);
   assert.equal(storage.peek().length, 2);
 
   failNetwork = false;
@@ -1260,7 +1346,7 @@ function createContentScriptHarness({
   const sentMessages = [];
   const storageChangedListeners = [];
   let storedState = { showSelectionPill: true, uiLanguage };
-  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
+  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: defaultToasts.SAVED }));
 
   const fakeChrome = {
     ...(browserLanguage !== undefined
@@ -1442,7 +1528,7 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   await new Promise((r) => setImmediate(r));
   assert.equal(harness.sentMessages.length, 1, "click while saving is ignored even after 350ms cooldown");
 
-  resolveInFlightSave({ status: "saved", toast: TOAST_MESSAGES.SAVED });
+  resolveInFlightSave({ status: "saved", toast: defaultToasts.SAVED });
   await new Promise((r) => setImmediate(r));
   assert.equal(pill.getAttribute("data-state"), "saved");
   assert.equal(harness.getPillLabel(), "已同步");
@@ -1464,14 +1550,14 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(harness.getPillLabel(), "暂存中…");
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
-  resolveQueuedSave({ status: "queued", toast: TOAST_MESSAGES.QUEUED });
+  resolveQueuedSave({ status: "queued", toast: defaultToasts.QUEUED });
   await new Promise((r) => setImmediate(r));
   assert.equal(pill.getAttribute("data-state"), "queued");
   assert.equal(harness.getPillLabel(), "待同步");
   harness.advanceTime(950);
   assert.equal(pill.getAttribute("data-state"), "hidden");
 
-  harness.setSendMessageHandler(async () => ({ status: "saved", toast: TOAST_MESSAGES.SAVED }));
+  harness.setSendMessageHandler(async () => ({ status: "saved", toast: defaultToasts.SAVED }));
   harness.advanceTime(500);
 
   const altShiftRes = harness.document.dispatch("keydown", {
@@ -1519,7 +1605,7 @@ test("content.js capsule hides cleanly on Escape mid-save and never freezes in s
   assert.equal(escapePill.getAttribute("data-state"), "hidden");
   assert.equal(escapePill.style.display, "none");
 
-  finishSave({ status: "saved", toast: TOAST_MESSAGES.SAVED });
+  finishSave({ status: "saved", toast: defaultToasts.SAVED });
   await new Promise((r) => setImmediate(r));
   assert.equal(escapePill.getAttribute("data-state"), "hidden", "Escape during saving keeps pill hidden after response");
   assert.equal(escapePill.style.display, "none");
