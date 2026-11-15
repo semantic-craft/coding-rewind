@@ -159,6 +159,28 @@ public struct MemosClient: Sendable {
         return cardsByID.values.sorted { $0.createdAt > $1.createdAt }
     }
 
+    /// Probes the list endpoint with one record to confirm the URL, token and response shape.
+    public func verifyConnection(baseURL: URL, token: String) async throws {
+        let probeURL = try endpointURL(
+            baseURL: baseURL,
+            path: "/api/memos",
+            queryItems: [URLQueryItem(name: "pageSize", value: "1")]
+        )
+        let data: Data
+        let status: Int
+        do {
+            (data, status) = try await performRequest(url: probeURL, method: "GET", token: token, body: nil)
+        } catch let error as URLError {
+            throw RewindError.networkFailure(error.localizedDescription)
+        }
+        guard (200..<300).contains(status) else {
+            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+        }
+        guard (try? JSONDecoder().decode(ListMemosResponseDTO.self, from: data)) != nil else {
+            throw RewindError.invalidServerResponse
+        }
+    }
+
     public func markSynthesized(
         card: RewindCard,
         baseURL: URL,

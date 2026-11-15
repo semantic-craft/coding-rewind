@@ -10,6 +10,8 @@ public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     case invalidMemosURL(String)
     case missingCredentials
     case httpError(statusCode: Int, body: String)
+    case invalidServerResponse
+    case networkFailure(String)
     case ioError(String)
     case keychainError(OSStatus)
 

@@ -103,6 +103,13 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     }
 }
 
+public enum ConnectionCheckOutcome: Equatable, Sendable {
+    case localOnly
+    case missingToken
+    case verified
+    case failed(RewindError)
+}
+
 @MainActor
 @Observable
 public final class AppCoordinator {
@@ -761,6 +768,28 @@ public final class AppCoordinator {
             environment.removeValue(forKey: KeychainTokenStore.disableKeychainFallbackEnvironmentKey)
         }
         setBanner(.savedConnectionSettings, isError: false)
+    }
+
+    /// Saves the settings first, then probes the server only when both a URL and an access token exist.
+    public func saveAndVerifyConnection(memosURL: String, token: String) async throws -> ConnectionCheckOutcome {
+        try saveCredentials(memosURL: memosURL, token: token)
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+            return .localOnly
+        }
+        guard let accessToken = KeychainTokenStore.resolveToken(environment: environment) else {
+            return .missingToken
+        }
+        do {
+            try await memosClient.verifyConnection(baseURL: baseURL, token: accessToken)
+        } catch {
+            return .failed((error as? RewindError) ?? .networkFailure(error.localizedDescription))
+        }
+        await refresh()
+        return .verified
+    }
+
+    public func openURL(_ url: URL) {
+        onOpenURL?(url)
     }
 
     public func installOrRepairPlugin(sourceBridgeURL: URL?, sourceSidecarURL: URL? = nil) {

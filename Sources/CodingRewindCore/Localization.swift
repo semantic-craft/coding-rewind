@@ -142,6 +142,10 @@ public enum L10n {
                 return "尚未设置 Memos 服务地址或访问令牌。"
             case .httpError(let code, let body):
                 return "Memos 请求失败（HTTP \(code)）：\(body.prefix(120))"
+            case .invalidServerResponse:
+                return "该地址返回的不是 Memos 数据，请检查服务地址是否指向 Memos 实例。"
+            case .networkFailure(let detail):
+                return "无法连接到服务器（\(detail)）。"
             case .ioError(let detail):
                 return "本机文件读写失败：\(detail)"
             case .keychainError(let status):
@@ -163,6 +167,10 @@ public enum L10n {
                 return "Memos server URL or access token is not configured."
             case .httpError(let code, let body):
                 return "Memos request failed (HTTP \(code)): \(body.prefix(120))"
+            case .invalidServerResponse:
+                return "This address did not return Memos data. Check that the server URL points to a Memos instance."
+            case .networkFailure(let detail):
+                return "Could not reach the server (\(detail))."
             case .ioError(let detail):
                 return "Local file I/O failed: \(detail)"
             case .keychainError(let status):

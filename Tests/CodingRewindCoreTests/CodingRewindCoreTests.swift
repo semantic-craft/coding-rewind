@@ -200,6 +200,205 @@ struct CodingRewindCoreTests {
         #expect(reopened.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: false).headerSubtitle.contains("已配置"))
     }
 
+    @Test("A saved token is detected from the environment or the Keychain without reading its value")
+    func hasTokenDetectsSavedTokenWithoutReadingIt() throws {
+        let service = "com.codingrewind.memos.tests.\(UUID().uuidString.lowercased())"
+        let keychainEnv = ["CODING_REWIND_KEYCHAIN_SERVICE": service]
+        defer { try? KeychainTokenStore.deleteToken(environment: keychainEnv) }
+
+        #expect(!KeychainTokenStore.hasToken(environment: [KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"]))
+        #expect(KeychainTokenStore.hasToken(environment: [StoragePaths.memosTokenEnvironmentKey: "fixture-token"]))
+        #expect(!KeychainTokenStore.hasToken(environment: [StoragePaths.memosTokenEnvironmentKey: "  "].merging(keychainEnv) { $1 }))
+        try KeychainTokenStore.saveToken("fixture-token", environment: keychainEnv)
+        #expect(KeychainTokenStore.hasToken(environment: keychainEnv))
+        try KeychainTokenStore.deleteToken(environment: keychainEnv)
+        #expect(!KeychainTokenStore.hasToken(environment: keychainEnv))
+    }
+
+    @Test("Connection state exposes hasSavedToken without leaking the token")
+    @MainActor
+    func connectionStateReportsSavedToken() throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir, antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let none = ConnectionSettingsState(paths: paths, environment: [KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"])
+        #expect(!none.hasSavedToken)
+        #expect(!none.isTokenManaged)
+        let managed = ConnectionSettingsState(paths: paths, environment: [StoragePaths.memosTokenEnvironmentKey: "fixture-token"])
+        #expect(managed.hasSavedToken)
+        #expect(managed.isTokenManaged)
+        #expect(!String(describing: managed).contains("fixture-token"))
+    }
+
+    @Test("Typed server addresses normalize to a web base URL or are rejected")
+    func normalizedMemosBaseURLHandlesTypedInput() {
+        let legacyPath = "/api/v1/" + "memos"
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "https://memos.example.com")?.absoluteString == "https://memos.example.com")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "  https://memos.example.com/api/memos/ ")?.absoluteString == "https://memos.example.com")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "https://memos.example.com" + legacyPath)?.absoluteString == "https://memos.example.com")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "http://127.0.0.1:5230/")?.absoluteString == "http://127.0.0.1:5230")
+        for invalid in ["", "   ", "memos.example.com", "ftp://memos.example.com", "https://", "not a url"] {
+            #expect(StoragePaths.normalizedMemosBaseURL(from: invalid) == nil, "\(invalid)")
+        }
+    }
+
+    @Test("verifyConnection accepts a Memos list response and sends one authenticated probe")
+    func verifyConnectionAcceptsMemosJSON() async throws {
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (200, Data(#"{"memos":[],"nextPageToken":""}"#.utf8)) }
+        let baseURL = URL(string: "https://\(suiteID).mock.memos.local")!
+        try await MemosClient(session: makeMockSession()).verifyConnection(baseURL: baseURL, token: "fixture-token")
+        let requests = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(requests.count == 1)
+        #expect(requests[0].method == "GET")
+        #expect(requests[0].authHeader == "Bearer fixture-token")
+        #expect(requests[0].url.path == "/api/memos")
+        #expect(URLComponents(url: requests[0].url, resolvingAgainstBaseURL: false)?.queryItems == [URLQueryItem(name: "pageSize", value: "1")])
+    }
+
+    @Test("verifyConnection reports auth, HTML, invalid JSON and network failures")
+    func verifyConnectionRejectsBadResponses() async throws {
+        let baseHost = UUID().uuidString.lowercased()
+        let baseURL = URL(string: "https://\(baseHost).mock.memos.local")!
+        defer { MockMemosURLProtocol.unregister(suiteID: baseHost) }
+        let client = MemosClient(session: makeMockSession())
+
+        MockMemosURLProtocol.register(suiteID: baseHost) { _, _ in (401, Data(#"{"message":"unauthenticated"}"#.utf8)) }
+        await #expect(throws: RewindError.httpError(statusCode: 401, body: #"{"message":"unauthenticated"}"#)) {
+            try await client.verifyConnection(baseURL: baseURL, token: "fixture-token")
+        }
+
+        MockMemosURLProtocol.register(suiteID: baseHost) { _, _ in (200, Data("<!doctype html><html><body>Login</body></html>".utf8)) }
+        await #expect(throws: RewindError.invalidServerResponse) {
+            try await client.verifyConnection(baseURL: baseURL, token: "fixture-token")
+        }
+
+        MockMemosURLProtocol.register(suiteID: baseHost) { _, _ in (200, Data("[1, 2, 3]".utf8)) }
+        await #expect(throws: RewindError.invalidServerResponse) {
+            try await client.verifyConnection(baseURL: baseURL, token: "fixture-token")
+        }
+
+        MockMemosURLProtocol.register(suiteID: baseHost) { _, _ in (-1, Data()) }
+        do {
+            try await client.verifyConnection(baseURL: baseURL, token: "fixture-token")
+            Issue.record("Expected a network failure")
+        } catch RewindError.networkFailure {
+        } catch {
+            Issue.record("Expected networkFailure, got \(error)")
+        }
+    }
+
+    @Test("Saving without a server URL stays local and makes no network call")
+    @MainActor
+    func saveWithoutURLSkipsVerification() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (200, Data("{}".utf8)) }
+        let environment = [StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"]
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        let outcome = try await coordinator.saveAndVerifyConnection(memosURL: "", token: "")
+        #expect(outcome == .localOnly)
+        #expect(MockMemosURLProtocol.recordedRequests(suiteID: suiteID).isEmpty)
+    }
+
+    @Test("Saving a URL without any access token skips verification")
+    @MainActor
+    func saveWithoutTokenSkipsVerification() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (200, Data("{}".utf8)) }
+        let environment = [StoragePaths.qaEnvironmentKey: "1", KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"]
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        let outcome = try await coordinator.saveAndVerifyConnection(memosURL: "https://\(suiteID).mock.memos.local", token: "  ")
+        #expect(outcome == .missingToken)
+        #expect(coordinator.connectionSettings.memosURL == "https://\(suiteID).mock.memos.local")
+        #expect(MockMemosURLProtocol.recordedRequests(suiteID: suiteID).isEmpty)
+    }
+
+    @Test("Saving rejects an invalid URL before any network call")
+    @MainActor
+    func saveWithInvalidURLThrowsWithoutNetwork() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let environment = [StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"]
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        await #expect(throws: RewindError.invalidMemosURL("not-a-valid-url")) {
+            _ = try await coordinator.saveAndVerifyConnection(memosURL: "not-a-valid-url", token: "")
+        }
+    }
+
+    @Test("A verified save stores the token, refreshes clips, and a blank save keeps the saved token")
+    @MainActor
+    func verifiedSavePreservesTokenOnBlankSave() async throws {
+        let dir = try makeIsolatedDir()
+        let service = "com.codingrewind.memos.tests.\(UUID().uuidString.lowercased())"
+        let environment = ["CODING_REWIND_KEYCHAIN_SERVICE": service]
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            try? KeychainTokenStore.deleteToken(environment: environment)
+        }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (200, Data(#"{"memos":[],"nextPageToken":""}"#.utf8)) }
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+        #expect(!coordinator.connectionSettings.hasSavedToken)
+
+        let url = "https://\(suiteID).mock.memos.local"
+        let first = try await coordinator.saveAndVerifyConnection(memosURL: url, token: " entered-token ")
+        #expect(first == .verified)
+        #expect(coordinator.connectionSettings.hasSavedToken)
+        var requests = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(requests.count == 2)
+        #expect(requests.map(\.authHeader) == ["Bearer entered-token", "Bearer entered-token"])
+        let queries = requests.map { URLComponents(url: $0.url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "pageSize" }?.value }
+        #expect(queries == ["1", "100"])
+
+        let second = try await coordinator.saveAndVerifyConnection(memosURL: url, token: "")
+        #expect(second == .verified)
+        requests = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(requests.count == 4)
+        #expect(requests.allSatisfy { $0.authHeader == "Bearer entered-token" })
+        #expect(KeychainTokenStore.resolveToken(environment: environment) == "entered-token")
+    }
+
+    @Test("A failed probe keeps the saved settings and skips the clip refresh")
+    @MainActor
+    func failedProbeKeepsSettingsAndSkipsRefresh() async throws {
+        let responses: [(Int, Data, (RewindError) -> Bool)] = [
+            (401, Data("unauthorized".utf8), { $0 == .httpError(statusCode: 401, body: "unauthorized") }),
+            (200, Data("<html>login</html>".utf8), { $0 == .invalidServerResponse }),
+            (-1, Data(), { if case .networkFailure = $0 { return true } else { return false } })
+        ]
+        for (status, body, matches) in responses {
+            let dir = try makeIsolatedDir()
+            defer { try? FileManager.default.removeItem(at: dir) }
+            let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+            let suiteID = UUID().uuidString.lowercased()
+            defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+            MockMemosURLProtocol.register(suiteID: suiteID) { _, _ in (status, body) }
+            let environment = [StoragePaths.memosTokenEnvironmentKey: "fixture-token", StoragePaths.qaEnvironmentKey: "1"]
+            let coordinator = try AppCoordinator(paths: paths, environment: environment, memosClient: MemosClient(session: makeMockSession()), capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")))
+            let url = "https://\(suiteID).mock.memos.local"
+            let outcome = try await coordinator.saveAndVerifyConnection(memosURL: url, token: "")
+            guard case .failed(let error) = outcome else {
+                Issue.record("Expected a failed outcome for status \(status), got \(outcome)")
+                continue
+            }
+            #expect(matches(error))
+            #expect(coordinator.connectionSettings.memosURL == url)
+            #expect(MockMemosURLProtocol.recordedRequests(suiteID: suiteID).count == 1)
+        }
+    }
+
     private func makeIsolatedDir() throws -> URL {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".test-data", isDirectory: true)
             .appendingPathComponent("coding-rewind-core-\(UUID().uuidString)", isDirectory: true)
