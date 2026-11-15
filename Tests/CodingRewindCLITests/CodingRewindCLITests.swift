@@ -7,7 +7,7 @@ import Testing
 @Suite("CodingRewindCLI Subprocess Suite")
 struct CodingRewindCLITests {
     private func makeIsolatedDirectory() throws -> URL {
-        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("dist/test-data", isDirectory: true)
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent(".test-data", isDirectory: true)
             .appendingPathComponent("coding-rewind-cli-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir

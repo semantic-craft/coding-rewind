@@ -7,10 +7,21 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AppAppearancePreferencesTests {
+    private static let domain = "dev.codingrewind.qa.appearance"
+    private static let popupDomain = "dev.codingrewind.qa.appearance.popup"
+
+    nonisolated private static func cleanSuite(_ suiteName: String) {
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        let plistURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+        try? FileManager.default.removeItem(at: plistURL)
+    }
+
     @Test func dockDefaultsVisibleAndPersistsExplicitChoice() {
-        let domain = "dev.codingrewind.qa.appearance.\(UUID().uuidString)"
+        let domain = Self.domain
+        Self.cleanSuite(domain)
         let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { Self.cleanSuite(domain) }
         var policy: NSApplication.ActivationPolicy?
         let preferences = AppAppearancePreferences(defaults: defaults) { policy = $0; return true }
         preferences.apply()
@@ -28,12 +39,13 @@ struct AppAppearancePreferencesTests {
     }
 
     @Test func applyingAlreadyHiddenPolicyIsSuccessful() {
-        let domain = "dev.codingrewind.qa.appearance.\(UUID().uuidString)"
+        let domain = Self.domain
+        Self.cleanSuite(domain)
         let defaults = UserDefaults(suiteName: domain)!
         let app = NSApplication.shared
         let previous = app.activationPolicy()
         defer {
-            defaults.removePersistentDomain(forName: domain)
+            Self.cleanSuite(domain)
             app.setActivationPolicy(previous)
         }
         app.setActivationPolicy(.accessory)
@@ -47,9 +59,10 @@ struct AppAppearancePreferencesTests {
     }
 
     @Test func failedSystemChangeDoesNotSaveFalseSuccess() {
-        let domain = "dev.codingrewind.qa.appearance.\(UUID().uuidString)"
+        let domain = Self.domain
+        Self.cleanSuite(domain)
         let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { Self.cleanSuite(domain) }
         let preferences = AppAppearancePreferences(defaults: defaults) { _ in false }
         preferences.setShowsDockIcon(false)
         #expect(preferences.showsDockIcon)
@@ -58,14 +71,18 @@ struct AppAppearancePreferencesTests {
     }
 
     @Test func qaAppearanceDoesNotEscapeDataDirectory() {
-        let root = URL(fileURLWithPath: "/qa/appearance/\(UUID().uuidString)")
         let env = ["CODING_REWIND_QA": "1"]
+        let root = URL(fileURLWithPath: "/qa/appearance/first")
+        let other = root.appendingPathComponent("other")
+        let firstSuite = AppPreferences.preferencesSuite(environment: env, dataDirectory: root)!
+        let secondSuite = AppPreferences.preferencesSuite(environment: env, dataDirectory: other)!
+        Self.cleanSuite(firstSuite)
+        Self.cleanSuite(secondSuite)
         let first = AppPreferences.userDefaults(environment: env, dataDirectory: root)
-        let second = AppPreferences.userDefaults(environment: env, dataDirectory: root.appendingPathComponent("other"))
+        let second = AppPreferences.userDefaults(environment: env, dataDirectory: other)
         defer {
-            for path in [root, root.appendingPathComponent("other")] {
-                first.removePersistentDomain(forName: AppPreferences.preferencesSuite(environment: env, dataDirectory: path)!)
-            }
+            Self.cleanSuite(firstSuite)
+            Self.cleanSuite(secondSuite)
         }
         AppAppearancePreferences(defaults: first) { _ in true }.setShowsDockIcon(false)
         #expect(!AppAppearancePreferences(defaults: first).showsDockIcon)
@@ -73,9 +90,10 @@ struct AppAppearancePreferencesTests {
     }
 
     @Test func selectionPopupPreferenceDefaultsEnabledAndPersists() {
-        let domain = "dev.codingrewind.qa.appearance.popup.\(UUID().uuidString)"
+        let domain = Self.popupDomain
+        Self.cleanSuite(domain)
         let defaults = UserDefaults(suiteName: domain)!
-        defer { defaults.removePersistentDomain(forName: domain) }
+        defer { Self.cleanSuite(domain) }
 
         let initial = AppAppearancePreferences(defaults: defaults) { _ in true }
         #expect(initial.showsSelectionPopup)

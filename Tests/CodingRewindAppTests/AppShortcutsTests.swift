@@ -10,29 +10,36 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct AppShortcutsTests {
-    nonisolated private static let suite = "dev.codingrewind.qa.tests.\(UUID().uuidString)"
+    nonisolated private static let suite = "dev.codingrewind.qa.tests"
     private static let defaults: UserDefaults = {
         let value = UserDefaults(suiteName: suite)!
         KeyboardShortcuts.configure(userDefaults: value)
         atexit {
-            UserDefaults(suiteName: AppShortcutsTests.suite)?.removePersistentDomain(forName: AppShortcutsTests.suite)
+            cleanUserDefaultsSuite(suite)
         }
         return value
     }()
     private let hyper: NSEvent.ModifierFlags = [.control, .option, .shift, .command]
+
+    nonisolated private static func cleanUserDefaultsSuite(_ suiteName: String) {
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        let plistURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+        try? FileManager.default.removeItem(at: plistURL)
+    }
 
     init() {
         _ = Self.defaults
         KeyboardShortcuts.removeAllHandlers()
         KeyboardShortcuts.isPaused = false
         KeyboardShortcuts.isEnabled = true
-        Self.defaults.removePersistentDomain(forName: Self.suite)
+        Self.cleanUserDefaultsSuite(Self.suite)
     }
 
     @Test("The Operations menu uses the coordinator archive preference", arguments: [false, true])
     func menuLaunchUsesSharedArchiveIntent(archive: Bool) async throws {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/menu-launch-\(UUID().uuidString)")
+            .appendingPathComponent(".test-data/menu-launch-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
         let binary = dir.appendingPathComponent("fixture-executable")
@@ -295,7 +302,7 @@ struct AppShortcutsTests {
 
     @Test func selectionPopupControllerPreservesSavingAndAnchorActivationFeedbackAndStopsCleanly() async throws {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/selection-popup-\(UUID().uuidString)")
+            .appendingPathComponent(".test-data/selection-popup-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(
             dataDirectoryURL: dir.appendingPathComponent("Data"),
@@ -371,7 +378,7 @@ struct AppShortcutsTests {
 
     @Test func hudAndMenuCaptureRouteThroughUnifiedDelegateAndHideVisiblePopup() async throws {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/unified-capture-\(UUID().uuidString)")
+            .appendingPathComponent(".test-data/unified-capture-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(
             dataDirectoryURL: dir.appendingPathComponent("Data"),
@@ -439,7 +446,7 @@ struct AppShortcutsTests {
 
     @Test func selectionPopupRefusesSavedResurrectionAndProtectsInFlightSavingFromMenuCapture() async throws {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/popup-resurrection-\(UUID().uuidString)")
+            .appendingPathComponent(".test-data/popup-resurrection-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(
             dataDirectoryURL: dir.appendingPathComponent("Data"),
@@ -507,7 +514,7 @@ struct AppShortcutsTests {
 
     @Test func settingsWindowSyncsNormalizedURLResetsClosedDraftAndSuppressesPluginHUDPop() async throws {
         let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("dist/test-data/settings-draft-\(UUID().uuidString)")
+            .appendingPathComponent(".test-data/settings-draft-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(
             dataDirectoryURL: dir.appendingPathComponent("Data"),
@@ -602,6 +609,7 @@ struct AppShortcutsTests {
             },
             onCommand: { _ in }
         )
+        defer { shortcuts.stop(); NSStatusBar.system.removeStatusItem(controller.statusItem) }
         let initialImage = controller.statusItem.button?.image
         #expect(initialImage != nil)
 
@@ -627,7 +635,7 @@ struct AppShortcutsTests {
     @Test("SettingsWindowController polls permissions while window is visible and stops polling when closed")
     func settingsWindowPermissionPolling() async throws {
         let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let dir = repoRoot.appendingPathComponent(".build/test-data/settings-polling-\(UUID().uuidString)")
+        let dir = repoRoot.appendingPathComponent(".test-data/settings-polling-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(
@@ -651,6 +659,7 @@ struct AppShortcutsTests {
             permissionPollInterval: .milliseconds(20),
             onCommand: { _ in }
         )
+        defer { settings.window?.close(); shortcuts.stop(); Self.cleanUserDefaultsSuite("dev.codingrewind.qa.appearance") }
 
         settings.show()
         #expect(settings.window?.isVisible == true)

@@ -6,17 +6,26 @@ import Carbon.HIToolbox
 
 @Suite("KeyboardShortcuts Tests", .serialized)
 struct KeyboardShortcutsTests {
-    nonisolated private static let suite = "dev.codingrewind.qa.vendor-tests.\(ProcessInfo.processInfo.processIdentifier)"
+    nonisolated private static let suite = "dev.codingrewind.qa.vendor-tests"
     private static let testDefaults: UserDefaults = {
         let defaults = UserDefaults(suiteName: suite)!
         KeyboardShortcuts.configure(userDefaults: defaults)
         atexit {
-            UserDefaults(suiteName: KeyboardShortcutsTests.suite)?.removePersistentDomain(forName: KeyboardShortcutsTests.suite)
+            cleanUserDefaultsSuite(suite)
         }
         return defaults
     }()
+
+    nonisolated private static func cleanUserDefaultsSuite(_ suiteName: String) {
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        let plistURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+        try? FileManager.default.removeItem(at: plistURL)
+    }
+
 	init() {
 		Self.testDefaults.removeAllKeyboardShortcuts()
+		Self.cleanUserDefaultsSuite(Self.suite)
 	}
 
 	/**
