@@ -13,27 +13,12 @@ public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     case ioError(String)
     case keychainError(OSStatus)
 
+    public func localizedDescription(in language: AppLanguage) -> String {
+        L10n.rewindError(self, in: language)
+    }
+
     public var errorDescription: String? {
-        switch self {
-        case .emptySelection:
-            return "请先选中要保存的文本，再按快捷键。"
-        case .accessibilityPermissionDenied:
-            return "请在系统设置的“辅助功能”中允许 Coding Rewind 读取所选文本。"
-        case .noFrontmostApplication:
-            return "未找到当前应用的窗口。"
-        case .invalidClipID(let id):
-            return "片段编号无效：\(id)"
-        case .invalidMemosURL(let raw):
-            return "Memos 服务地址无效：\(raw)"
-        case .missingCredentials:
-            return "尚未设置 Memos 服务地址或访问令牌。"
-        case .httpError(let code, let body):
-            return "Memos 请求失败（HTTP \(code)）：\(body.prefix(120))"
-        case .ioError(let detail):
-            return "本机文件读写失败：\(detail)"
-        case .keychainError(let status):
-            return "无法访问 macOS 钥匙串（错误代码 \(status)）"
-        }
+        localizedDescription(in: .zhHans)
     }
 }
 
@@ -107,11 +92,12 @@ public enum CardStatus: String, Codable, Equatable, Hashable, Sendable {
     case pending
     case ready
 
+    public func badgeText(in language: AppLanguage) -> String {
+        L10n.cardStatusBadge(self, in: language)
+    }
+
     public var badgeText: String {
-        switch self {
-        case .pending: return "待整理"
-        case .ready: return "AI 已整理"
-        }
+        badgeText(in: .zhHans)
     }
 }
 

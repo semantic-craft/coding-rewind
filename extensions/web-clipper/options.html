@@ -78,14 +78,13 @@
     .fields { display: flex; flex-direction: column; gap: 18px; }
     .field {
       display: grid;
-      grid-template-columns: 90px minmax(0, 1fr);
+      grid-template-columns: 98px minmax(0, 1fr);
       gap: 14px;
       align-items: start;
     }
     .field > label { padding-top: 7px; }
     .input-stack { min-width: 0; }
-    input[type="url"], input[type="password"] {
-      width: 100%;
+    input[type="url"], input[type="password"], select {
       min-height: 34px;
       padding: 6px 10px;
       border: 1px solid var(--border);
@@ -93,6 +92,14 @@
       background: var(--surface);
       color: var(--text);
       font: inherit;
+    }
+    input[type="url"], input[type="password"] {
+      width: 100%;
+    }
+    select {
+      min-height: 32px;
+      padding: 4px 10px;
+      cursor: pointer;
     }
     input::placeholder { color: var(--muted); opacity: 1; }
     .help { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
@@ -116,7 +123,7 @@
     button:active { filter: brightness(0.96); }
     .primary { border-color: var(--accent); background: var(--accent); color: #ffffff; }
     .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-    input:focus-visible, button:focus-visible {
+    input:focus-visible, select:focus-visible, button:focus-visible {
       outline: 3px solid var(--accent);
       outline-offset: 3px;
     }
@@ -127,6 +134,9 @@
       gap: 18px;
       min-height: 38px;
       cursor: pointer;
+    }
+    .preference + .preference {
+      margin-top: 8px;
     }
     .switch {
       appearance: none;
@@ -183,7 +193,7 @@
     @media (pointer: coarse) {
       button { min-height: 44px; }
       .preference { min-height: 48px; }
-      input[type="url"], input[type="password"] { min-height: 44px; font-size: 16px; }
+      input[type="url"], input[type="password"], select { min-height: 44px; font-size: 16px; }
     }
   </style>
 </head>
@@ -195,24 +205,24 @@
       </span>
       <div>
         <h1>Coding Rewind</h1>
-        <p class="subtitle">网页扩展设置</p>
+        <p class="subtitle" data-i18n="optionsSubtitle">网页扩展设置</p>
       </div>
     </header>
 
     <form id="settings-form">
       <div class="content">
         <section aria-labelledby="connection-heading">
-          <h2 id="connection-heading">Memos 连接</h2>
+          <h2 id="connection-heading" data-i18n="connectionHeading">Memos 连接</h2>
           <div class="fields">
             <div class="field">
-              <label for="memos-url">服务地址</label>
-              <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" required>
+              <label for="memos-url" data-i18n="memosUrlLabel">服务地址</label>
+              <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" data-i18n-placeholder="memosUrlPlaceholder" required>
             </div>
             <div class="field">
-              <label for="memos-token">访问令牌</label>
+              <label for="memos-token" data-i18n="memosTokenLabel">访问令牌</label>
               <div class="input-stack">
-                <input id="memos-token" type="password" autocomplete="off" placeholder="输入 Memos 访问令牌" aria-describedby="token-help">
-                <p class="help" id="token-help">用于将片段保存到你的 Memos。</p>
+                <input id="memos-token" type="password" autocomplete="off" placeholder="输入 Memos 访问令牌" data-i18n-placeholder="memosTokenPlaceholder" aria-describedby="token-help">
+                <p class="help" id="token-help" data-i18n="tokenHelp">用于将片段保存到你的 Memos。</p>
               </div>
             </div>
           </div>
@@ -222,12 +232,20 @@
         </section>
 
         <section aria-labelledby="preferences-heading">
-          <h2 id="preferences-heading">保存偏好</h2>
+          <h2 id="preferences-heading" data-i18n="preferencesHeading">保存偏好</h2>
+          <div class="preference">
+            <label for="ui-language" data-i18n="uiLanguageLabel">界面语言</label>
+            <select id="ui-language">
+              <option value="auto" data-i18n="uiLanguageAuto">跟随浏览器 / Follow Browser</option>
+              <option value="zh-CN">简体中文</option>
+              <option value="en">English</option>
+            </select>
+          </div>
           <label class="preference" for="show-pill">
-            <span>选中文本时显示暂存胶囊</span>
+            <span data-i18n="showPillLabel">选中文本时显示暂存胶囊</span>
             <input id="show-pill" class="switch" type="checkbox" role="switch" aria-describedby="selection-help" checked>
           </label>
-          <p class="help" id="selection-help">在 ChatGPT、Claude、Gemini 中，也可使用右键菜单、⌃⌥⇧⌘S（Hyper+S）或 Alt+Shift+S 暂存。</p>
+          <p class="help" id="selection-help" data-i18n="selectionHelp">在 ChatGPT、Claude、Gemini 中，也可使用右键菜单、⌃⌥⇧⌘S（Hyper+S）或 Alt+Shift+S 暂存。</p>
         </section>
       </div>
 
@@ -237,12 +255,13 @@
           <div id="status" role="status" aria-live="polite"></div>
         </div>
         <div class="footer-actions">
-          <button id="flush-btn" type="button" hidden>立即同步</button>
-          <button id="save-btn" type="submit" class="primary">保存设置</button>
+          <button id="flush-btn" type="button" data-i18n="flushBtn" hidden>立即同步</button>
+          <button id="save-btn" type="submit" class="primary" data-i18n="saveBtn">保存设置</button>
         </div>
       </footer>
     </form>
   </main>
+  <script src="i18n.js"></script>
   <script type="module" src="options.js"></script>
 </body>
 </html>

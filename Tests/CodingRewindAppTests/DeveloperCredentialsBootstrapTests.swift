@@ -86,6 +86,229 @@ struct DeveloperCredentialsBootstrapTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
     }
 
+    @Test func bundledConfigurationMigratesToExternalFileWith0600PermissionsAndSupportsReleaseFallback() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let externalURL = fixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
+
+        let resolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: fixture.configurationURL,
+            externalConfigurationURL: externalURL,
+            environment: fixture.environment
+        )
+        #expect(resolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
+        #expect(FileManager.default.fileExists(atPath: externalURL.path))
+        let attrs = try FileManager.default.attributesOfItem(atPath: externalURL.path)
+        let perms = (attrs[.posixPermissions] as? NSNumber)?.intValue
+        #expect(perms == 0o600)
+
+        try FileManager.default.removeItem(at: fixture.argumentsURL)
+        let fallbackResolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: nil,
+            externalConfigurationURL: externalURL,
+            environment: fixture.environment
+        )
+        #expect(fallbackResolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
+        #expect(try String(contentsOf: fixture.argumentsURL, encoding: .utf8) ==
+            "read\n--no-newline\nop://fixture-vault/fixture-item/password\n")
+    }
+
+    @Test func rotatedBundledConfigurationRefreshesExternalConfigurationAndQABypassesBoth() throws {
+        let initialFixture = try Fixture(reference: "op://fixture-vault/old-item/password")
+        defer { initialFixture.remove() }
+        let externalURL = initialFixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
+
+        _ = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: initialFixture.configurationURL,
+            externalConfigurationURL: externalURL,
+            environment: initialFixture.environment
+        )
+
+        let rotatedConfigURL = initialFixture.root.appendingPathComponent("RotatedDeveloperCredentials.plist")
+        let executablePath = initialFixture.root.appendingPathComponent("fake op").path
+        let rotatedData = try PropertyListSerialization.data(fromPropertyList: [
+            "token_reference": "op://fixture-vault/rotated-item/password",
+            "op_executable": executablePath
+        ], format: .xml, options: 0)
+        try rotatedData.write(to: rotatedConfigURL)
+
+        var rotatedEnv = initialFixture.environment
+        rotatedEnv["FAKE_OP_RESULT"] = "rotated-fixture-token"
+        let refreshed = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: rotatedConfigURL,
+            externalConfigurationURL: externalURL,
+            environment: rotatedEnv
+        )
+        #expect(refreshed[StoragePaths.memosTokenEnvironmentKey] == "rotated-fixture-token")
+        #expect(try String(contentsOf: initialFixture.argumentsURL, encoding: .utf8) ==
+            "read\n--no-newline\nop://fixture-vault/rotated-item/password\n")
+        #expect(try Data(contentsOf: externalURL) == rotatedData)
+
+        try FileManager.default.removeItem(at: initialFixture.argumentsURL)
+        let qaEnv = rotatedEnv.merging([StoragePaths.qaEnvironmentKey: "1"]) { _, new in new }
+        #expect(try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: rotatedConfigURL,
+            externalConfigurationURL: externalURL,
+            environment: qaEnv
+        ) == qaEnv)
+        #expect(!FileManager.default.fileExists(atPath: initialFixture.argumentsURL.path))
+    }
+
+    @Test func malformedBundledConfigurationDoesNotOverwriteValidExternalConfiguration() throws {
+        let validFixture = try Fixture(reference: "op://fixture-vault/valid-item/password")
+        defer { validFixture.remove() }
+        let externalURL = validFixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
+
+        _ = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: validFixture.configurationURL,
+            externalConfigurationURL: externalURL,
+            environment: validFixture.environment
+        )
+        let preservedExternalData = try Data(contentsOf: externalURL)
+
+        let malformedBundledURL = validFixture.root.appendingPathComponent("MalformedBundled.plist")
+        try Data("not-a-valid-plist".utf8).write(to: malformedBundledURL)
+        #expect(throws: DeveloperCredentialsBootstrap.Failure.invalidConfiguration) {
+            try DeveloperCredentialsBootstrap.resolveEnvironment(
+                configurationURL: malformedBundledURL,
+                externalConfigurationURL: externalURL,
+                environment: validFixture.environment
+            )
+        }
+        #expect(try Data(contentsOf: externalURL) == preservedExternalData)
+
+        let invalidRefBundledURL = validFixture.root.appendingPathComponent("InvalidRefBundled.plist")
+        try PropertyListSerialization.data(fromPropertyList: [
+            "token_reference": "invalid-ref",
+            "op_executable": validFixture.root.appendingPathComponent("fake op").path
+        ], format: .xml, options: 0).write(to: invalidRefBundledURL)
+        #expect(throws: DeveloperCredentialsBootstrap.Failure.invalidConfiguration) {
+            try DeveloperCredentialsBootstrap.resolveEnvironment(
+                configurationURL: invalidRefBundledURL,
+                externalConfigurationURL: externalURL,
+                environment: validFixture.environment
+            )
+        }
+        #expect(try Data(contentsOf: externalURL) == preservedExternalData)
+    }
+
+    @Test func hungCredentialToolTimesOutAndTerminatesChildProcess() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let pidFileURL = fixture.root.appendingPathComponent("hung-op.pid")
+        let hungOpURL = fixture.root.appendingPathComponent("hung-op")
+        try """
+        #!/bin/sh
+        printf '%s' "$$" > "\(pidFileURL.path)"
+        sleep 30
+        """.write(to: hungOpURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: hungOpURL.path)
+
+        let hungConfigURL = fixture.root.appendingPathComponent("HungCredentials.plist")
+        try PropertyListSerialization.data(fromPropertyList: [
+            "token_reference": "op://fixture-vault/fixture-item/password",
+            "op_executable": hungOpURL.path
+        ], format: .xml, options: 0).write(to: hungConfigURL)
+
+        #expect(throws: DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut) {
+            try DeveloperCredentialsBootstrap.resolveEnvironment(
+                configurationURL: hungConfigURL,
+                environment: fixture.environment,
+                timeoutSeconds: 0.15
+            )
+        }
+        #expect(DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut.localizedDescription(in: .en).contains("Timed out"))
+        #expect(DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut.localizedDescription(in: .zhHans).contains("超时"))
+
+        if let pidString = try? String(contentsOf: pidFileURL, encoding: .utf8),
+           let childPID = pid_t(pidString.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            usleep(50_000)
+            #expect(kill(childPID, 0) != 0)
+        }
+    }
+
+    @MainActor
+    @Test func bootstrapFailureDispositionStartsSilentlyForBackgroundOrExternalFallbackAndRespectsLanguage() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let dataDir = fixture.root.appendingPathComponent("Data", isDirectory: true)
+        let configDir = fixture.root.appendingPathComponent("Config", isDirectory: true)
+        let externalURL = dataDir.appendingPathComponent("DeveloperCredentials.plist")
+        try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+        try Data(contentsOf: fixture.configurationURL).write(to: externalURL)
+
+        let env = [
+            StoragePaths.dataDirEnvironmentKey: dataDir.path,
+            StoragePaths.antigravityConfigEnvironmentKey: configDir.path
+        ]
+        #expect(DeveloperCredentialsBootstrap.hasBundledConfiguration(at: fixture.configurationURL))
+        #expect(!DeveloperCredentialsBootstrap.hasBundledConfiguration(at: nil))
+        #expect(DeveloperCredentialsBootstrap.configurationSource(
+            configurationURL: fixture.configurationURL,
+            externalConfigurationURL: externalURL,
+            environment: env
+        ) == .bundled)
+        #expect(DeveloperCredentialsBootstrap.configurationSource(
+            configurationURL: nil,
+            externalConfigurationURL: externalURL,
+            environment: env
+        ) == .externalFallback)
+
+        let interactiveBundledEn = CodingRewindAppDelegate.evaluateBootstrapFailure(
+            error: DeveloperCredentialsBootstrap.Failure.credentialReadFailed,
+            environment: env,
+            launchContext: LaunchContext(reason: .interactive),
+            bundledConfigurationURL: fixture.configurationURL,
+            language: .en
+        )
+        #expect(interactiveBundledEn == .terminateWithModalAlert(
+            title: "Coding Rewind Could Not Start",
+            message: "Could not read developer credentials from 1Password. Unlock 1Password and reopen Coding Rewind."
+        ))
+
+        for silentReason in [LaunchContext.Reason.systemLoginItem, .relaunchedAfterUpdate, .commandLineBackground] {
+            let disposition = CodingRewindAppDelegate.evaluateBootstrapFailure(
+                error: DeveloperCredentialsBootstrap.Failure.credentialReadFailed,
+                environment: env,
+                launchContext: LaunchContext(reason: silentReason),
+                bundledConfigurationURL: fixture.configurationURL,
+                language: .en
+            )
+            if case .startDegraded(let degradedEnv, let warning) = disposition {
+                #expect(degradedEnv[KeychainTokenStore.disableKeychainFallbackEnvironmentKey] == "1")
+                #expect(warning.contains("1Password"))
+            } else {
+                Issue.record("Expected silent degraded startup for \(silentReason), got \(disposition)")
+            }
+        }
+
+        let interactiveExternalFallback = CodingRewindAppDelegate.evaluateBootstrapFailure(
+            error: DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut,
+            environment: env,
+            launchContext: LaunchContext(reason: .interactive),
+            bundledConfigurationURL: nil,
+            language: .zhHans
+        )
+        guard case .startDegraded(let degradedEnv, let warning) = interactiveExternalFallback else {
+            Issue.record("Expected degraded startup when bundled plist is absent, got \(interactiveExternalFallback)")
+            return
+        }
+        #expect(degradedEnv[KeychainTokenStore.disableKeychainFallbackEnvironmentKey] == "1")
+        #expect(warning.contains("超时"))
+
+        struct IdleCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection {
+                throw RewindError.emptySelection
+            }
+        }
+        let paths = try StoragePaths.resolve(environment: degradedEnv)
+        let coord = try AppCoordinator(paths: paths, environment: degradedEnv, capturer: IdleCapturer(), language: .zhHans)
+        coord.recordStartupWarning(warning)
+        #expect(coord.isErrorBanner)
+        #expect(coord.bannerMessage == warning)
+        #expect(KeychainTokenStore.resolveToken(environment: degradedEnv) == nil)
+    }
+
     private struct Fixture {
         let root: URL
         let configurationURL: URL

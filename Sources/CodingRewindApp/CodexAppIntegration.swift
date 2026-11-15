@@ -8,6 +8,7 @@ import Foundation
 public enum CodexAppIntegration {
     public static func delivery(
         environment: [String: String],
+        languageProvider: @escaping @Sendable () -> AppLanguage = { .zhHans },
         applicationURL: URL? = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.codex),
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     ) -> (@Sendable (ConversationRequest) async -> (ConversationReceipt.State, String?))? {
@@ -25,7 +26,11 @@ public enum CodexAppIntegration {
         let childEnvironment = ProcessInfo.processInfo.environment
             .merging(environment) { _, new in new }
             .filter { !$0.key.hasPrefix("CODING_REWIND_") }
-        let client = CodexConversationClient(binaryURL: binary, environment: childEnvironment) { threadID in
+        let client = CodexConversationClient(
+            binaryURL: binary,
+            environment: childEnvironment,
+            languageProvider: languageProvider
+        ) { threadID in
             await MainActor.run {
                 guard let url = URL(string: "codex://threads/wake/\(threadID.uuidString.lowercased())") else { return false }
                 return NSWorkspace.shared.open(url)

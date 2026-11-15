@@ -2,10 +2,38 @@
 
 import AppKit
 import CodingRewindCore
+import Foundation
+import KeyboardShortcuts
 import Observation
+
+private final class AtomicLanguageBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: AppLanguage
+
+    init(_ initial: AppLanguage) {
+        self.current = initial
+    }
+
+    func get() -> AppLanguage {
+        lock.lock()
+        defer { lock.unlock() }
+        return current
+    }
+
+    func set(_ value: AppLanguage) {
+        lock.lock()
+        current = value
+        lock.unlock()
+    }
+}
 
 @MainActor
 public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
+    public enum StartupBootstrapDisposition: Equatable, Sendable {
+        case startDegraded(environment: [String: String], warningMessage: String)
+        case terminateWithModalAlert(title: String, message: String)
+    }
+
     public var coordinator: AppCoordinator?
     public var hudPanel: QuickPeekHUDPanel?
     public var statusItemController: StatusItemController?
@@ -13,11 +41,66 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var selectionPopupController: SelectionPopupController?
     public var shortcuts: AppShortcuts?
     public var appearance: AppAppearancePreferences?
+    public var loginItemController: LoginItemController?
+    public var updater: AppUpdater?
+    public var antigravityInstaller: AntigravityPluginInstaller?
     public private(set) var lastExternalApplication: NSRunningApplication?
 
     private var workspaceObserver: NSObjectProtocol?
 
+    public static func resolveBootstrapLanguage(
+        environment: [String: String],
+        preferredLanguagesProvider: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }
+    ) -> AppLanguage {
+        guard let paths = try? StoragePaths.resolve(environment: environment) else {
+            return AppLanguagePreference.system.resolved(preferredLanguages: preferredLanguagesProvider())
+        }
+        let defaults = AppPreferences.userDefaults(environment: environment, dataDirectory: paths.dataDirectoryURL)
+        return AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in true },
+            preferredLanguagesProvider: preferredLanguagesProvider
+        ).effectiveLanguage
+    }
+
+    public static func evaluateBootstrapFailure(
+        error: any Error,
+        environment: [String: String],
+        launchContext: LaunchContext,
+        bundledConfigurationURL: URL?,
+        language: AppLanguage? = nil,
+        fileManager: FileManager = .default
+    ) -> StartupBootstrapDisposition {
+        let resolvedLanguage = language ?? resolveBootstrapLanguage(environment: environment)
+        let localizedError: String
+        if let bootstrapFailure = error as? DeveloperCredentialsBootstrap.Failure {
+            localizedError = bootstrapFailure.localizedDescription(in: resolvedLanguage)
+        } else {
+            localizedError = error.localizedDescription
+        }
+        let hasBundledConfig = DeveloperCredentialsBootstrap.hasBundledConfiguration(
+            at: bundledConfigurationURL,
+            fileManager: fileManager
+        )
+        if !launchContext.shouldPresentHUDOnInitialLaunch || !hasBundledConfig {
+            var degradedEnvironment = environment
+            if degradedEnvironment[StoragePaths.qaEnvironmentKey] != "1" {
+                degradedEnvironment[KeychainTokenStore.disableKeychainFallbackEnvironmentKey] = "1"
+            }
+            return .startDegraded(environment: degradedEnvironment, warningMessage: localizedError)
+        }
+        return .terminateWithModalAlert(
+            title: AppStrings.startupFailedAlertTitle(in: resolvedLanguage),
+            message: localizedError
+        )
+    }
+
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        let environment = ProcessInfo.processInfo.environment
+        let launchContext = LaunchContext.captureCurrent(
+            arguments: CommandLine.arguments,
+            environment: environment
+        )
         recordFrontmostExternalApp(NSWorkspace.shared.frontmostApplication)
         workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -33,37 +116,97 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let configurationURL = Bundle.main.url(forResource: "DeveloperCredentials", withExtension: "plist")
-        let environment = ProcessInfo.processInfo.environment
+        let externalConfigurationURL: URL? = if environment[StoragePaths.qaEnvironmentKey] == "1" {
+            nil
+        } else {
+            (try? StoragePaths.resolve(environment: environment))?.developerCredentialsFileURL
+        }
         Task { [weak self] in
             do {
                 let resolved = try await Task.detached {
                     try DeveloperCredentialsBootstrap.resolveEnvironment(
-                        configurationURL: configurationURL, environment: environment
+                        configurationURL: configurationURL,
+                        externalConfigurationURL: externalConfigurationURL,
+                        environment: environment
                     )
                 }.value
-                self?.start(environment: resolved)
+                self?.start(environment: resolved, launchContext: launchContext)
             } catch {
-                let alert = NSAlert()
-                alert.messageText = "Coding Rewind 未能启动"
-                alert.informativeText = error.localizedDescription
-                alert.runModal()
-                NSApplication.shared.terminate(nil)
+                let disposition = Self.evaluateBootstrapFailure(
+                    error: error,
+                    environment: environment,
+                    launchContext: launchContext,
+                    bundledConfigurationURL: configurationURL
+                )
+                switch disposition {
+                case .startDegraded(let degradedEnv, let warningMessage):
+                    self?.start(
+                        environment: degradedEnv,
+                        launchContext: launchContext,
+                        startupWarning: warningMessage
+                    )
+                case .terminateWithModalAlert(let title, let message):
+                    let alert = NSAlert()
+                    alert.messageText = title
+                    alert.informativeText = message
+                    alert.runModal()
+                    NSApplication.shared.terminate(nil)
+                }
             }
         }
     }
 
-    private func start(environment: [String: String]) {
+    func start(
+        environment: [String: String],
+        launchContext: LaunchContext,
+        startupWarning: String? = nil
+    ) {
         do {
             let paths = try StoragePaths.resolve(environment: environment)
-            let appearance = AppAppearancePreferences(defaults: AppPreferences.userDefaults(
-                environment: environment, dataDirectory: paths.dataDirectoryURL
-            ))
+            let defaults = AppPreferences.userDefaults(
+                environment: environment,
+                dataDirectory: paths.dataDirectoryURL
+            )
+            let appearance = AppAppearancePreferences(defaults: defaults)
             self.appearance = appearance
             appearance.apply()
+
+            let initialLanguage = appearance.effectiveLanguage
+            KeyboardShortcuts.localizationLanguageCode = initialLanguage.rawValue
+            let languageBox = AtomicLanguageBox(initialLanguage)
+
+            let installer = AntigravityPluginInstaller(paths: paths)
+            self.antigravityInstaller = installer
+            try? installer.refreshLocalizedMetadataIfInstalled(language: initialLanguage)
+
+            let loginItem = LoginItemController.live(
+                environment: environment,
+                bundleURL: Bundle.main.bundleURL,
+                language: initialLanguage
+            )
+            self.loginItemController = loginItem
+
+            let updater = AppUpdater.live(
+                paths: paths,
+                environment: environment,
+                defaults: defaults,
+                language: initialLanguage
+            )
+            self.updater = updater
+
             let capturer = MacOSAccessibilitySelectionCapturer { [weak self] in
                 self?.lastExternalApplication
             }
-            let coord = try AppCoordinator(paths: paths, environment: environment, capturer: capturer, codexDelivery: CodexAppIntegration.delivery(environment: environment))
+            let coord = try AppCoordinator(
+                paths: paths,
+                environment: environment,
+                capturer: capturer,
+                language: initialLanguage,
+                codexDelivery: CodexAppIntegration.delivery(
+                    environment: environment,
+                    languageProvider: { languageBox.get() }
+                )
+            )
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
             }
@@ -84,6 +227,9 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 return NSWorkspace.shared.open(url)
             }
             self.coordinator = coord
+            if let startupWarning {
+                coord.recordStartupWarning(startupWarning)
+            }
 
             if CommandLine.arguments.contains("--install-plugin") {
                 installPlugin()
@@ -96,14 +242,19 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             }
 
             AppShortcuts.configurePreferences(environment: coord.environment, dataDirectory: paths.dataDirectoryURL)
-            let shortcuts = AppShortcuts(onCommand: dispatchCommand)
+            let shortcuts = AppShortcuts(language: initialLanguage, onCommand: dispatchCommand)
             self.shortcuts = shortcuts
 
-            NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts, onCommand: dispatchCommand)
+            NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu(
+                shortcuts: shortcuts,
+                language: initialLanguage,
+                onCommand: dispatchCommand
+            )
 
             let panel = QuickPeekHUDPanel(
                 coordinator: coord,
                 shortcuts: shortcuts,
+                updater: updater,
                 onCommand: dispatchCommand
             )
             self.hudPanel = panel
@@ -112,12 +263,15 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 coordinator: coord,
                 appearance: appearance,
                 shortcuts: shortcuts,
+                loginItemController: loginItem,
+                updater: updater,
                 onCommand: dispatchCommand
             )
             self.settingsWindowController = settings
 
             let statusController = StatusItemController(
                 shortcuts: shortcuts,
+                language: initialLanguage,
                 snapshotProvider: { [weak self] in
                     guard let self, let coord = self.coordinator else {
                         return MenuStatusSnapshot(
@@ -144,6 +298,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             let selectionPopup = SelectionPopupController(
                 appearance: appearance,
                 shortcuts: shortcuts,
+                language: initialLanguage,
                 onTriggerCapture: { [weak self] in
                     await self?.captureSelectionAndRefreshStatus() ?? .ignoredBusy
                 },
@@ -154,9 +309,31 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             selectionPopup.start()
             self.selectionPopupController = selectionPopup
 
-            observeCoordinatorChanges()
+            appearance.onEffectiveLanguageChange = { [weak self] lang in
+                KeyboardShortcuts.localizationLanguageCode = lang.rawValue
+                languageBox.set(lang)
+                guard let self else { return }
+                try? self.antigravityInstaller?.refreshLocalizedMetadataIfInstalled(language: lang)
+                self.coordinator?.setLanguage(lang)
+                self.loginItemController?.language = lang
+                self.updater?.language = lang
+                if let shortcuts = self.shortcuts {
+                    shortcuts.language = lang
+                    NSApplication.shared.mainMenu = MainMenuBuilder.buildMainMenu(
+                        shortcuts: shortcuts,
+                        language: lang,
+                        onCommand: dispatchCommand
+                    )
+                }
+                self.selectionPopupController?.language = lang
+                self.statusItemController?.updateLanguage(lang)
+                self.settingsWindowController?.updateLanguage(lang)
+            }
 
-            if !CommandLine.arguments.contains("--background") {
+            observeCoordinatorChanges()
+            updater.startBackgroundSchedule()
+
+            if launchContext.shouldPresentHUDOnInitialLaunch {
                 perform(.presentHUDAndFocus)
             }
 
@@ -170,6 +347,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        updater?.stop()
         selectionPopupController?.stop()
         shortcuts?.stop()
     }
@@ -240,6 +418,11 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             statusItemController?.refreshIcon()
         case .openSettings:
             settingsWindowController?.show()
+        case .checkForUpdates:
+            settingsWindowController?.show(page: .general)
+            Task { @MainActor [weak self] in
+                await self?.updater?.checkForUpdates(userInitiated: true)
+            }
         case .selectRecentCard(let cardID):
             coordinator?.focusAndCheckCard(id: cardID)
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)

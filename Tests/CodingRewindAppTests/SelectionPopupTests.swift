@@ -359,6 +359,10 @@ struct SelectionPopupTests {
         #expect(SelectionPopupPhase.saving.labelText == "暂存中…")
         #expect(SelectionPopupPhase.saved(offline: false).labelText == "已同步")
         #expect(SelectionPopupPhase.saved(offline: true).labelText == "待同步")
+        #expect(SelectionPopupPhase.ready(shortcutHint: nil).labelText(in: .en) == "Stash")
+        #expect(SelectionPopupPhase.saving.labelText(in: .en) == "Stashing…")
+        #expect(SelectionPopupPhase.saved(offline: false).labelText(in: .en) == "Synced")
+        #expect(SelectionPopupPhase.saved(offline: true).labelText(in: .en) == "Pending Sync")
 
         let panel = SelectionPopupPanel(onStash: {})
         defer { panel.orderOut(nil) }
@@ -375,47 +379,50 @@ struct SelectionPopupTests {
         ]
 
         let placements: [SelectionPopupLayout.VerticalPlacement] = [.above, .below]
-        for placement in placements {
-            for phase in phases {
-                panel.render(
-                    phase: phase,
-                    selectionRect: selectionRect,
-                    releasePoint: releasePoint,
-                    verticalPlacement: placement,
-                    onStash: {}
-                )
-                #expect(panel.isVisible)
-                #expect(panel.interactiveFrame.height == 26)
-                #expect(panel.frame.height == 42)
-                #expect(panel.interactiveFrame.width >= SelectionPopupStyleMetrics.minPillWidth)
-                let contentView = try #require(panel.contentView)
-                #expect(contentView.fittingSize.width - SelectionPopupStyleMetrics.shadowOutset * 2 >= SelectionPopupStyleMetrics.minPillWidth)
-                #expect(panel.frame.width == panel.interactiveFrame.width + SelectionPopupStyleMetrics.shadowOutset * 2)
+        for language in [AppLanguage.zhHans, .en] {
+            for placement in placements {
+                for phase in phases {
+                    panel.render(
+                        phase: phase,
+                        language: language,
+                        selectionRect: selectionRect,
+                        releasePoint: releasePoint,
+                        verticalPlacement: placement,
+                        onStash: {}
+                    )
+                    #expect(panel.isVisible)
+                    #expect(panel.interactiveFrame.height == 26)
+                    #expect(panel.frame.height == 42)
+                    #expect(panel.interactiveFrame.width >= SelectionPopupStyleMetrics.minPillWidth)
+                    let contentView = try #require(panel.contentView)
+                    #expect(contentView.fittingSize.width - SelectionPopupStyleMetrics.shadowOutset * 2 >= SelectionPopupStyleMetrics.minPillWidth)
+                    #expect(panel.frame.width == panel.interactiveFrame.width + SelectionPopupStyleMetrics.shadowOutset * 2)
 
-                let isInteractivePhase = if case .ready = phase { true } else { false }
-                let shadowPoint = CGPoint(x: panel.frame.minX + 4, y: panel.frame.midY)
-                let centerPoint = CGPoint(x: panel.interactiveFrame.midX, y: panel.interactiveFrame.midY)
+                    let isInteractivePhase = if case .ready = phase { true } else { false }
+                    let shadowPoint = CGPoint(x: panel.frame.minX + 4, y: panel.frame.midY)
+                    let centerPoint = CGPoint(x: panel.interactiveFrame.midX, y: panel.interactiveFrame.midY)
 
-                panel.updateMousePassthrough(mouseLocation: shadowPoint, isInteractivePhase: isInteractivePhase)
-                #expect(panel.ignoresMouseEvents)
+                    panel.updateMousePassthrough(mouseLocation: shadowPoint, isInteractivePhase: isInteractivePhase)
+                    #expect(panel.ignoresMouseEvents)
 
-                panel.updateMousePassthrough(mouseLocation: centerPoint, isInteractivePhase: isInteractivePhase)
-                #expect(panel.ignoresMouseEvents == !isInteractivePhase)
+                    panel.updateMousePassthrough(mouseLocation: centerPoint, isInteractivePhase: isInteractivePhase)
+                    #expect(panel.ignoresMouseEvents == !isInteractivePhase)
 
-                let expectedVisible = SelectionPopupLayout.preferredVisibleFrame(
-                    selectionRect: selectionRect,
-                    releasePoint: releasePoint,
-                    screens: NSScreen.screens.map { (frame: $0.frame, visibleFrame: $0.visibleFrame) },
-                    mainVisibleFrame: NSScreen.main?.visibleFrame
-                )
-                let expectedOrigin = SelectionPopupLayout.panelOrigin(
-                    panelSize: panel.interactiveFrame.size,
-                    selectionRect: selectionRect,
-                    releasePoint: releasePoint,
-                    visibleFrame: expectedVisible,
-                    verticalPlacement: placement
-                )
-                #expect(panel.interactiveFrame.origin == expectedOrigin)
+                    let expectedVisible = SelectionPopupLayout.preferredVisibleFrame(
+                        selectionRect: selectionRect,
+                        releasePoint: releasePoint,
+                        screens: NSScreen.screens.map { (frame: $0.frame, visibleFrame: $0.visibleFrame) },
+                        mainVisibleFrame: NSScreen.main?.visibleFrame
+                    )
+                    let expectedOrigin = SelectionPopupLayout.panelOrigin(
+                        panelSize: panel.interactiveFrame.size,
+                        selectionRect: selectionRect,
+                        releasePoint: releasePoint,
+                        visibleFrame: expectedVisible,
+                        verticalPlacement: placement
+                    )
+                    #expect(panel.interactiveFrame.origin == expectedOrigin)
+                }
             }
         }
     }

@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: MIT
 
+import "./i18n.js";
 import { buildAuthHeaders, normalizeMemosBaseUrl } from "./memos_payload.mjs";
 
-export async function testMemosConnection({ baseUrl, token, fetchImpl = globalThis.fetch }) {
-  const normalized = normalizeMemosBaseUrl(baseUrl);
+export async function probeMemosConnection(
+  rawUrl,
+  token = "",
+  fetchImpl = globalThis.fetch,
+  locale = "zh-CN"
+) {
+  const i18n = globalThis.CodingRewindI18n;
+  const resolvedLocale = i18n.resolveLocale(locale);
+  const normalized = normalizeMemosBaseUrl(rawUrl);
   if (!normalized) {
-    return { ok: false, message: "请输入有效的 Memos 服务地址" };
+    return { ok: false, message: i18n.t(resolvedLocale, "connInvalidUrl") };
   }
   const headers = buildAuthHeaders(token, { includeJsonContentType: false });
   try {
@@ -14,13 +22,29 @@ export async function testMemosConnection({ baseUrl, token, fetchImpl = globalTh
       headers
     });
     if (!resp.ok) {
-      return { ok: false, status: resp.status, message: `连接失败 (HTTP ${resp.status})` };
+      return {
+        ok: false,
+        status: resp.status,
+        message: i18n.t(resolvedLocale, "connHttpFailed", { status: resp.status })
+      };
     }
     await resp.json();
-    return { ok: true, message: "连接成功，可读取片段。尚未验证保存。" };
+    return { ok: true, message: i18n.t(resolvedLocale, "connSuccessReadOnly") };
   } catch (err) {
-    return { ok: false, message: `网络请求失败：${err?.message || String(err)}` };
+    return {
+      ok: false,
+      message: i18n.t(resolvedLocale, "connNetworkError", { error: err?.message || String(err) })
+    };
   }
+}
+
+export async function testMemosConnection({
+  baseUrl,
+  token = "",
+  fetchImpl = globalThis.fetch,
+  locale = "zh-CN"
+} = {}) {
+  return probeMemosConnection(baseUrl, token, fetchImpl, locale);
 }
 
 async function requestOriginPermission(normalizedUrl) {
@@ -33,55 +57,143 @@ async function requestOriginPermission(normalizedUrl) {
   }
 }
 
-function initOptionsPage() {
+function detectBrowserLanguage() {
+  return globalThis.CodingRewindI18n.detectBrowserLanguage();
+}
+
+function normalizeUiLanguagePreference(value) {
+  if (value === "zh-CN" || value === "en" || value === "auto") {
+    return value;
+  }
+  return "auto";
+}
+
+export function initOptionsPage() {
   if (typeof document === "undefined") return;
+  const i18n = globalThis.CodingRewindI18n;
   const formEl = document.getElementById("settings-form");
   const urlInput = document.getElementById("memos-url");
   const tokenInput = document.getElementById("memos-token");
   const pillCheckbox = document.getElementById("show-pill");
+  const languageSelect = document.getElementById("ui-language");
   const testBtn = document.getElementById("test-btn");
   const flushBtn = document.getElementById("flush-btn");
   const statusEl = document.getElementById("status");
   const outboxCountEl = document.getElementById("outbox-count");
   if (!formEl) return;
 
-  function setStatus(message, kind = "info") {
-    statusEl.textContent = message;
-    statusEl.setAttribute("data-kind", kind);
+  let preferredLanguage = "auto";
+  let currentLocale = i18n.resolveLocale(preferredLanguage, detectBrowserLanguage());
+  let currentOutbox = [];
+  let statusMessageFactory = null;
+  let statusKind = "info";
+
+  function renderStatus() {
+    if (!statusMessageFactory) {
+      statusEl.textContent = "";
+      return;
+    }
+    statusEl.textContent = statusMessageFactory(currentLocale);
+    statusEl.setAttribute("data-kind", statusKind);
+  }
+
+  function setStatusKey(key, params = undefined, kind = "info") {
+    statusMessageFactory = (loc) => i18n.t(loc, key, params);
+    statusKind = kind;
+    renderStatus();
+  }
+
+  function setStatusText(text, kind = "info") {
+    statusMessageFactory = () => text;
+    statusKind = kind;
+    renderStatus();
   }
 
   function renderOutboxCount(outbox) {
-    const count = Array.isArray(outbox) ? outbox.length : 0;
-    outboxCountEl.textContent = `待同步片段：${count} 条`;
+    currentOutbox = Array.isArray(outbox) ? outbox : [];
+    const count = currentOutbox.length;
+    outboxCountEl.textContent = i18n.t(currentLocale, "outboxCount", { count });
     flushBtn.hidden = count === 0;
   }
 
+  function applyLanguagePreference(nextPref) {
+    preferredLanguage = normalizeUiLanguagePreference(nextPref);
+    if (languageSelect) {
+      languageSelect.value = preferredLanguage;
+    }
+    currentLocale = i18n.resolveLocale(preferredLanguage, detectBrowserLanguage());
+    if (document.documentElement) {
+      document.documentElement.lang = currentLocale;
+    }
+    document.title = i18n.t(currentLocale, "optionsPageTitle");
+
+    for (const node of document.querySelectorAll("[data-i18n]")) {
+      const key = node.getAttribute("data-i18n");
+      if (key) node.textContent = i18n.t(currentLocale, key);
+    }
+    for (const node of document.querySelectorAll("[data-i18n-placeholder]")) {
+      const key = node.getAttribute("data-i18n-placeholder");
+      if (key) {
+        const translated = i18n.t(currentLocale, key);
+        node.placeholder = translated;
+        node.setAttribute("placeholder", translated);
+      }
+    }
+    if (testBtn) {
+      testBtn.textContent = i18n.t(currentLocale, "testConnectionBtn");
+    }
+    renderOutboxCount(currentOutbox);
+    renderStatus();
+  }
+
+  applyLanguagePreference("auto");
+
   async function loadInitialState() {
     if (typeof chrome === "undefined" || !chrome.storage?.local) return;
-    const items = await chrome.storage.local.get(["memosUrl", "memosToken", "showSelectionPill", "outbox"]);
+    const items = await chrome.storage.local.get([
+      "memosUrl",
+      "memosToken",
+      "showSelectionPill",
+      "uiLanguage",
+      "outbox"
+    ]);
     if (typeof items.memosUrl === "string") urlInput.value = items.memosUrl;
     if (typeof items.memosToken === "string") tokenInput.value = items.memosToken;
     pillCheckbox.checked = items.showSelectionPill !== false;
-    renderOutboxCount(items.outbox);
+    currentOutbox = Array.isArray(items.outbox) ? items.outbox : [];
+    applyLanguagePreference(items.uiLanguage);
   }
 
   void loadInitialState();
 
+  languageSelect?.addEventListener("change", async () => {
+    const nextPref = normalizeUiLanguagePreference(languageSelect.value);
+    applyLanguagePreference(nextPref);
+    await chrome.storage?.local?.set?.({ uiLanguage: nextPref });
+  });
+
   chrome.storage?.onChanged?.addListener((changes, area) => {
-    if (area === "local" && changes.outbox) {
+    if (area !== "local") return;
+    if (changes.outbox) {
       renderOutboxCount(changes.outbox.newValue);
+    }
+    if (changes.uiLanguage) {
+      const incoming = normalizeUiLanguagePreference(changes.uiLanguage.newValue);
+      if (incoming !== preferredLanguage) {
+        applyLanguagePreference(incoming);
+      }
     }
   });
 
   async function resolveAuthorizedBaseUrl() {
     const normalized = normalizeMemosBaseUrl(urlInput.value);
     if (!normalized) {
-      setStatus("请输入以 http:// 或 https:// 开头的有效 Memos 服务地址", "error");
+      setStatusKey("statusInvalidProtocolUrl", undefined, "error");
       return "";
     }
     const granted = await requestOriginPermission(normalized);
     if (!granted) {
-      setStatus("请允许扩展访问此服务地址，才能连接 Memos", "error");
+      setStatusKey("statusOriginPermissionDenied", undefined, "error");
       return "";
     }
     return normalized;
@@ -93,33 +205,43 @@ function initOptionsPage() {
     if (!normalized) return;
 
     urlInput.value = normalized;
+    const selectedUiLang = languageSelect
+      ? normalizeUiLanguagePreference(languageSelect.value)
+      : preferredLanguage;
     await chrome.storage.local.set({
       memosUrl: normalized,
       memosToken: tokenInput.value.trim(),
-      showSelectionPill: pillCheckbox.checked
+      showSelectionPill: pillCheckbox.checked,
+      uiLanguage: selectedUiLang
     });
-    setStatus("设置已保存", "ok");
+    setStatusKey("statusSettingsSaved", undefined, "ok");
     chrome.runtime?.sendMessage?.({ type: "REWIND_FLUSH_OUTBOX" });
   });
 
   testBtn?.addEventListener("click", async () => {
     const normalized = await resolveAuthorizedBaseUrl();
     if (!normalized) return;
-    setStatus("正在测试连接…", "info");
-    const res = await testMemosConnection({
-      baseUrl: normalized,
-      token: tokenInput.value.trim()
-    });
-    setStatus(res.message, res.ok ? "ok" : "error");
+    setStatusKey("statusTestingConnection", undefined, "info");
+    const res = await probeMemosConnection(
+      normalized,
+      tokenInput.value.trim(),
+      globalThis.fetch,
+      currentLocale
+    );
+    setStatusText(res.message, res.ok ? "ok" : "error");
   });
 
   flushBtn?.addEventListener("click", async () => {
-    setStatus("正在同步片段…", "info");
+    setStatusKey("statusSyncingClips", undefined, "info");
     const resp = await chrome.runtime.sendMessage({ type: "REWIND_FLUSH_OUTBOX" });
     if (resp && resp.ok) {
-      setStatus(`已同步 ${resp.flushed} 条片段，待同步 ${resp.remaining} 条`, resp.remaining === 0 ? "ok" : "info");
+      setStatusKey(
+        "statusSyncSummary",
+        { flushed: resp.flushed, remaining: resp.remaining },
+        resp.remaining === 0 ? "ok" : "info"
+      );
     } else {
-      setStatus("同步失败，请检查网络、服务地址和访问令牌", "error");
+      setStatusKey("statusSyncFailed", undefined, "error");
     }
   });
 }

@@ -26,10 +26,37 @@ public final class AccessibilityPermissionState {
 @MainActor
 @Observable
 public final class SettingsConnectionDraft {
+    private enum SaveOutcome {
+        case savedVerified
+        case rewindError(RewindError)
+        case otherError(String)
+
+        var isError: Bool {
+            switch self {
+            case .savedVerified:
+                return false
+            case .rewindError, .otherError:
+                return true
+            }
+        }
+
+        func message(in language: AppLanguage) -> String {
+            switch self {
+            case .savedVerified:
+                return AppStrings.connectionSavedVerifyHint(in: language)
+            case .rewindError(let rewindError):
+                return rewindError.localizedDescription(in: language)
+            case .otherError(let detail):
+                return detail
+            }
+        }
+    }
+
     public var urlDraft: String
     public var tokenDraft: String = ""
     public private(set) var saveMessage: String?
     public private(set) var saveFailed = false
+    private var lastOutcome: SaveOutcome?
 
     public init(memosURL: String) {
         self.urlDraft = memosURL
@@ -38,42 +65,55 @@ public final class SettingsConnectionDraft {
     public func reset(memosURL: String) {
         urlDraft = memosURL
         tokenDraft = ""
+        lastOutcome = nil
         saveMessage = nil
         saveFailed = false
     }
 
     public func save(using coordinator: AppCoordinator) {
+        let lang = coordinator.language
+        let outcome: SaveOutcome
         do {
             try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
             urlDraft = coordinator.connectionSettings.memosURL
             tokenDraft = ""
-            saveFailed = false
-            saveMessage = "连接设置已保存，尚未确认同步成功。请点击“立即同步”检查。"
+            outcome = .savedVerified
         } catch {
-            saveFailed = true
-            saveMessage = error.localizedDescription
+            if let rewindError = error as? RewindError {
+                outcome = .rewindError(rewindError)
+            } else {
+                outcome = .otherError(error.localizedDescription)
+            }
         }
+        lastOutcome = outcome
+        saveFailed = outcome.isError
+        saveMessage = outcome.message(in: lang)
+    }
+
+    public func updateLanguage(_ language: AppLanguage) {
+        guard let lastOutcome else { return }
+        saveFailed = lastOutcome.isError
+        saveMessage = lastOutcome.message(in: language)
     }
 }
 
-enum SettingsPage: String, CaseIterable, Identifiable {
+public enum SettingsPage: String, CaseIterable, Identifiable, Sendable {
     case general
     case connection
     case keyboard
     case integrations
 
-    var id: Self { self }
+    public var id: Self { self }
 
-    var title: String {
-        switch self {
-        case .general: "通用"
-        case .connection: "Memos 连接"
-        case .keyboard: "快捷键"
-        case .integrations: "插件与权限"
-        }
+    public func title(in language: AppLanguage) -> String {
+        AppStrings.settingsPageTitle(self, in: language)
     }
 
-    var systemImage: String {
+    public var title: String {
+        title(in: .zhHans)
+    }
+
+    public var systemImage: String {
         switch self {
         case .general: "gearshape"
         case .connection: "network"
@@ -83,9 +123,19 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 }
 
+@MainActor
+@Observable
+public final class SettingsNavigationModel {
+    public var selectedPage: SettingsPage
+
+    public init(selectedPage: SettingsPage = .general) {
+        self.selectedPage = selectedPage
+    }
+}
+
 enum SettingsLayout {
-    static let contentSize = NSSize(width: 720, height: 520)
-    static let sidebarWidth: CGFloat = 160
+    static let contentSize = NSSize(width: 720, height: 540)
+    static let sidebarWidth: CGFloat = 168
 }
 
 @MainActor
@@ -93,51 +143,62 @@ public struct SettingsRootView: View {
     @Bindable public var coordinator: AppCoordinator
     @Bindable public var appearance: AppAppearancePreferences
     @Bindable public var shortcuts: AppShortcuts
+    public var loginItemController: LoginItemController?
+    public var updater: AppUpdater?
     @Bindable public var permissionState: AccessibilityPermissionState
     @Bindable public var connectionDraft: SettingsConnectionDraft
+    @Bindable public var navigationModel: SettingsNavigationModel
     public let onCommand: @MainActor (AppCommand) -> Void
     public let onClose: @MainActor () -> Void
-
-    @State private var selectedPage: SettingsPage = .general
 
     public init(
         coordinator: AppCoordinator,
         appearance: AppAppearancePreferences,
         shortcuts: AppShortcuts,
+        loginItemController: LoginItemController? = nil,
+        updater: AppUpdater? = nil,
         permissionState: AccessibilityPermissionState = AccessibilityPermissionState(),
         connectionDraft: SettingsConnectionDraft? = nil,
+        navigationModel: SettingsNavigationModel = SettingsNavigationModel(),
         onCommand: @escaping @MainActor (AppCommand) -> Void,
         onClose: @escaping @MainActor () -> Void
     ) {
         self.coordinator = coordinator
         self.appearance = appearance
         self.shortcuts = shortcuts
+        self.loginItemController = loginItemController
+        self.updater = updater
         self.permissionState = permissionState
         self.connectionDraft = connectionDraft ?? SettingsConnectionDraft(memosURL: coordinator.connectionSettings.memosURL)
+        self.navigationModel = navigationModel
         self.onCommand = onCommand
         self.onClose = onClose
+    }
+
+    private var lang: AppLanguage {
+        appearance.effectiveLanguage
     }
 
     public var body: some View {
         HStack(spacing: 0) {
             List(selection: Binding<SettingsPage?>(
-                get: { selectedPage },
-                set: { if let page = $0 { selectedPage = page } }
+                get: { navigationModel.selectedPage },
+                set: { if let page = $0 { navigationModel.selectedPage = page } }
             )) {
                 ForEach(SettingsPage.allCases) { page in
-                    Label(page.title, systemImage: page.systemImage)
+                    Label(page.title(in: lang), systemImage: page.systemImage)
                         .tag(page)
                         .accessibilityIdentifier("settings.navigation.\(page.rawValue)")
                 }
             }
             .listStyle(.sidebar)
-            .accessibilityLabel("设置分类")
+            .accessibilityLabel(AppStrings.settingsCategoriesLabel(in: lang))
             .frame(width: SettingsLayout.sidebarWidth)
 
             Divider()
 
             VStack(alignment: .leading, spacing: 0) {
-                Text(selectedPage.title)
+                Text(navigationModel.selectedPage.title(in: lang))
                     .font(.title2.weight(.semibold))
                     .padding(.horizontal, 24)
                     .padding(.vertical, 20)
@@ -146,7 +207,7 @@ public struct SettingsRootView: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
-                        switch selectedPage {
+                        switch navigationModel.selectedPage {
                         case .general: general
                         case .connection: connection
                         case .keyboard: keyboard
@@ -160,15 +221,155 @@ public struct SettingsRootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Color(nsColor: .controlBackgroundColor))
         }
+        .environment(\.locale, lang.locale)
         .frame(width: SettingsLayout.contentSize.width, height: SettingsLayout.contentSize.height)
         .onExitCommand(perform: onClose)
     }
 
     private var general: some View {
         Group {
-            SettingsSection("Dock 图标") {
-                SettingsRow("在 Dock 中显示", help: "点击 Dock 图标或从 Finder 打开应用，会显示片段浮窗。") {
-                    Toggle("在 Dock 中显示", isOn: Binding(
+            SettingsSection(AppStrings.languageSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.displayLanguageTitle(in: lang),
+                    help: AppStrings.displayLanguageHelp(in: lang)
+                ) {
+                    Picker(
+                        AppStrings.displayLanguageTitle(in: lang),
+                        selection: Binding(
+                            get: { appearance.languagePreference },
+                            set: { appearance.setLanguagePreference($0) }
+                        )
+                    ) {
+                        ForEach(AppLanguagePreference.allCases) { option in
+                            Text(AppStrings.languagePreferenceTitle(option, in: lang))
+                                .tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(minWidth: 136)
+                    .accessibilityIdentifier("settings.language")
+                }
+            }
+
+            if let loginItemController {
+                SettingsSection(AppStrings.startupSectionTitle(in: lang)) {
+                    let itemState = loginItemController.state
+                    let isUnavailable: Bool = {
+                        if case .unavailable = itemState { return true }
+                        return false
+                    }()
+                    SettingsRow(
+                        AppStrings.launchAtLoginTitle(in: lang),
+                        help: AppStrings.launchAtLoginHelp(itemState, in: lang)
+                    ) {
+                        HStack(spacing: 8) {
+                            if itemState == .requiresApproval {
+                                Button(AppStrings.openLoginItemsSettingsButton(in: lang)) {
+                                    loginItemController.openSystemSettings()
+                                }
+                                .rewindButtonRole(.secondary)
+                                .accessibilityIdentifier("settings.openLoginItems")
+                            }
+                            Toggle(
+                                AppStrings.launchAtLoginTitle(in: lang),
+                                isOn: Binding(
+                                    get: { itemState.isToggleOn },
+                                    set: { loginItemController.setEnabled($0) }
+                                )
+                            )
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .disabled(isUnavailable)
+                            .accessibilityIdentifier("settings.launchAtLogin")
+                        }
+                    }
+                    if let error = loginItemController.errorMessage {
+                        Text(error).foregroundStyle(.red)
+                    }
+                }
+            }
+
+            if let updater {
+                SettingsSection(AppStrings.updatesSectionTitle(in: lang)) {
+                    SettingsRow(
+                        AppStrings.autoCheckUpdatesTitle(in: lang),
+                        help: AppStrings.autoCheckUpdatesHelp(in: lang)
+                    ) {
+                        Toggle(
+                            AppStrings.autoCheckUpdatesTitle(in: lang),
+                            isOn: Binding(
+                                get: { updater.automaticallyChecksForUpdates },
+                                set: { updater.setAutomaticallyChecksForUpdates($0) }
+                            )
+                        )
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("settings.autoUpdate")
+                    }
+                    Divider()
+                    let updateState = updater.state
+                    let isBusy: Bool = {
+                        switch updateState {
+                        case .checking, .downloading, .verifying, .installing:
+                            return true
+                        default:
+                            return false
+                        }
+                    }()
+                    SettingsRow(
+                        AppStrings.currentVersionTitle(version: updater.currentVersion, in: lang),
+                        help: AppStrings.updaterStatusSummary(
+                            state: updateState,
+                            lastCheckedAt: updater.lastCheckedAt,
+                            in: lang
+                        )
+                    ) {
+                        HStack(spacing: 8) {
+                            switch updateState {
+                            case .readyToInstall(let staged):
+                                Button(AppStrings.restartToUpdateButton(version: staged.candidate.version, in: lang)) {
+                                    Task { @MainActor in
+                                        await updater.installReadyUpdateAndRelaunch()
+                                    }
+                                }
+                                .rewindButtonRole(.primary)
+                                .accessibilityIdentifier("settings.restartToUpdate")
+                            case .manualDownloadRequired(let candidate, _):
+                                Button(AppStrings.viewReleaseOnGitHubButton(in: lang)) {
+                                    updater.openReleasePage(candidate)
+                                }
+                                .rewindButtonRole(.secondary)
+                                .accessibilityIdentifier("settings.viewReleaseOnGitHub")
+
+                                Button(AppStrings.checkForUpdatesButton(isBusy: false, in: lang)) {
+                                    Task { @MainActor in
+                                        await updater.checkForUpdates(userInitiated: true)
+                                    }
+                                }
+                                .rewindButtonRole(.secondary)
+                                .accessibilityIdentifier("settings.checkForUpdates")
+                            default:
+                                Button(AppStrings.checkForUpdatesButton(isBusy: isBusy, in: lang)) {
+                                    Task { @MainActor in
+                                        await updater.checkForUpdates(userInitiated: true)
+                                    }
+                                }
+                                .rewindButtonRole(.secondary)
+                                .disabled(isBusy)
+                                .accessibilityIdentifier("settings.checkForUpdates")
+                            }
+                        }
+                    }
+                }
+            }
+
+            SettingsSection(AppStrings.dockSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.showInDockTitle(in: lang),
+                    help: AppStrings.showInDockHelp(in: lang)
+                ) {
+                    Toggle(AppStrings.showInDockTitle(in: lang), isOn: Binding(
                         get: { appearance.showsDockIcon },
                         set: { appearance.setShowsDockIcon($0) }
                     ))
@@ -180,9 +381,12 @@ public struct SettingsRootView: View {
                     Text(error).foregroundStyle(.red)
                 }
             }
-            SettingsSection("菜单栏") {
-                SettingsRow("菜单栏图标", help: "点击图标可查看最近片段、保存所选文本或打开设置。若图标未显示，请在系统菜单栏设置中允许 Coding Rewind。") {
-                    Button("打开系统菜单栏设置…") {
+            SettingsSection(AppStrings.menuBarSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.menuBarIconTitle(in: lang),
+                    help: AppStrings.menuBarIconHelp(in: lang)
+                ) {
+                    Button(AppStrings.openMenuBarSettingsButton(in: lang)) {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
                             NSWorkspace.shared.open(url)
                         }
@@ -190,9 +394,12 @@ public struct SettingsRootView: View {
                     .rewindButtonRole(.secondary)
                 }
             }
-            SettingsSection("划词暂存") {
-                SettingsRow("选中文本时显示暂存胶囊", help: "在 Antigravity、ChatGPT 与 Gemini 桌面端选中对话文本后，自动在选区附近显示快捷暂存按钮。") {
-                    Toggle("选中文本时显示暂存胶囊", isOn: Binding(
+            SettingsSection(AppStrings.selectionPopupSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.showSelectionPopupTitle(in: lang),
+                    help: AppStrings.showSelectionPopupHelp(in: lang)
+                ) {
+                    Toggle(AppStrings.showSelectionPopupTitle(in: lang), isOn: Binding(
                         get: { appearance.showsSelectionPopup },
                         set: { appearance.setShowsSelectionPopup($0) }
                     ))
@@ -206,28 +413,47 @@ public struct SettingsRootView: View {
 
     private var connection: some View {
         Group {
-            SettingsSection("Memos 服务") {
-                SettingsRow("服务地址", layout: .field, help: coordinator.connectionSettings.isURLManaged
-                            ? "服务地址由启动配置提供，不能在此修改。" : nil) {
-                    TextField("服务地址", text: $connectionDraft.urlDraft, prompt: Text("https://memos.example.com"))
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(coordinator.connectionSettings.isURLManaged)
-                        .accessibilityIdentifier("settings.memosURL")
+            SettingsSection(AppStrings.memosServiceSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.serverURLTitle(in: lang),
+                    layout: .field,
+                    help: coordinator.connectionSettings.isURLManaged
+                        ? AppStrings.serverURLManagedHelp(in: lang) : nil
+                ) {
+                    TextField(
+                        AppStrings.serverURLTitle(in: lang),
+                        text: $connectionDraft.urlDraft,
+                        prompt: Text("https://memos.example.com")
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(coordinator.connectionSettings.isURLManaged)
+                    .accessibilityIdentifier("settings.memosURL")
                 }
                 Divider()
-                SettingsRow("访问令牌", layout: .field, help: coordinator.connectionSettings.isTokenManaged
-                            ? "访问令牌由启动配置提供，不能在此修改。"
-                            : "请填写在 Memos 中生成的访问令牌。令牌保存在 macOS 钥匙串中。") {
-                    SecureField("访问令牌", text: $connectionDraft.tokenDraft, prompt: Text("留空则保留现有令牌"))
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(coordinator.connectionSettings.isTokenManaged)
-                        .accessibilityIdentifier("settings.memosToken")
+                SettingsRow(
+                    AppStrings.accessTokenTitle(in: lang),
+                    layout: .field,
+                    help: AppStrings.accessTokenHelp(
+                        isManaged: coordinator.connectionSettings.isTokenManaged,
+                        in: lang
+                    )
+                ) {
+                    SecureField(
+                        AppStrings.accessTokenTitle(in: lang),
+                        text: $connectionDraft.tokenDraft,
+                        prompt: Text(AppStrings.accessTokenPlaceholder(in: lang))
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(coordinator.connectionSettings.isTokenManaged)
+                    .accessibilityIdentifier("settings.memosToken")
                 }
                 SettingsRow("", layout: .field) {
-                    Button("保存连接设置") { connectionDraft.save(using: coordinator) }
-                        .rewindButtonRole(.primary)
-                        .disabled(coordinator.connectionSettings.isURLManaged && coordinator.connectionSettings.isTokenManaged)
-                        .accessibilityIdentifier("settings.saveConnection")
+                    Button(AppStrings.saveConnectionButton(in: lang)) {
+                        connectionDraft.save(using: coordinator)
+                    }
+                    .rewindButtonRole(.primary)
+                    .disabled(coordinator.connectionSettings.isURLManaged && coordinator.connectionSettings.isTokenManaged)
+                    .accessibilityIdentifier("settings.saveConnection")
                 }
                 if let saveMessage = connectionDraft.saveMessage {
                     Text(saveMessage)
@@ -235,12 +461,12 @@ public struct SettingsRootView: View {
                         .textSelection(.enabled)
                 }
             }
-            SettingsSection("同步与提示") {
-                SettingsRow("同步片段") {
-                    Button("立即同步") { onCommand(.refreshHotStream) }
+            SettingsSection(AppStrings.syncSectionTitle(in: lang)) {
+                SettingsRow(AppStrings.syncClipsRowTitle(in: lang)) {
+                    Button(AppStrings.syncNow(in: lang)) { onCommand(.refreshHotStream) }
                         .rewindButtonRole(.secondary)
                 }
-                Text(coordinator.bannerMessage ?? "从 Memos 获取最新片段，并上传本机待同步的片段。")
+                Text(coordinator.bannerMessage ?? AppStrings.defaultSyncBannerHint(in: lang))
                     .font(.callout)
                     .foregroundStyle(coordinator.isErrorBanner ? Color.orange : Color.secondary)
                     .textSelection(.enabled)
@@ -249,20 +475,26 @@ public struct SettingsRootView: View {
     }
 
     private var keyboard: some View {
-        SettingsSection("全局快捷键") {
-            Text("点击快捷键可修改，清空后停用。⌃ 是 Control，⌥ 是 Option，⇧ 是 Shift，⌘ 是 Command。")
+        SettingsSection(AppStrings.globalShortcutsSectionTitle(in: lang)) {
+            Text(AppStrings.shortcutsDescription(in: lang))
                 .font(.callout).foregroundStyle(.secondary)
             ForEach(ShortcutAction.allCases) { action in
                 Divider()
-                SettingsRow(action.title, help: shortcuts.validationMessages[action] ?? shortcuts.statusText(for: action)) {
+                SettingsRow(
+                    action.title(in: lang),
+                    help: shortcuts.validationMessages[action] ?? shortcuts.statusText(for: action)
+                ) {
                     HStack(spacing: 8) {
                         KeyboardShortcuts.Recorder(for: action.name)
                             .shortcutValidation { shortcuts.validate($0, for: action) }
                             .keyboardShortcutsConflictPolicy(.init(systemShortcut: .block))
-                        Button("恢复默认") { shortcuts.restoreDefault(for: action) }
-                            .rewindButtonRole(.secondary)
+                            .id(lang)
+                        Button(AppStrings.restoreDefaultButton(in: lang)) {
+                            shortcuts.restoreDefault(for: action)
+                        }
+                        .rewindButtonRole(.secondary)
                         if case .failed = shortcuts.state(for: action) {
-                            Button("重试") { shortcuts.retry(action) }
+                            Button(AppStrings.retryButton(in: lang)) { shortcuts.retry(action) }
                                 .rewindButtonRole(.secondary)
                         }
                     }
@@ -273,33 +505,36 @@ public struct SettingsRootView: View {
 
     private var integrations: some View {
         Group {
-            SettingsSection("Antigravity 插件") {
-                SettingsRow("插件状态", help: coordinator.pluginStatusText) {
-                    Button("安装或修复插件") {
+            SettingsSection(AppStrings.antigravityPluginSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.pluginStatusRowTitle(in: lang),
+                    help: coordinator.pluginStatusText
+                ) {
+                    Button(AppStrings.installOrRepairShortButton(in: lang)) {
                         onCommand(.installOrRepairPlugin)
                     }
                     .rewindButtonRole(.secondary)
                 }
             }
-            SettingsSection("辅助功能") {
-                SettingsRow("读取所选文本") {
+            SettingsSection(AppStrings.accessibilitySectionTitle(in: lang)) {
+                SettingsRow(AppStrings.readSelectedTextRowTitle(in: lang)) {
                     if permissionState.isTrusted {
-                        Button("重新核对权限") {
+                        Button(AppStrings.recheckPermissionButton(in: lang)) {
                             onCommand(.requestAccessibility)
                             permissionState.refresh()
                         }
                         .rewindButtonRole(.secondary)
-                        .accessibilityLabel("重新核对辅助功能权限")
+                        .accessibilityLabel(AppStrings.recheckPermissionAccessibilityLabel(in: lang))
                     } else {
                         HStack(spacing: 8) {
-                            Button("前往系统设置…") {
+                            Button(AppStrings.openSystemSettingsButton(in: lang)) {
                                 onCommand(.requestAccessibility)
                                 permissionState.refresh()
                             }
                             .rewindButtonRole(.secondary)
-                            .accessibilityLabel("前往系统设置，允许读取所选文本")
+                            .accessibilityLabel(AppStrings.openSystemSettingsAccessibilityLabel(in: lang))
 
-                            Button("重置失效授权…") {
+                            Button(AppStrings.resetStaleApprovalButton(in: lang)) {
                                 onCommand(.resetAccessibility)
                                 permissionState.refresh()
                             }
@@ -308,13 +543,9 @@ public struct SettingsRootView: View {
                         }
                     }
                 }
-                Text(
-                    permissionState.isTrusted
-                        ? "已授权，可读取其他应用中所选的文本。"
-                        : "未授权，需要在系统设置中允许读取其他应用的所选文本。若升级后系统设置中已开启但仍未生效，点击“重置失效授权…”可清除旧版本的失效签名记录。"
-                )
-                .font(.callout)
-                .foregroundStyle(permissionState.isTrusted ? Color.secondary : Color.orange)
+                Text(AppStrings.accessibilityDescription(isTrusted: permissionState.isTrusted, in: lang))
+                    .font(.callout)
+                    .foregroundStyle(permissionState.isTrusted ? Color.secondary : Color.orange)
             }
         }
     }
@@ -369,7 +600,7 @@ private struct SettingsRow<Content: View>: View {
                     .fixedSize(horizontal: true, vertical: false)
             case .field:
                 Text(title)
-                    .frame(width: 104, alignment: .leading)
+                    .frame(width: 112, alignment: .leading)
                 VStack(alignment: .leading, spacing: 6) {
                     content()
                     helpText

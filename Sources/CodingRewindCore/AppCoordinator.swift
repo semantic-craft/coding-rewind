@@ -19,12 +19,12 @@ public enum StatusFilter: String, CaseIterable, Equatable, Sendable {
     case ready
     case pending
 
+    public func label(in language: AppLanguage) -> String {
+        L10n.statusFilterLabel(self, in: language)
+    }
+
     public var label: String {
-        switch self {
-        case .all: return "全部片段"
-        case .ready: return "AI 已整理"
-        case .pending: return "待整理"
-        }
+        label(in: .zhHans)
     }
 }
 
@@ -58,6 +58,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     public let isAccessibilityTrusted: Bool
     public let recentCards: [RecentCardItem]
     public let conversationHost: ConversationHost
+    public let language: AppLanguage
 
     public init(
         isHUDVisible: Bool,
@@ -69,7 +70,8 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         pluginSummary: String,
         isAccessibilityTrusted: Bool,
         recentCards: [RecentCardItem],
-        conversationHost: ConversationHost = .antigravity
+        conversationHost: ConversationHost = .antigravity,
+        language: AppLanguage = .zhHans
     ) {
         self.isHUDVisible = isHUDVisible
         self.hotCardCount = hotCardCount
@@ -81,32 +83,23 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.recentCards = recentCards
         self.conversationHost = conversationHost
+        self.language = language
     }
 
     public var headerTitle: String {
-        pendingOutboxCount > 0
-            ? "Coding Rewind · \(hotCardCount) 条片段（待同步 \(pendingOutboxCount) 条）"
-            : "Coding Rewind · \(hotCardCount) 条片段"
+        L10n.menuHeaderTitle(hotCardCount: hotCardCount, pendingOutboxCount: pendingOutboxCount, in: language)
     }
 
     public var headerSubtitle: String {
-        let memosPart: String
-        switch connection {
-        case .configured(let hostSummary, _):
-            memosPart = "Memos 已配置 \(hostSummary)"
-        case .unconfigured:
-            memosPart = "Memos 尚未设置，可先保存到本机"
-        }
-        let pluginPart = isPluginReady ? "插件已安装" : "插件需要安装或修复"
-        return "\(memosPart) · \(pluginPart)"
+        L10n.menuHeaderSubtitle(connection: connection, isPluginReady: isPluginReady, in: language)
     }
 
     public var toggleHUDTitle: String {
-        isHUDVisible ? "隐藏片段浮窗" : "显示片段浮窗"
+        L10n.menuToggleHUDTitle(isHUDVisible: isHUDVisible, in: language)
     }
 
     public var launchTitle: String {
-        checkedCardCount > 0 ? "在所选应用中开始对话（已选 \(checkedCardCount) 条）" : "在所选应用中开始对话"
+        L10n.menuLaunchTitle(checkedCardCount: checkedCardCount, in: language)
     }
 }
 
@@ -116,7 +109,7 @@ public final class AppCoordinator {
     private struct ConversationHostChannel {
         let store: ConversationHandoffStore
         let requiresExplicitConversationOpen: Bool
-        let readinessFailure: @MainActor () -> String?
+        let readinessFailure: @MainActor () -> BannerNotice?
         let dispatch: @MainActor (ConversationHandoffStore) async throws -> Void
     }
 
@@ -125,11 +118,12 @@ public final class AppCoordinator {
     public let memosClient: MemosClient
     public let outbox: OfflineOutbox
     public let hotCache: HotCache
+    public private(set) var language: AppLanguage
     private let hostChannels: [ConversationHost: ConversationHostChannel]
     public var conversationHost: ConversationHost = .antigravity {
         didSet {
             do { try AtomicFile.writeData(JSONEncoder().encode(conversationHost), to: conversationHostURL) }
-            catch { setBanner(error.localizedDescription, isError: true) }
+            catch { setErrorBanner(error) }
         }
     }
     private var conversationHostURL: URL { paths.dataDirectoryURL.appendingPathComponent("conversation-host.json") }
@@ -137,12 +131,13 @@ public final class AppCoordinator {
     public private(set) var confirmedConversation: ConversationReference?
     public var effectiveConversationHost: ConversationHost { activeConversationHost ?? conversationHost }
     public var conversationActionTitle: String {
-        if isLaunchingConversation { return "正在处理…" }
-        if canEndUnarchivedConversation { return "重试归档" }
-        if activeConversationHost != nil {
-            return confirmedConversation == nil ? "查询发送结果" : "打开对话"
-        }
-        return "开始对话"
+        L10n.conversationActionTitle(
+            isLaunching: isLaunchingConversation,
+            canEndUnarchived: canEndUnarchivedConversation,
+            hasActiveConversation: activeConversationHost != nil,
+            hasConfirmedConversation: confirmedConversation != nil,
+            in: language
+        )
     }
     public private(set) var isLaunchingConversation = false
     public private(set) var canEndUnconfirmedConversation = false
@@ -163,7 +158,16 @@ public final class AppCoordinator {
     public var statusFilter: StatusFilter = .all
     public var checkedCardIDs: Set<String> = []
     public var focusedCardID: String?
-    public var bannerMessage: String?
+    private var activeBannerNotice: BannerNotice?
+    private var isUpdatingBannerFromNotice = false
+    private var lastPluginInstallFailureNotice: BannerNotice?
+    public var bannerMessage: String? {
+        didSet {
+            if !isUpdatingBannerFromNotice && bannerMessage == nil {
+                activeBannerNotice = nil
+            }
+        }
+    }
     public var isErrorBanner: Bool = false
     public var pluginStatusText: String = ""
 
@@ -177,6 +181,7 @@ public final class AppCoordinator {
         memosClient: MemosClient = MemosClient(),
         capturer: any SelectionCapturing,
         antigravityContext: AntigravityCaptureContext = AntigravityCaptureContext(),
+        language: AppLanguage = .zhHans,
         codexDelivery: (@Sendable (ConversationRequest) async -> (ConversationReceipt.State, String?))? = nil
     ) throws {
         self.paths = paths
@@ -184,6 +189,7 @@ public final class AppCoordinator {
         self.memosClient = memosClient
         self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
+        self.language = language
         let antigravityStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .antigravity)
         let codexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
         self.hostChannels = [
@@ -191,11 +197,11 @@ public final class AppCoordinator {
                 store: antigravityStore,
                 requiresExplicitConversationOpen: ConversationHost.antigravity.requiresExplicitConversationOpen,
                 readinessFailure: {
-                    if case .needsInstallOrRepair = AntigravityIntegration.verify(
+                    if !AntigravityIntegration.repairReasons(
                         dataDirectoryURL: paths.dataDirectoryURL,
                         configDirectoryURL: paths.antigravityConfigDirectoryURL
-                    ) {
-                        return "请先安装或修复 Antigravity 插件，再开始对话"
+                    ).isEmpty {
+                        return .needsAntigravityPlugin
                     }
                     return nil
                 },
@@ -205,7 +211,7 @@ public final class AppCoordinator {
                 store: codexStore,
                 requiresExplicitConversationOpen: ConversationHost.codex.requiresExplicitConversationOpen,
                 readinessFailure: {
-                    codexDelivery == nil ? "请先安装 Codex。所选片段已保留" : nil
+                    codexDelivery == nil ? .needsCodexInstalled : nil
                 },
                 dispatch: { store in
                     guard let codexDelivery else { return }
@@ -232,11 +238,31 @@ public final class AppCoordinator {
             }
             canEndUnconfirmedConversation = receipt?.state == .unknown
             canEndUnarchivedConversation = receipt?.state == .succeeded && current.markSynthesized && !current.archiveCardIDs.isEmpty
-            bannerMessage = canEndUnarchivedConversation
-                ? "片段已发送，但尚未全部归档。点击“重试归档”继续，不会重复发送"
-                : "上次对话请求已保留，可继续处理，不会重复发送片段"
+            setBanner(
+                canEndUnarchivedConversation ? .resumeUnarchivedStartup : .resumePendingStartup,
+                isError: false
+            )
         }
         refreshPluginStatus()
+    }
+
+    public func setLanguage(_ language: AppLanguage) {
+        self.language = language
+        try? AntigravityPluginInstaller(paths: paths).refreshLocalizedMetadataIfInstalled(language: language)
+        if let failureNotice = lastPluginInstallFailureNotice {
+            pluginStatusText = L10n.banner(failureNotice, in: language)
+        } else {
+            refreshPluginStatus()
+        }
+        if let activeBannerNotice {
+            isUpdatingBannerFromNotice = true
+            bannerMessage = L10n.banner(activeBannerNotice, in: language)
+            isUpdatingBannerFromNotice = false
+        }
+    }
+
+    public func recordStartupWarning(_ message: String) {
+        setBanner(.custom(message), isError: true)
     }
 
     public var filteredCards: [RewindCard] {
@@ -299,19 +325,14 @@ public final class AppCoordinator {
             connection = .unconfigured
         }
 
-        let isPluginReady: Bool
-        let pluginSummary: String
-        switch AntigravityIntegration.verify(
+        let reasons = AntigravityIntegration.repairReasons(
             dataDirectoryURL: paths.dataDirectoryURL,
             configDirectoryURL: paths.antigravityConfigDirectoryURL
-        ) {
-        case .installed:
-            isPluginReady = true
-            pluginSummary = "Antigravity 插件已安装"
-        case .needsInstallOrRepair(let reasons):
-            isPluginReady = false
-            pluginSummary = "插件需要安装或修复（\(reasons.first ?? "尚未安装")）"
-        }
+        )
+        let isPluginReady = reasons.isEmpty
+        let pluginSummary = isPluginReady
+            ? L10n.pluginInstalledSummary(in: language)
+            : L10n.pluginNeedsRepairSummary(firstReason: reasons.first, in: language)
 
         let checkedCount = cards.reduce(into: 0) { count, card in
             if checkedCardIDs.contains(card.id) {
@@ -338,7 +359,8 @@ public final class AppCoordinator {
             pluginSummary: pluginSummary,
             isAccessibilityTrusted: isAccessibilityTrusted,
             recentCards: recent,
-            conversationHost: effectiveConversationHost
+            conversationHost: effectiveConversationHost,
+            language: language
         )
     }
 
@@ -410,7 +432,7 @@ public final class AppCoordinator {
             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
                 try outbox.enqueue(entry)
-                setBanner("已保存到本机，设置 Memos 连接后将自动同步", isError: false)
+                setBanner(.savedOfflineNeedsConfig, isError: false)
                 return .queuedOffline(cardID: clientClipId)
             }
 
@@ -434,11 +456,11 @@ public final class AppCoordinator {
                 checkedCardIDs.remove(clientClipId)
                 checkedCardIDs.insert(saved.id)
                 focusedCardID = saved.id
-                setBanner("已保存片段 · \(sourceTitle)", isError: false)
+                setBanner(.savedClip(sourceTitle: sourceTitle), isError: false)
                 return .saved(cardID: saved.id, sourceTitle: sourceTitle)
             } catch {
                 try outbox.enqueue(entry)
-                setBanner("暂未同步到 Memos，已保存到本机", isError: false)
+                setBanner(.savedOfflineTemporaryFailure, isError: false)
                 return .queuedOffline(cardID: clientClipId)
             }
         } catch {
@@ -454,7 +476,7 @@ public final class AppCoordinator {
                 }
             }
             let rewindError = (error as? RewindError) ?? .ioError(error.localizedDescription)
-            setBanner(error.localizedDescription, isError: true)
+            setBanner(.rewindError(rewindError), isError: true)
             return .failed(rewindError)
         }
     }
@@ -487,7 +509,7 @@ public final class AppCoordinator {
         } catch {
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: cards, pendingOutbox: outbox.loadEntries())
-            setBanner("同步失败，当前显示本机保存的片段", isError: true)
+            setBanner(.syncFailedShowingLocal, isError: true)
         }
     }
 
@@ -538,18 +560,22 @@ public final class AppCoordinator {
                 channel = hostChannel(for: host)
                 let selected = cards.filter { checkedCardIDs.contains($0.id) }
                 guard !selected.isEmpty else {
-                    setBanner("请先保存或勾选至少一条片段", isError: true)
+                    setBanner(.selectAtLeastOneCard, isError: true)
                     return nil
                 }
                 if let failureBanner = channel.readinessFailure() {
                     setBanner(failureBanner, isError: true)
                     return nil
                 }
-                current = try channel.store.submit(prompt: ConversationPrompt.buildPrompt(for: selected), cardIDs: selected.map(\.id), markSynthesized: markSynthesizedOnLaunch)
+                current = try channel.store.submit(
+                    prompt: ConversationPrompt.buildPrompt(for: selected, language: language),
+                    cardIDs: selected.map(\.id),
+                    markSynthesized: markSynthesizedOnLaunch
+                )
             }
             let store = channel.store
             activeConversationHost = host
-            setBanner("正在等待 \(host.displayName) 确认发送结果…", isError: false)
+            setBanner(.waitingForHostConfirmation(host), isError: false)
             onWakeHost?(host)
             try await channel.dispatch(store)
             let deadline = Date().addingTimeInterval(max(0, waitSeconds))
@@ -557,7 +583,9 @@ public final class AppCoordinator {
                 if let receipt = try store.receipt(for: current.requestId), receipt.state != .dispatching {
                     switch receipt.state {
                     case .succeeded:
-                        guard let conversationID = receipt.conversationId else { throw RewindError.ioError("发送结果缺少对话编号") }
+                        guard let conversationID = receipt.conversationId else {
+                            throw RewindError.ioError(L10n.missingReceiptConversationIDDetail(in: language))
+                        }
                         let reference = ConversationReference(host: host, id: conversationID)
                         confirmedConversation = reference
                         let opened = !channel.requiresExplicitConversationOpen || onOpenConversation?(reference) == true
@@ -567,7 +595,7 @@ public final class AppCoordinator {
                             let selected = cards.filter { remainingIDs.contains($0.id) }
                             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
-                                setBanner("内容已发送，Memos 连接尚未设置，暂时无法归档。片段已保留，可重试归档", isError: true)
+                                setBanner(.sentArchiveBlockedUnconfigured, isError: true)
                                 return .succeeded(reference)
                             }
                             var failed = selected.count != remainingIDs.count
@@ -582,7 +610,7 @@ public final class AppCoordinator {
                             }
                             try hotCache.saveCards(cards)
                             if failed {
-                                setBanner("内容已发送，部分片段未能归档或已不在最近片段列表中。未归档片段已保留，再次点击只重试归档", isError: true)
+                                setBanner(.sentPartialArchiveFailure, isError: true)
                                 return .succeeded(reference)
                             }
                         }
@@ -592,16 +620,24 @@ public final class AppCoordinator {
                             try store.clearCurrent(requestId: current.requestId)
                             activeConversationHost = nil
                         }
-                        setBanner(opened ? "已将 \(current.cardIDs.count) 条片段发送到 \(host.displayName) 的新对话" : "已发送到 \(host.displayName)，但未能打开对话。可重新打开，不会重复发送", isError: !opened)
+                        setBanner(
+                            opened
+                                ? .sentToNewConversation(count: current.cardIDs.count, host: host)
+                                : .sentOpenConversationFailed(host),
+                            isError: !opened
+                        )
                         return .succeeded(reference)
                     case .rejected, .expired:
                         try store.clearCurrent(requestId: current.requestId)
                         activeConversationHost = nil
-                        setBanner(receipt.state == .expired ? "发送请求已过期，内容未发送。片段已保留，请打开 \(host.displayName) 后重试" : "\(host.displayName) 暂时无法接收片段，内容未发送。请检查应用是否已安装并重试", isError: true)
+                        setBanner(
+                            receipt.state == .expired ? .requestExpired(host) : .hostRejected(host),
+                            isError: true
+                        )
                         return .failed(state: receipt.state)
                     case .unknown:
                         canEndUnconfirmedConversation = true
-                        setBanner("无法确认是否发送成功，已停止自动重发。请到 \(host.displayName) 检查新对话，片段尚未归档", isError: true)
+                        setBanner(.deliveryUnconfirmed(host), isError: true)
                         return .failed(state: .unknown)
                     case .dispatching: break
                     }
@@ -609,10 +645,10 @@ public final class AppCoordinator {
                 if Date() >= deadline { break }
                 try await Task.sleep(for: .milliseconds(250))
             } while !Task.isCancelled
-            setBanner("尚未收到发送结果，片段和请求已保留。再次点击只查询结果，不会重复发送", isError: true)
+            setBanner(.stillWaitingForReceipt, isError: true)
             return .failed(state: .unknown)
         } catch {
-            setBanner(error.localizedDescription, isError: true)
+            setErrorBanner(error)
             return nil
         }
     }
@@ -626,8 +662,8 @@ public final class AppCoordinator {
             try store.clearCurrent(requestId: current.requestId)
             activeConversationHost = nil
             canEndUnconfirmedConversation = false
-            setBanner("已清除本次待确认请求。重新勾选片段后可开始新对话", isError: false)
-        } catch { setBanner(error.localizedDescription, isError: true) }
+            setBanner(.clearedUnconfirmedRequest, isError: false)
+        } catch { setErrorBanner(error) }
     }
 
     public func endUnarchivedConversation() {
@@ -639,14 +675,14 @@ public final class AppCoordinator {
             try store.clearCurrent(requestId: current.requestId)
             activeConversationHost = nil
             canEndUnarchivedConversation = false
-            setBanner("未归档片段已保留。重新勾选后可开始新对话", isError: false)
-        } catch { setBanner(error.localizedDescription, isError: true) }
+            setBanner(.retainedUnarchivedCards, isError: false)
+        } catch { setErrorBanner(error) }
     }
 
     public func reopenConfirmedConversation() {
         guard let reference = confirmedConversation else { return }
         guard onOpenConversation?(reference) == true else {
-            setBanner("内容已发送，但未能打开对话。请重试打开", isError: true)
+            setBanner(.reopenConversationFailed, isError: true)
             return
         }
         do {
@@ -656,8 +692,8 @@ public final class AppCoordinator {
                 try store.clearCurrent(requestId: current.requestId)
                 activeConversationHost = nil
             }
-            setBanner("已打开 \(reference.host.displayName) 对话", isError: false)
-        } catch { setBanner(error.localizedDescription, isError: true) }
+            setBanner(.openedConversation(reference.host), isError: false)
+        } catch { setErrorBanner(error) }
     }
 
     public func handoffStore(for host: ConversationHost) -> ConversationHandoffStore {
@@ -699,7 +735,7 @@ public final class AppCoordinator {
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
               let token = KeychainTokenStore.resolveToken(environment: environment),
               !card.isOfflinePending else {
-            setBanner("片段尚未同步或 Memos 连接尚未设置，暂时无法归档", isError: true)
+            setBanner(.archiveCardBlockedOfflineOrUnconfigured, isError: true)
             return
         }
         do {
@@ -707,7 +743,7 @@ public final class AppCoordinator {
             checkedCardIDs.remove(card.id)
             updateLocalCards { $0.removeAll { $0.id == card.id } }
         } catch {
-            setBanner(error.localizedDescription, isError: true)
+            setErrorBanner(error)
         }
     }
 
@@ -722,8 +758,9 @@ public final class AppCoordinator {
         }
         if !settings.isTokenManaged && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try KeychainTokenStore.saveToken(token, environment: environment)
+            environment.removeValue(forKey: KeychainTokenStore.disableKeychainFallbackEnvironmentKey)
         }
-        setBanner("已保存 Memos 连接设置", isError: false)
+        setBanner(.savedConnectionSettings, isError: false)
     }
 
     public func installOrRepairPlugin(sourceBridgeURL: URL?, sourceSidecarURL: URL? = nil) {
@@ -732,25 +769,44 @@ public final class AppCoordinator {
                 dataDirectoryURL: paths.dataDirectoryURL,
                 configDirectoryURL: paths.antigravityConfigDirectoryURL,
                 sourceMCPBridgeURL: sourceBridgeURL,
-                sourceSidecarBinaryURL: sourceSidecarURL
+                sourceSidecarBinaryURL: sourceSidecarURL,
+                language: language
             )
-            refreshPluginStatus()
-            setBanner(pluginStatusText, isError: false)
+            lastPluginInstallFailureNotice = nil
+            let reasons = AntigravityIntegration.repairReasons(
+                dataDirectoryURL: paths.dataDirectoryURL,
+                configDirectoryURL: paths.antigravityConfigDirectoryURL
+            )
+            if reasons.isEmpty {
+                pluginStatusText = L10n.pluginInstalledSummary(in: language)
+                setBanner(.pluginInstalled, isError: false)
+            } else {
+                pluginStatusText = L10n.pluginNeedsRepairSummary(firstReason: reasons.first, in: language)
+                setBanner(.pluginNeedsRepair(reasons.first), isError: false)
+            }
         } catch {
-            pluginStatusText = "插件安装失败：\(error.localizedDescription)"
-            setBanner(pluginStatusText, isError: true)
+            let notice: BannerNotice
+            if let rewindError = error as? RewindError {
+                notice = .pluginInstallFailedRewind(rewindError)
+            } else {
+                notice = .pluginInstallFailedMessage(error.localizedDescription)
+            }
+            lastPluginInstallFailureNotice = notice
+            pluginStatusText = L10n.banner(notice, in: language)
+            setBanner(notice, isError: true)
         }
     }
 
     public func refreshPluginStatus() {
-        switch AntigravityIntegration.verify(
+        lastPluginInstallFailureNotice = nil
+        let reasons = AntigravityIntegration.repairReasons(
             dataDirectoryURL: paths.dataDirectoryURL,
             configDirectoryURL: paths.antigravityConfigDirectoryURL
-        ) {
-        case .installed:
-            pluginStatusText = "Antigravity 插件已安装"
-        case .needsInstallOrRepair(let reasons):
-            pluginStatusText = "插件需要安装或修复（\(reasons.first ?? "尚未安装")）"
+        )
+        if reasons.isEmpty {
+            pluginStatusText = L10n.pluginInstalledSummary(in: language)
+        } else {
+            pluginStatusText = L10n.pluginNeedsRepairSummary(firstReason: reasons.first, in: language)
         }
     }
 
@@ -828,8 +884,19 @@ public final class AppCoordinator {
         return byID.values.sorted { $0.createdAt > $1.createdAt }
     }
 
-    private func setBanner(_ message: String, isError: Bool) {
-        bannerMessage = message
+    private func setBanner(_ notice: BannerNotice, isError: Bool) {
+        activeBannerNotice = notice
+        isUpdatingBannerFromNotice = true
+        bannerMessage = L10n.banner(notice, in: language)
+        isUpdatingBannerFromNotice = false
         isErrorBanner = isError
+    }
+
+    private func setErrorBanner(_ error: any Error) {
+        if let rewindError = error as? RewindError {
+            setBanner(.rewindError(rewindError), isError: true)
+        } else {
+            setBanner(.custom(error.localizedDescription), isError: true)
+        }
     }
 }

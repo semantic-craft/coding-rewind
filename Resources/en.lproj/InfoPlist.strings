@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "Coding Rewind";
+"CFBundleName" = "Coding Rewind";
+"NSAppleEventsUsageDescription" = "Coding Rewind reads the active browser tab URL to save conversation provenance for your selected clips.";

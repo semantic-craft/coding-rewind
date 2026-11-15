@@ -28,7 +28,8 @@ const MARKDOWN_STRUCTURE_TAGS = new Set([
 
 const GENERIC_TITLES = new Set([
   "", "chatgpt", "claude", "gemini", "google gemini",
-  "new chat", "untitled", "新对话", "新建对话", "新建聊天"
+  "new chat", "new conversation", "untitled", "untitled chat", "untitled conversation",
+  "新对话", "新建对话", "新建聊天", "新聊天", "未命名", "未命名对话"
 ]);
 
 export function detectPlatform(url) {

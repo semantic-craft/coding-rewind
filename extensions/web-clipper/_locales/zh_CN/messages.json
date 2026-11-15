@@ -1,0 +1,17 @@
+{
+  "extName": {
+    "message": "Coding Rewind 网页扩展"
+  },
+  "extDescription": {
+    "message": "保存网页中选中的文本和相关对话，在 Coding Rewind 中查看和复用。"
+  },
+  "actionTitle": {
+    "message": "Coding Rewind 设置"
+  },
+  "saveSelectionCommand": {
+    "message": "保存所选文本"
+  },
+  "untitledSession": {
+    "message": "未命名对话"
+  }
+}

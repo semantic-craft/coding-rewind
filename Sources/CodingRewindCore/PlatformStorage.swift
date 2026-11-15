@@ -61,6 +61,8 @@ public struct StoragePaths: Equatable, Sendable {
     public var outboxFileURL: URL { dataDirectoryURL.appendingPathComponent("outbox.jsonl", isDirectory: false) }
     public var hotCacheFileURL: URL { dataDirectoryURL.appendingPathComponent("hot_cache.json", isDirectory: false) }
     public var binDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("bin", isDirectory: true) }
+    public var developerCredentialsFileURL: URL { dataDirectoryURL.appendingPathComponent("DeveloperCredentials.plist", isDirectory: false) }
+    public var updatesDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("updates", isDirectory: true) }
 
     public init(dataDirectoryURL: URL, antigravityConfigDirectoryURL: URL? = nil) throws {
         let fm = FileManager.default
@@ -176,6 +178,7 @@ public struct ConnectionSettingsState: Equatable, Sendable {
 public enum KeychainTokenStore {
     public static let defaultService = "com.codingrewind.memos"
     public static let qaService = "com.codingrewind.memos.qa"
+    public static let disableKeychainFallbackEnvironmentKey = "CODING_REWIND_DISABLE_KEYCHAIN_FALLBACK"
 
     public static func serviceName(
         environment: [String: String] = ProcessInfo.processInfo.environment
@@ -196,6 +199,9 @@ public enum KeychainTokenStore {
         if let envToken = environment[StoragePaths.memosTokenEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !envToken.isEmpty {
             return envToken
+        }
+        if environment[disableKeychainFallbackEnvironmentKey] == "1" {
+            return nil
         }
         let service = serviceName(environment: environment)
         let query: [String: Any] = [
