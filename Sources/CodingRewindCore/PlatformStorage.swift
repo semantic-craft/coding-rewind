@@ -348,6 +348,16 @@ public struct OfflineOutbox: Sendable {
         }
     }
 
+    public func removeEntry(clientClipId: String) throws {
+        try withFileLock {
+            let current = loadEntries()
+            let remaining = current.filter { $0.clientClipId != clientClipId }
+            if remaining.count != current.count {
+                try writeEntries(remaining)
+            }
+        }
+    }
+
     @discardableResult
     public func flush(
         using client: MemosClient,
@@ -448,6 +458,20 @@ public struct HotCache: Sendable {
         encoder.outputFormatting = [.withoutEscapingSlashes]
         let data = try encoder.encode(hot)
         try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
+    }
+
+    public func removeCard(id: String) throws {
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let cards = try? decoder.decode([RewindCard].self, from: data) else { return }
+        let remaining = cards.filter { $0.id != id }
+        guard remaining.count != cards.count else { return }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        let encoded = try encoder.encode(remaining)
+        try AtomicFile.writeData(encoded, to: fileURL, permissions: 0o600)
     }
 
     private func hotCards(_ cards: [RewindCard], now: Date) -> [RewindCard] {

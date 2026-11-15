@@ -128,11 +128,12 @@ public struct MemosClient: Sendable {
             throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
         }
 
+        let encodedServerID = try Self.encodedMemoPathComponent(from: serverId)
         if let comment = contextComment, !comment.isEmpty {
             let commentId = "\(clientClipId)-ctx"
             let commentURL = try endpointURL(
                 baseURL: baseURL,
-                path: "/api/memos/\(serverId)/comments",
+                path: "/api/memos/\(encodedServerID)/comments",
                 queryItems: [URLQueryItem(name: "commentId", value: commentId)]
             )
             let commentBody = try jsonEncoder.encode(CreateMemoRequestDTO(content: comment, visibility: "PRIVATE"))
@@ -218,19 +219,13 @@ public struct MemosClient: Sendable {
         baseURL: URL,
         token: String
     ) async throws {
-        let patchURL = try endpointURL(
-            baseURL: baseURL,
-            path: "/api/memos/\(card.id)",
-            queryItems: [URLQueryItem(name: "updateMask", value: "content")]
-        )
         let updated = MemosWireFormat.replacingWithSynthesizedTag(card.rawContent)
-        let jsonEncoder = JSONEncoder()
-        jsonEncoder.outputFormatting = [.withoutEscapingSlashes]
-        let body = try jsonEncoder.encode(UpdateMemoRequestDTO(content: updated))
-        let (data, status) = try await performRequest(url: patchURL, method: "PATCH", token: token, body: body)
-        guard (200..<300).contains(status) else {
-            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
-        }
+        _ = try await updateMemoContent(
+            id: card.id,
+            content: updated,
+            baseURL: baseURL,
+            token: token
+        )
     }
 
     public func listAllMemos(
@@ -377,16 +372,7 @@ public struct MemosClient: Sendable {
     }
 
     private static func encodedMemoPathComponent(from rawID: String) throws -> String {
-        let trimmed = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = trimmed.hasPrefix("memos/") ? String(trimmed.dropFirst("memos/".count)) : trimmed
-        guard !normalized.isEmpty,
-              !normalized.contains("/"),
-              normalized != ".",
-              normalized != "..",
-              !normalized.contains(".."),
-              normalized.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
-            throw RewindError.invalidClipID(rawID)
-        }
+        let normalized = try MemosWireFormat.normalizeSnippetID(rawID)
         var allowed = CharacterSet.urlPathAllowed
         allowed.remove(charactersIn: "/")
         guard let encoded = normalized.addingPercentEncoding(withAllowedCharacters: allowed),

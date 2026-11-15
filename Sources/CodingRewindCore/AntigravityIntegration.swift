@@ -6,7 +6,7 @@ import Foundation
 
 public enum AntigravityIntegration {
     public static let pluginName = "coding-rewind"
-    public static let pluginVersion = "0.2.0"
+    public static let pluginVersion = "0.4.0"
 
     public enum Status: Equatable, Sendable {
         case installed(pluginDirectoryURL: URL)
@@ -47,6 +47,33 @@ public enum AntigravityIntegration {
             try AtomicFile.writeData(Data(contentsOf: sourceCLI), to: destCLI, permissions: 0o755)
             _ = chmod(destCLI.path, 0o755)
         }
+    }
+
+    public static func refreshSidecarBinaryIfInstalled(
+        sourceSidecarBinaryURL: URL?,
+        in dataDirectoryURL: URL,
+        configDirectoryURL: URL
+    ) throws {
+        let fm = FileManager.default
+        let resolvedData = dataDirectoryURL.standardizedFileURL
+        let destSidecar = stableSidecarBinaryURL(in: resolvedData)
+        guard !destSidecar.path.contains("/.build/") else {
+            throw RewindError.ioError("Refusing to install sidecar inside transient .build/ path")
+        }
+        let pluginDir = configDirectoryURL.standardizedFileURL
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent(pluginName, isDirectory: true)
+        guard fm.fileExists(atPath: destSidecar.path) || fm.fileExists(atPath: pluginDir.path) else {
+            return
+        }
+        guard let sourceSidecar = sourceSidecarBinaryURL?.standardizedFileURL,
+              sourceSidecar != destSidecar,
+              fm.isExecutableFile(atPath: sourceSidecar.path) else {
+            return
+        }
+        try fm.createDirectory(at: destSidecar.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try AtomicFile.writeData(Data(contentsOf: sourceSidecar), to: destSidecar, permissions: 0o755)
+        _ = chmod(destSidecar.path, 0o755)
     }
 
     public static func suggestedPrompts(in language: AppLanguage = .zhHans) -> [String] {
@@ -114,27 +141,7 @@ public enum AntigravityIntegration {
         }
 
         try writePluginManifest(to: pluginDir, language: language)
-
-        let skillMarkdown = """
-        ---
-        name: rewind
-        description: Query, search, and synthesize Coding Rewind highlights with full conversation provenance via coding-rewind MCP tools or CLI.
-        ---
-
-        # Coding Rewind (/rewind)
-
-        Use the `coding-rewind` MCP tools (or `~/Library/Application Support/CodingRewind/bin/coding-rewind` CLI when MCP is not wired) to inspect, search, synthesize, and archive `#rewind/` snippets:
-
-        1. Call `list_snippets` (defaults: `window: "72h"`, `status: "active"`) or `search_snippets` (`query`) to inspect recent highlights. Pass `window: "all"` (CLI `--window all` or `--window <N>h`) to read snippets older than 72 hours, and `status: "synthesized"` or `"all"` (CLI `--status synthesized|all`) to include archived snippets.
-        2. Call `get_snippet` (`id`, `include_context: true`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind get <id> --json`) to inspect a specific snippet, reading its `title`, `sessionTopic`, `contextSummary`, `keywords`, `sourceTitle`, `sourceURL`, `conversationContext`, and unmodified `verbatimText`.
-        3. Preserve `verbatimText` word-for-word without alteration, keep AI summary fields distinct from the original quote, and always cite provenance links (`[出处](conversation://<id>)` or web chat/page URLs).
-        4. Call `archive_snippet` (`id`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind archive <id>`) when asked to mark incorporated snippets as `#rewind/synthesized`.
-        """
-        try AtomicFile.writeUTF8(
-            skillMarkdown + "\n",
-            to: skillDir.appendingPathComponent("SKILL.md", isDirectory: false),
-            permissions: 0o644
-        )
+        try writeSkillFile(to: pluginDir)
         let sidecarDirectory = pluginDir.appendingPathComponent("sidecars/launcher", isDirectory: true)
         try fm.createDirectory(at: sidecarDirectory, withIntermediateDirectories: true)
         let sidecar: [String: Any] = [
@@ -330,6 +337,33 @@ public enum AntigravityIntegration {
             permissions: 0o644
         )
     }
+
+    public static func writeSkillFile(to pluginDirectoryURL: URL) throws {
+        let skillDir = pluginDirectoryURL
+            .appendingPathComponent("skills", isDirectory: true)
+            .appendingPathComponent("rewind", isDirectory: true)
+        try FileManager.default.createDirectory(at: skillDir, withIntermediateDirectories: true)
+        let skillMarkdown = """
+        ---
+        name: rewind
+        description: Query, search, and synthesize Coding Rewind highlights with full conversation provenance via coding-rewind MCP tools or CLI.
+        ---
+
+        # Coding Rewind (/rewind)
+
+        Use the `coding-rewind` MCP tools (or `~/Library/Application Support/CodingRewind/bin/coding-rewind` CLI when MCP is not wired) to inspect, search, synthesize, and archive `#rewind/` snippets:
+
+        1. Call `list_snippets` (defaults: `window: "72h"`, `status: "active"`) or `search_snippets` (`query`) to inspect recent highlights. Pass `window: "all"` (CLI `--window all` or `--window <N>h`) to read snippets older than 72 hours, and `status: "synthesized"` or `"all"` (CLI `--status synthesized|all`) to include archived snippets.
+        2. Call `get_snippet` (`id`, `include_context: true`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind get <id> --json`) to inspect a specific snippet, reading its `title`, `sessionTopic`, `contextSummary`, `keywords`, `sourceTitle`, `sourceURL`, `conversationContext`, and unmodified `verbatimText`.
+        3. Preserve `verbatimText` word-for-word without alteration, keep AI summary fields distinct from the original quote, and always cite provenance links (`[出处](conversation://<id>)` or web chat/page URLs).
+        4. Call `archive_snippet` (`id`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind archive <id>`) when asked to mark incorporated snippets as `#rewind/synthesized`.
+        """
+        try AtomicFile.writeUTF8(
+            skillMarkdown + "\n",
+            to: skillDir.appendingPathComponent("SKILL.md", isDirectory: false),
+            permissions: 0o644
+        )
+    }
 }
 
 public struct AntigravityPluginInstaller: Sendable {
@@ -362,10 +396,22 @@ public struct AntigravityPluginInstaller: Sendable {
     }
 
     public func refreshLocalizedMetadataIfInstalled(language: AppLanguage) throws {
-        guard inspectStatus() == .installed else { return }
         let pluginDir = configDirectoryURL
             .appendingPathComponent("plugins", isDirectory: true)
             .appendingPathComponent(AntigravityIntegration.pluginName, isDirectory: true)
-        try AntigravityIntegration.writePluginManifest(to: pluginDir, language: language)
+        switch inspectStatus() {
+        case .installed:
+            try AntigravityIntegration.writePluginManifest(to: pluginDir, language: language)
+        case .needsInstallOrRepair(let reasons):
+            let reasonSet = Set(reasons)
+            let autoMigratable: Set<PluginRepairReason> = [
+                .manifestVersionMismatch,
+                .skillMissingMemosGuidance,
+                .invalidSuggestedPrompts
+            ]
+            guard !reasonSet.isEmpty, reasonSet.isSubset(of: autoMigratable) else { return }
+            try AntigravityIntegration.writePluginManifest(to: pluginDir, language: language)
+            try AntigravityIntegration.writeSkillFile(to: pluginDir)
+        }
     }
 }

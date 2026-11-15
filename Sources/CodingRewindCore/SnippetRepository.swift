@@ -72,6 +72,24 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         self.dataOrigin = dataOrigin
         self.conversationContext = conversationContext
     }
+
+    public func withConversationContext(_ conversationContext: CaptureContext?) -> SnippetRecord {
+        SnippetRecord(
+            id: id,
+            status: status,
+            sourcePlatform: sourcePlatform,
+            title: title,
+            sessionTopic: sessionTopic,
+            contextSummary: contextSummary,
+            keywords: keywords,
+            sourceTitle: sourceTitle,
+            sourceURL: sourceURL,
+            verbatimText: verbatimText,
+            createdAt: createdAt,
+            dataOrigin: dataOrigin,
+            conversationContext: conversationContext
+        )
+    }
 }
 
 public struct SnippetQuery: Equatable, Sendable {
@@ -120,6 +138,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
     public let bundledDeveloperCredentialsURL: URL?
     public let client: MemosClient
     public let credentialTimeoutSeconds: TimeInterval
+    private let preResolvedToken: DeveloperCredentialsResolver.TokenResolution?
 
     private var outbox: OfflineOutbox {
         OfflineOutbox(fileURL: paths.outboxFileURL)
@@ -127,6 +146,10 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
     private var hotCache: HotCache {
         HotCache(fileURL: paths.hotCacheFileURL)
+    }
+
+    private var isQAMode: Bool {
+        environment[StoragePaths.qaEnvironmentKey] == "1"
     }
 
     public init(
@@ -140,7 +163,8 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             environment: environment,
             bundledDeveloperCredentialsURL: bundledDeveloperCredentialsURL,
             client: client,
-            credentialTimeoutSeconds: 10.0
+            credentialTimeoutSeconds: 10.0,
+            preResolvedToken: nil
         )
     }
 
@@ -149,55 +173,65 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundledDeveloperCredentialsURL: URL? = nil,
         client: MemosClient = MemosClient(),
-        credentialTimeoutSeconds: TimeInterval
+        credentialTimeoutSeconds: TimeInterval = 10.0,
+        preResolvedToken: DeveloperCredentialsResolver.TokenResolution? = nil
     ) {
         self.paths = paths
         self.environment = environment
         self.bundledDeveloperCredentialsURL = bundledDeveloperCredentialsURL
         self.client = client
         self.credentialTimeoutSeconds = credentialTimeoutSeconds
+        self.preResolvedToken = preResolvedToken
     }
 
-    public func listSnippets(_ query: SnippetQuery = SnippetQuery(), now: Date = Date()) async throws -> SnippetQueryResult {
-        let outboxEntries = outbox.loadEntries()
-        let pendingOutboxCount = outboxEntries.count
-
-        guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
-            return buildLocalQueryResult(
-                query: query,
-                now: now,
-                outboxEntries: outboxEntries,
-                pendingOutboxCount: pendingOutboxCount,
-                resolution: .localOnly
-            )
+    private func resolveToken() -> DeveloperCredentialsResolver.TokenResolution {
+        if let preResolvedToken {
+            return preResolvedToken
         }
-
-        let tokenResolution = DeveloperCredentialsResolver.resolveToken(
+        return DeveloperCredentialsResolver.resolveToken(
             paths: paths,
             environment: environment,
             bundledDeveloperCredentialsURL: bundledDeveloperCredentialsURL,
             timeoutSeconds: credentialTimeoutSeconds
         )
+    }
 
-        let token: String
-        switch tokenResolution {
-        case .resolved(let resolvedToken):
-            token = resolvedToken
-        case .developerCredentialsFailed(let failure):
+    public func listSnippets(_ query: SnippetQuery = SnippetQuery(), now: Date = Date()) async throws -> SnippetQueryResult {
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+            let outboxEntries = outbox.loadEntries()
             return buildLocalQueryResult(
                 query: query,
                 now: now,
                 outboxEntries: outboxEntries,
-                pendingOutboxCount: pendingOutboxCount,
+                pendingOutboxCount: outboxEntries.count,
+                resolution: .localOnly
+            )
+        }
+
+        let token: String
+        switch resolveToken() {
+        case .resolved(let resolvedToken):
+            token = resolvedToken
+        case .developerCredentialsFailed(let failure):
+            let outboxEntries = outbox.loadEntries()
+            return buildLocalQueryResult(
+                query: query,
+                now: now,
+                outboxEntries: outboxEntries,
+                pendingOutboxCount: outboxEntries.count,
                 resolution: .offlineFallback(reason: failure.localizedDescription(in: .en))
             )
         case .missing:
+            if isQAMode {
+                throw RewindError.missingCredentials
+            }
+            let outboxEntries = outbox.loadEntries()
             if environment[KeychainTokenStore.disableKeychainFallbackEnvironmentKey] == "1" {
                 return buildLocalQueryResult(
                     query: query,
                     now: now,
                     outboxEntries: outboxEntries,
-                    pendingOutboxCount: pendingOutboxCount,
+                    pendingOutboxCount: outboxEntries.count,
                     resolution: .offlineFallback(reason: "Developer credentials unavailable; Keychain fallback disabled.")
                 )
             }
@@ -205,15 +239,15 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 query: query,
                 now: now,
                 outboxEntries: outboxEntries,
-                pendingOutboxCount: pendingOutboxCount,
+                pendingOutboxCount: outboxEntries.count,
                 resolution: .localOnly
             )
         }
 
         do {
             let remoteDTOs = try await client.listAllMemos(baseURL: baseURL, token: token)
+            let freshOutboxEntries = outbox.loadEntries()
             var recordsByID: [String: SnippetRecord] = [:]
-            var hotCardsByID: [String: RewindCard] = [:]
 
             for dto in remoteDTOs {
                 guard let created = dto.createTime.flatMap(MemosWireFormat.parseISO8601)
@@ -228,94 +262,58 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 ) {
                     recordsByID[record.id] = record
                 }
-                if let hotCard = MemosWireFormat.parseMemo(
-                    id: dto.name,
-                    rawContent: dto.content,
-                    createdAt: created,
-                    now: now
-                ) {
-                    hotCardsByID[hotCard.id] = hotCard
-                }
             }
 
-            for entry in outboxEntries {
-                if recordsByID[entry.clientClipId] == nil,
-                   let pendingRecord = MemosWireFormat.parseSnippetRecord(
-                       id: entry.clientClipId,
-                       rawContent: entry.memoContent,
-                       createdAt: entry.createdAt,
-                       dataOrigin: .offlinePending
-                   ) {
+            for entry in freshOutboxEntries where recordsByID[entry.clientClipId] == nil {
+                if let pendingRecord = MemosWireFormat.parseSnippetRecord(
+                    id: entry.clientClipId,
+                    rawContent: entry.memoContent,
+                    createdAt: entry.createdAt,
+                    dataOrigin: .offlinePending
+                ) {
                     recordsByID[pendingRecord.id] = pendingRecord
                 }
-                if hotCardsByID[entry.clientClipId] == nil,
-                   let pendingCard = MemosWireFormat.parseMemo(
-                       id: entry.clientClipId,
-                       rawContent: entry.memoContent,
-                       createdAt: entry.createdAt,
-                       now: now,
-                       isOfflinePending: true
-                   ) {
-                    hotCardsByID[pendingCard.id] = pendingCard
-                }
             }
-
-            try? hotCache.saveCards(Array(hotCardsByID.values), now: now)
 
             let filtered = Self.applyQuery(query, to: Array(recordsByID.values), now: now)
             return SnippetQueryResult(
                 snippets: filtered,
                 resolution: .online,
-                pendingOutboxCount: pendingOutboxCount
+                pendingOutboxCount: freshOutboxEntries.count
             )
         } catch {
+            let freshOutboxEntries = outbox.loadEntries()
             return buildLocalQueryResult(
                 query: query,
                 now: now,
-                outboxEntries: outboxEntries,
-                pendingOutboxCount: pendingOutboxCount,
+                outboxEntries: freshOutboxEntries,
+                pendingOutboxCount: freshOutboxEntries.count,
                 resolution: .offlineFallback(reason: Self.describeFallbackReason(error))
             )
         }
     }
 
     public func getSnippet(id: String, includeContext: Bool = true, now: Date = Date()) async throws -> SnippetRecord {
-        let normalizedID = try Self.normalizeSnippetID(id)
-
-        let outboxEntries = outbox.loadEntries()
-        if let entry = outboxEntries.first(where: { $0.clientClipId == normalizedID }) {
-            let context = includeContext
-                ? entry.commentContent.flatMap(MemosWireFormat.parseContextComment)
-                : nil
-            guard let record = MemosWireFormat.parseSnippetRecord(
-                id: entry.clientClipId,
-                rawContent: entry.memoContent,
-                createdAt: entry.createdAt,
-                dataOrigin: .offlinePending,
-                conversationContext: context
-            ) else {
-                throw RewindError.invalidClipID(normalizedID)
-            }
-            return record
-        }
+        let normalizedID = try MemosWireFormat.normalizeSnippetID(id)
 
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
-            return try loadCachedSnippet(id: normalizedID, now: now)
+            return try loadLocalSnippet(id: normalizedID, includeContext: includeContext, now: now)
         }
 
-        let tokenResolution = DeveloperCredentialsResolver.resolveToken(
-            paths: paths,
-            environment: environment,
-            bundledDeveloperCredentialsURL: bundledDeveloperCredentialsURL,
-            timeoutSeconds: credentialTimeoutSeconds
-        )
-
         let token: String
-        switch tokenResolution {
+        switch resolveToken() {
         case .resolved(let resolvedToken):
             token = resolvedToken
-        case .developerCredentialsFailed, .missing:
-            return try loadCachedSnippet(id: normalizedID, now: now)
+        case .developerCredentialsFailed(let failure):
+            if let local = try? loadLocalSnippet(id: normalizedID, includeContext: includeContext, now: now) {
+                return local
+            }
+            throw failure
+        case .missing:
+            if isQAMode {
+                throw RewindError.missingCredentials
+            }
+            return try loadLocalSnippet(id: normalizedID, includeContext: includeContext, now: now)
         }
 
         let dto: MemoWireDTO
@@ -323,15 +321,18 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             dto = try await client.getMemo(id: normalizedID, baseURL: baseURL, token: token)
         } catch let error as RewindError {
             if case .httpError(let statusCode, _) = error, statusCode == 404 {
+                if let outboxRecord = loadOutboxSnippet(id: normalizedID, includeContext: includeContext) {
+                    return outboxRecord
+                }
                 throw error
             }
-            if let cached = try? loadCachedSnippet(id: normalizedID, now: now) {
-                return cached
+            if let local = try? loadLocalSnippet(id: normalizedID, includeContext: includeContext, now: now) {
+                return local
             }
             throw error
         } catch {
-            if let cached = try? loadCachedSnippet(id: normalizedID, now: now) {
-                return cached
+            if let local = try? loadLocalSnippet(id: normalizedID, includeContext: includeContext, now: now) {
+                return local
             }
             throw RewindError.networkFailure(error.localizedDescription)
         }
@@ -341,18 +342,21 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             ?? now
         let resolvedName = dto.name.isEmpty ? normalizedID : dto.name
 
-        guard MemosWireFormat.parseSnippetRecord(
+        guard let baseRecord = MemosWireFormat.parseSnippetRecord(
             id: resolvedName,
             rawContent: dto.content,
             createdAt: createdAt,
             dataOrigin: .remote
-        ) != nil else {
-            throw RewindError.invalidClipID(normalizedID)
+        ) else {
+            throw RewindError.snippetNotFound(normalizedID)
+        }
+
+        guard includeContext else {
+            return baseRecord
         }
 
         var conversationContext: CaptureContext?
-        if includeContext,
-           let comments = try? await client.listMemoComments(id: normalizedID, baseURL: baseURL, token: token) {
+        if let comments = try? await client.listMemoComments(id: normalizedID, baseURL: baseURL, token: token) {
             for comment in comments {
                 if let parsed = MemosWireFormat.parseContextComment(comment.content) {
                     conversationContext = parsed
@@ -360,39 +364,35 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 }
             }
         }
-
-        guard let record = MemosWireFormat.parseSnippetRecord(
-            id: resolvedName,
-            rawContent: dto.content,
-            createdAt: createdAt,
-            dataOrigin: .remote,
-            conversationContext: conversationContext
-        ) else {
-            throw RewindError.invalidClipID(normalizedID)
-        }
-        return record
+        return conversationContext == nil ? baseRecord : baseRecord.withConversationContext(conversationContext)
     }
 
     public func archiveSnippet(id: String) async throws -> SnippetRecord {
-        let normalizedID = try Self.normalizeSnippetID(id)
+        let normalizedID = try MemosWireFormat.normalizeSnippetID(id)
 
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
             throw RewindError.missingCredentials
         }
 
         let token: String
-        switch DeveloperCredentialsResolver.resolveToken(
-            paths: paths,
-            environment: environment,
-            bundledDeveloperCredentialsURL: bundledDeveloperCredentialsURL,
-            timeoutSeconds: credentialTimeoutSeconds
-        ) {
+        switch resolveToken() {
         case .resolved(let resolvedToken):
             token = resolvedToken
         case .developerCredentialsFailed(let failure):
             throw failure
         case .missing:
             throw RewindError.missingCredentials
+        }
+
+        if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
+            _ = try await client.createClip(
+                clientClipId: pendingEntry.clientClipId,
+                content: pendingEntry.memoContent,
+                contextComment: pendingEntry.commentContent,
+                baseURL: baseURL,
+                token: token,
+                fallbackCreatedAt: pendingEntry.createdAt
+            )
         }
 
         let dto = try await client.getMemo(id: normalizedID, baseURL: baseURL, token: token)
@@ -407,7 +407,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             createdAt: createdAt,
             dataOrigin: .remote
         ) != nil else {
-            throw RewindError.invalidClipID(normalizedID)
+            throw RewindError.snippetNotFound(normalizedID)
         }
 
         let updatedContent = MemosWireFormat.replacingWithSynthesizedTag(dto.content)
@@ -422,7 +422,8 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         let finalCreatedAt = patchedDTO?.createTime.flatMap(MemosWireFormat.parseISO8601) ?? createdAt
         let finalName = (patchedDTO?.name.isEmpty == false) ? patchedDTO!.name : resolvedName
 
-        evictFromHotCache(id: normalizedID)
+        try? outbox.removeEntry(clientClipId: normalizedID)
+        try? hotCache.removeCard(id: normalizedID)
 
         guard let updatedRecord = MemosWireFormat.parseSnippetRecord(
             id: finalName,
@@ -472,20 +473,34 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         )
     }
 
-    private func evictFromHotCache(id normalizedID: String) {
-        let url = paths.hotCacheFileURL
-        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        guard let cards = try? decoder.decode([RewindCard].self, from: data) else { return }
-        let remaining = cards.filter { $0.id != normalizedID }
-        guard remaining.count != cards.count else { return }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.withoutEscapingSlashes]
-        if let encoded = try? encoder.encode(remaining) {
-            try? AtomicFile.writeData(encoded, to: url, permissions: 0o600)
+    private func loadOutboxSnippet(
+        id normalizedID: String,
+        includeContext: Bool
+    ) -> SnippetRecord? {
+        guard let entry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) else {
+            return nil
         }
+        let context = includeContext
+            ? entry.commentContent.flatMap(MemosWireFormat.parseContextComment)
+            : nil
+        return MemosWireFormat.parseSnippetRecord(
+            id: entry.clientClipId,
+            rawContent: entry.memoContent,
+            createdAt: entry.createdAt,
+            dataOrigin: .offlinePending,
+            conversationContext: context
+        )
+    }
+
+    private func loadLocalSnippet(
+        id normalizedID: String,
+        includeContext: Bool,
+        now: Date
+    ) throws -> SnippetRecord {
+        if let outboxRecord = loadOutboxSnippet(id: normalizedID, includeContext: includeContext) {
+            return outboxRecord
+        }
+        return try loadCachedSnippet(id: normalizedID, now: now)
     }
 
     private func loadCachedSnippet(id normalizedID: String, now: Date) throws -> SnippetRecord {
@@ -499,7 +514,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
            ) {
             return record
         }
-        throw RewindError.invalidClipID(normalizedID)
+        throw RewindError.snippetNotFound(normalizedID)
     }
 
     private static func applyQuery(_ query: SnippetQuery, to records: [SnippetRecord], now: Date) -> [SnippetRecord] {
@@ -563,20 +578,6 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             return lhs.id < rhs.id
         }
         return Array(sorted.prefix(clampedLimit))
-    }
-
-    private static func normalizeSnippetID(_ raw: String) throws -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let stripped = trimmed.hasPrefix("memos/") ? String(trimmed.dropFirst("memos/".count)) : trimmed
-        guard !stripped.isEmpty,
-              !stripped.contains("/"),
-              stripped != ".",
-              stripped != "..",
-              !stripped.contains(".."),
-              stripped.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
-            throw RewindError.invalidClipID(raw)
-        }
-        return stripped
     }
 
     private static func describeFallbackReason(_ error: any Error) -> String {

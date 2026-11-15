@@ -57,6 +57,7 @@ struct LocalizationAndUpdateModelsTests {
             .accessibilityPermissionDenied,
             .noFrontmostApplication,
             .invalidClipID("bad id"),
+            .snippetNotFound("rw-missing"),
             .invalidMemosURL("ftp://invalid"),
             .missingCredentials,
             .httpError(statusCode: 502, body: "Bad Gateway"),

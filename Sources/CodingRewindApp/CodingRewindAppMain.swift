@@ -73,12 +73,12 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     ) -> StartupBootstrapDisposition {
         let resolvedLanguage = language ?? resolveBootstrapLanguage(environment: environment)
         let localizedError: String
-        if let bootstrapFailure = error as? DeveloperCredentialsBootstrap.Failure {
+        if let bootstrapFailure = error as? DeveloperCredentialsResolver.Failure {
             localizedError = bootstrapFailure.localizedDescription(in: resolvedLanguage)
         } else {
             localizedError = error.localizedDescription
         }
-        let hasBundledConfig = DeveloperCredentialsBootstrap.hasBundledConfiguration(
+        let hasBundledConfig = DeveloperCredentialsResolver.hasBundledConfiguration(
             at: bundledConfigurationURL,
             fileManager: fileManager
         )
@@ -124,7 +124,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         Task { [weak self] in
             do {
                 let resolved = try await Task.detached {
-                    try DeveloperCredentialsBootstrap.resolveEnvironment(
+                    try DeveloperCredentialsResolver.resolveEnvironment(
                         configurationURL: configurationURL,
                         externalConfigurationURL: externalConfigurationURL,
                         environment: environment
@@ -469,12 +469,23 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         bundleURL: URL = Bundle.main.bundleURL
     ) {
         guard bundleURL.pathExtension.lowercased() == "app" else { return }
-        let bundledCLI = bundleURL.appendingPathComponent("Contents/Helpers/coding-rewind", isDirectory: false)
-        guard FileManager.default.isExecutableFile(atPath: bundledCLI.path) else { return }
-        try? AntigravityIntegration.stageCLIBinary(
-            sourceCLIBinaryURL: bundledCLI,
-            in: paths.dataDirectoryURL
-        )
+        let fm = FileManager.default
+        let helpersDir = bundleURL.appendingPathComponent("Contents/Helpers", isDirectory: true)
+        let bundledCLI = helpersDir.appendingPathComponent("coding-rewind", isDirectory: false)
+        if fm.isExecutableFile(atPath: bundledCLI.path) {
+            try? AntigravityIntegration.stageCLIBinary(
+                sourceCLIBinaryURL: bundledCLI,
+                in: paths.dataDirectoryURL
+            )
+        }
+        let bundledSidecar = helpersDir.appendingPathComponent("coding-rewind-sidecar", isDirectory: false)
+        if fm.isExecutableFile(atPath: bundledSidecar.path) {
+            try? AntigravityIntegration.refreshSidecarBinaryIfInstalled(
+                sourceSidecarBinaryURL: bundledSidecar,
+                in: paths.dataDirectoryURL,
+                configDirectoryURL: paths.antigravityConfigDirectoryURL
+            )
+        }
     }
 
     public func installPlugin() {

@@ -58,6 +58,21 @@ public enum MemosWireFormat {
         return bytes.allSatisfy { isAlphaNum($0) || $0 == 0x2D }
     }
 
+    public static func normalizeSnippetID(_ raw: String) throws -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = trimmed.hasPrefix("memos/") ? String(trimmed.dropFirst("memos/".count)) : trimmed
+        let forbiddenScalars = CharacterSet.whitespacesAndNewlines.union(.controlCharacters)
+        guard !stripped.isEmpty,
+              !stripped.contains("/"),
+              stripped != ".",
+              stripped != "..",
+              !stripped.contains(".."),
+              stripped.rangeOfCharacter(from: forbiddenScalars) == nil else {
+            throw RewindError.invalidClipID(raw)
+        }
+        return stripped
+    }
+
     public static func inferWebPlatform(urlString: String?, title: String?) -> String {
         let host = urlString.flatMap(URL.init(string:))?.host?.lowercased() ?? ""
         let loweredTitle = title?.lowercased() ?? ""
@@ -228,94 +243,37 @@ public enum MemosWireFormat {
         hotWindow: TimeInterval = RewindCard.hotWindowSeconds,
         isOfflinePending: Bool = false
     ) -> RewindCard? {
-        let tags = headerTokens(rawContent)
-        let status: CardStatus? = tags.contains("#rewind/ready") ? .ready
-            : tags.contains("#rewind/pending") ? .pending : nil
-        guard let status,
-              !tags.contains("#rewind/synthesized"),
-              createdAt >= now.addingTimeInterval(-hotWindow) else {
+        guard createdAt >= now.addingTimeInterval(-hotWindow),
+              let record = parseSnippetRecord(
+                  id: id,
+                  rawContent: rawContent,
+                  createdAt: createdAt,
+                  dataOrigin: isOfflinePending ? .offlinePending : .remote
+              ) else {
             return nil
         }
-
-        var sourcePlatform = "macos"
-        for token in tags where token.hasPrefix("#source/") {
-            sourcePlatform = String(token.dropFirst("#source/".count))
+        let cardStatus: CardStatus
+        switch record.status {
+        case .pending:
+            cardStatus = .pending
+        case .ready:
+            cardStatus = .ready
+        case .synthesized:
+            return nil
         }
-
-        var cursor = nextLine(in: rawContent, from: rawContent.startIndex)?.nextStart ?? rawContent.endIndex
-
-        var title: String?
-        var sessionTopic: String?
-        var contextSummary: String?
-        var keywords: [String] = []
-        var sourceTitle = sourcePlatform
-        var sourceURL: String?
-
-        let metadataPrefixes = [
-            "> **Title:**",
-            "> **Session:**",
-            "> **Context:**",
-            "> **Keywords:**",
-            "> **Source:**"
-        ]
-
-        var metadataCursor = cursor
-        while let (line, afterLine) = nextLine(in: rawContent, from: metadataCursor),
-              isHorizontalBlank(line) {
-            metadataCursor = afterLine
-        }
-
-        if let (firstCandidate, _) = nextLine(in: rawContent, from: metadataCursor),
-           metadataPrefixes.contains(where: { firstCandidate.hasPrefix($0) }) {
-            cursor = metadataCursor
-            while let (line, afterLine) = nextLine(in: rawContent, from: cursor) {
-                guard let matched = metadataPrefixes.first(where: { line.hasPrefix($0) }) else {
-                    break
-                }
-                let value = trimHorizontalWhitespace(line.dropFirst(matched.count))
-                switch matched {
-                case "> **Title:**":
-                    title = value.isEmpty ? nil : value
-                case "> **Session:**":
-                    sessionTopic = value.isEmpty ? nil : value
-                case "> **Context:**":
-                    contextSummary = value.isEmpty ? nil : value
-                case "> **Keywords:**":
-                    keywords = value
-                        .split(separator: ",")
-                        .map { trimHorizontalWhitespace($0) }
-                        .filter { !$0.isEmpty }
-                case "> **Source:**":
-                    let parsed = parseSourceLine(value)
-                    if !parsed.title.isEmpty { sourceTitle = parsed.title }
-                    sourceURL = parsed.url
-                default:
-                    break
-                }
-                cursor = afterLine
-            }
-        }
-
-        if let (separatorLine, afterSeparator) = nextLine(in: rawContent, from: cursor),
-           isHorizontalBlank(separatorLine) {
-            cursor = afterSeparator
-        }
-        let verbatim = String(rawContent[cursor...])
-
-        let normalizedID = id.hasPrefix("memos/") ? String(id.dropFirst("memos/".count)) : id
         return RewindCard(
-            id: normalizedID,
+            id: record.id,
             rawContent: rawContent,
-            status: status,
-            sourcePlatform: sourcePlatform,
-            title: title,
-            sessionTopic: sessionTopic,
-            contextSummary: contextSummary,
-            keywords: keywords,
-            sourceTitle: sourceTitle,
-            sourceURL: sourceURL,
-            verbatimText: verbatim,
-            createdAt: createdAt,
+            status: cardStatus,
+            sourcePlatform: record.sourcePlatform,
+            title: record.title,
+            sessionTopic: record.sessionTopic,
+            contextSummary: record.contextSummary,
+            keywords: record.keywords,
+            sourceTitle: record.sourceTitle,
+            sourceURL: record.sourceURL,
+            verbatimText: record.verbatimText,
+            createdAt: record.createdAt,
             isOfflinePending: isOfflinePending
         )
     }
@@ -421,6 +379,45 @@ public enum MemosWireFormat {
         )
     }
 
+    private struct CodeFenceState {
+        let character: Character
+        let length: Int
+    }
+
+    private static func updateCodeFenceState(_ state: inout CodeFenceState?, line: Substring) {
+        var cursor = line.startIndex
+        var leadingSpaces = 0
+        while cursor < line.endIndex && line[cursor] == " " && leadingSpaces < 4 {
+            leadingSpaces += 1
+            cursor = line.index(after: cursor)
+        }
+        guard leadingSpaces <= 3, cursor < line.endIndex else { return }
+
+        let marker = line[cursor]
+        guard marker == "`" || marker == "~" else { return }
+
+        var markerCount = 0
+        while cursor < line.endIndex && line[cursor] == marker {
+            markerCount += 1
+            cursor = line.index(after: cursor)
+        }
+        guard markerCount >= 3 else { return }
+        let remainder = line[cursor...]
+
+        if let active = state {
+            if marker == active.character,
+               markerCount >= active.length,
+               remainder.allSatisfy({ $0 == " " || $0 == "\t" }) {
+                state = nil
+            }
+        } else {
+            if marker == "`" && remainder.contains("`") {
+                return
+            }
+            state = CodeFenceState(character: marker, length: markerCount)
+        }
+    }
+
     public static func parseContextComment(_ rawComment: String) -> CaptureContext? {
         let normalized = rawComment
             .replacingOccurrences(of: "\0", with: "")
@@ -452,15 +449,31 @@ public enum MemosWireFormat {
             index += 1
         }
 
-        let recentTurnsHeaderIndex = lines[index...].firstIndex { line in
-            trimHorizontalWhitespace(line) == "### Recent Turns"
+        while index < lines.count && lines[index].allSatisfy({ $0 == " " || $0 == "\t" }) {
+            index += 1
+        }
+
+        var recentTurnsHeaderIndex: Int?
+        var promptFenceState: CodeFenceState?
+        for scanIdx in index..<lines.count {
+            let line = lines[scanIdx]
+            if scanIdx == index, line.hasPrefix("Prompt:") {
+                var remainder = line.dropFirst("Prompt:".count)
+                if remainder.first == " " {
+                    remainder = remainder.dropFirst()
+                }
+                updateCodeFenceState(&promptFenceState, line: remainder)
+                continue
+            }
+            if promptFenceState == nil, trimHorizontalWhitespace(line) == "### Recent Turns" {
+                recentTurnsHeaderIndex = scanIdx
+                break
+            }
+            updateCodeFenceState(&promptFenceState, line: line)
         }
 
         let promptEndIndex = recentTurnsHeaderIndex ?? lines.count
         var promptLines = Array(lines[index..<promptEndIndex])
-        while let first = promptLines.first, first.allSatisfy({ $0 == " " || $0 == "\t" }) {
-            promptLines.removeFirst()
-        }
 
         var prompt = ""
         if let firstPromptLine = promptLines.first, firstPromptLine.hasPrefix("Prompt:") {
@@ -476,6 +489,7 @@ public enum MemosWireFormat {
         if let headerIdx = recentTurnsHeaderIndex {
             var currentRole: String?
             var currentTurnLines: [Substring] = []
+            var turnFenceState: CodeFenceState?
 
             func flushTurn() {
                 guard let role = currentRole else { return }
@@ -489,12 +503,16 @@ public enum MemosWireFormat {
             }
 
             for turnLine in lines[(headerIdx + 1)...] {
-                if let (role, firstLineBody) = parseTurnHeader(turnLine) {
+                if turnFenceState == nil, let (role, firstLineBody) = parseTurnHeader(turnLine) {
                     flushTurn()
                     currentRole = role
                     currentTurnLines = [firstLineBody]
-                } else if currentRole != nil {
-                    currentTurnLines.append(turnLine)
+                    updateCodeFenceState(&turnFenceState, line: firstLineBody)
+                } else {
+                    if currentRole != nil {
+                        currentTurnLines.append(turnLine)
+                    }
+                    updateCodeFenceState(&turnFenceState, line: turnLine)
                 }
             }
             flushTurn()
@@ -512,7 +530,7 @@ public enum MemosWireFormat {
         guard let colonIndex = line.firstIndex(of: ":") else { return nil }
         let rawRole = line[..<colonIndex]
         let lowered = rawRole.lowercased()
-        guard lowered == "user" || lowered == "assistant" || lowered == "system" else {
+        guard lowered == "user" || lowered == "assistant" else {
             return nil
         }
         var remainder = line[line.index(after: colonIndex)...]

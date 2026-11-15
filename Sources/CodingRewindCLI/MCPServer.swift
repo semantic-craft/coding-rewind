@@ -7,6 +7,7 @@ import Foundation
 public struct MCPServer: Sendable {
     public static let serverName = "coding-rewind"
     public static let serverVersion = CLIParser.versionString
+    public static let maxLineBytes = 4 * 1024 * 1024
     public static let defaultProtocolVersion = "2024-11-05"
     public static let supportedProtocolVersions: Set<String> = [
         "2024-11-05",
@@ -28,6 +29,7 @@ public struct MCPServer: Sendable {
     public func run(inputFD: Int32 = STDIN_FILENO, outputFD: Int32 = STDOUT_FILENO) async -> Int32 {
         var buffer = Data()
         var chunk = [UInt8](repeating: 0, count: 8192)
+        var discardingOversizedLine = false
 
         while true {
             let bytesRead = Darwin.read(inputFD, &chunk, chunk.count)
@@ -36,18 +38,51 @@ public struct MCPServer: Sendable {
                 return 1
             }
             if bytesRead == 0 {
-                if !buffer.isEmpty {
-                    await processLineData(buffer, outputFD: outputFD)
+                if discardingOversizedLine {
+                    guard writeOversizedLineError(to: outputFD) else { return 1 }
+                } else if !buffer.isEmpty {
+                    guard await processLineData(buffer, outputFD: outputFD) else { return 1 }
                     buffer.removeAll()
                 }
                 return 0
             }
 
-            buffer.append(chunk, count: bytesRead)
-            while let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                let lineData = Data(buffer[..<newlineIndex])
-                buffer.removeSubrange(...newlineIndex)
-                await processLineData(lineData, outputFD: outputFD)
+            var sliceStart = 0
+            while sliceStart < bytesRead {
+                if discardingOversizedLine {
+                    if let relNewline = chunk[sliceStart..<bytesRead].firstIndex(of: 0x0A) {
+                        discardingOversizedLine = false
+                        sliceStart = relNewline + 1
+                        guard writeOversizedLineError(to: outputFD) else { return 1 }
+                    } else {
+                        sliceStart = bytesRead
+                    }
+                    continue
+                }
+
+                if let relNewline = chunk[sliceStart..<bytesRead].firstIndex(of: 0x0A) {
+                    let pieceCount = relNewline - sliceStart
+                    if buffer.count + pieceCount > Self.maxLineBytes {
+                        buffer.removeAll(keepingCapacity: false)
+                        sliceStart = relNewline + 1
+                        guard writeOversizedLineError(to: outputFD) else { return 1 }
+                    } else {
+                        buffer.append(contentsOf: chunk[sliceStart..<relNewline])
+                        let lineData = buffer
+                        buffer.removeAll(keepingCapacity: true)
+                        sliceStart = relNewline + 1
+                        guard await processLineData(lineData, outputFD: outputFD) else { return 1 }
+                    }
+                } else {
+                    let pieceCount = bytesRead - sliceStart
+                    if buffer.count + pieceCount > Self.maxLineBytes {
+                        buffer.removeAll(keepingCapacity: false)
+                        discardingOversizedLine = true
+                    } else {
+                        buffer.append(contentsOf: chunk[sliceStart..<bytesRead])
+                    }
+                    sliceStart = bytesRead
+                }
             }
         }
     }
@@ -56,6 +91,10 @@ public struct MCPServer: Sendable {
         var trimmed = lineData
         while let last = trimmed.last, last == 0x0D || last == 0x0A {
             trimmed.removeLast()
+        }
+        if trimmed.count > Self.maxLineBytes {
+            let errResponse = makeErrorResponse(id: .null, code: -32600, message: "Invalid Request")
+            return try? JSONValue.encodeSingleLine(errResponse)
         }
         let lineString = String(decoding: trimmed, as: UTF8.self)
         if lineString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -99,43 +138,33 @@ public struct MCPServer: Sendable {
         }
     }
 
-    private func processLineData(_ lineData: Data, outputFD: Int32) async {
-        guard let responseData = await handleLine(lineData) else { return }
-        writeAll(responseData, to: outputFD)
+    private func processLineData(_ lineData: Data, outputFD: Int32) async -> Bool {
+        guard let responseData = await handleLine(lineData) else { return true }
+        return CLIRunner.writeAll(responseData, to: outputFD)
     }
 
-    private func writeAll(_ data: Data, to fd: Int32) {
-        data.withUnsafeBytes { rawBuffer in
-            guard let base = rawBuffer.baseAddress else { return }
-            var remaining = rawBuffer.count
-            var offset = 0
-            while remaining > 0 {
-                let written = Darwin.write(fd, base.advanced(by: offset), remaining)
-                if written < 0 {
-                    if errno == EINTR { continue }
-                    return
-                }
-                remaining -= written
-                offset += written
-            }
-        }
+    private func writeOversizedLineError(to outputFD: Int32) -> Bool {
+        let errResponse = makeErrorResponse(id: .null, code: -32600, message: "Invalid Request")
+        guard let responseData = try? JSONValue.encodeSingleLine(errResponse) else { return true }
+        return CLIRunner.writeAll(responseData, to: outputFD)
     }
 
     private func handleMessageObject(_ object: [String: JSONValue]) async -> JSONValue? {
         let hasID = object.keys.contains("id")
         let requestID = object["id"] ?? .null
 
-        guard case .string(let jsonrpc) = object["jsonrpc"], jsonrpc == "2.0",
-              case .string(let method) = object["method"], !method.isEmpty else {
-            guard hasID else { return nil }
-            return makeErrorResponse(id: requestID, code: -32600, message: "Invalid Request")
+        if hasID {
+            switch requestID {
+            case .string, .int, .double, .null:
+                break
+            case .bool, .array, .object:
+                return makeErrorResponse(id: .null, code: -32600, message: "Invalid Request: invalid id type")
+            }
         }
 
-        switch requestID {
-        case .string, .int, .double, .null:
-            break
-        case .bool, .array, .object:
-            return makeErrorResponse(id: .null, code: -32600, message: "Invalid Request: invalid id type")
+        guard case .string(let jsonrpc) = object["jsonrpc"], jsonrpc == "2.0",
+              case .string(let method) = object["method"], !method.isEmpty else {
+            return makeErrorResponse(id: hasID ? requestID : .null, code: -32600, message: "Invalid Request")
         }
 
         if !hasID {
@@ -350,13 +379,8 @@ public struct MCPServer: Sendable {
         windowString: String?,
         windowHoursNumber: Double?
     ) throws -> Double? {
-        if let windowString, let windowHoursNumber {
-            let parsedWindow = try SnippetFilterParser.parseWindow(windowString)
-            let validatedHours = try SnippetFilterParser.validateWindowHours(windowHoursNumber)
-            guard parsedWindow != nil else {
-                throw CLIValidationError("Cannot combine window: \"all\" with window_hours.")
-            }
-            return validatedHours
+        if windowString != nil && windowHoursNumber != nil {
+            throw CLIValidationError("Specify either 'window' or 'window_hours', not both.")
         }
         if let windowHoursNumber {
             return try SnippetFilterParser.validateWindowHours(windowHoursNumber)

@@ -5,10 +5,10 @@ import CodingRewindCore
 import Foundation
 import Testing
 
-struct DeveloperCredentialsBootstrapTests {
+struct DeveloperCredentialsResolverTests {
     @Test func ordinaryInstallationPreservesExistingCredentialResolution() throws {
         let environment = ["PATH": "/usr/bin:/bin"]
-        #expect(try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: nil, environment: environment
         ) == environment)
     }
@@ -19,7 +19,7 @@ struct DeveloperCredentialsBootstrapTests {
         let environment = fixture.environment.merging([
             StoragePaths.memosTokenEnvironmentKey: "explicit-fixture-token"
         ]) { _, new in new }
-        #expect(try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: fixture.root.appendingPathComponent("missing.plist"), environment: environment
         ) == environment)
         #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
@@ -29,7 +29,7 @@ struct DeveloperCredentialsBootstrapTests {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let environment = fixture.environment.merging([StoragePaths.qaEnvironmentKey: "1"]) { _, new in new }
-        #expect(try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: fixture.configurationURL, environment: environment
         ) == environment)
         #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
@@ -39,7 +39,7 @@ struct DeveloperCredentialsBootstrapTests {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let configuration = try Data(contentsOf: fixture.configurationURL)
-        let resolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+        let resolved = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: fixture.configurationURL, environment: fixture.environment
         )
         #expect(resolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
@@ -55,8 +55,8 @@ struct DeveloperCredentialsBootstrapTests {
         defer { fixture.remove() }
         var environment = fixture.environment
         environment["FAKE_OP_STATUS"] = "23"
-        #expect(throws: DeveloperCredentialsBootstrap.Failure.credentialReadFailed) {
-            try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(throws: DeveloperCredentialsResolver.Failure.credentialReadFailed) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: fixture.configurationURL, environment: environment
             )
         }
@@ -68,8 +68,8 @@ struct DeveloperCredentialsBootstrapTests {
         defer { fixture.remove() }
         var environment = fixture.environment
         environment["FAKE_OP_RESULT"] = token
-        #expect(throws: DeveloperCredentialsBootstrap.Failure.credentialReadFailed) {
-            try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(throws: DeveloperCredentialsResolver.Failure.credentialReadFailed) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: fixture.configurationURL, environment: environment
             )
         }
@@ -78,8 +78,8 @@ struct DeveloperCredentialsBootstrapTests {
     @Test func invalidReferenceDoesNotInvokeCredentialTool() throws {
         let fixture = try Fixture(reference: "not-a-secret-reference")
         defer { fixture.remove() }
-        #expect(throws: DeveloperCredentialsBootstrap.Failure.invalidConfiguration) {
-            try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: fixture.configurationURL, environment: fixture.environment
             )
         }
@@ -91,7 +91,7 @@ struct DeveloperCredentialsBootstrapTests {
         defer { fixture.remove() }
         let externalURL = fixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
 
-        let resolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+        let resolved = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: fixture.configurationURL,
             externalConfigurationURL: externalURL,
             environment: fixture.environment
@@ -103,7 +103,7 @@ struct DeveloperCredentialsBootstrapTests {
         #expect(perms == 0o600)
 
         try FileManager.default.removeItem(at: fixture.argumentsURL)
-        let fallbackResolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+        let fallbackResolved = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: nil,
             externalConfigurationURL: externalURL,
             environment: fixture.environment
@@ -118,7 +118,7 @@ struct DeveloperCredentialsBootstrapTests {
         defer { initialFixture.remove() }
         let externalURL = initialFixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
 
-        _ = try DeveloperCredentialsBootstrap.resolveEnvironment(
+        _ = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: initialFixture.configurationURL,
             externalConfigurationURL: externalURL,
             environment: initialFixture.environment
@@ -134,7 +134,7 @@ struct DeveloperCredentialsBootstrapTests {
 
         var rotatedEnv = initialFixture.environment
         rotatedEnv["FAKE_OP_RESULT"] = "rotated-fixture-token"
-        let refreshed = try DeveloperCredentialsBootstrap.resolveEnvironment(
+        let refreshed = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: rotatedConfigURL,
             externalConfigurationURL: externalURL,
             environment: rotatedEnv
@@ -146,7 +146,7 @@ struct DeveloperCredentialsBootstrapTests {
 
         try FileManager.default.removeItem(at: initialFixture.argumentsURL)
         let qaEnv = rotatedEnv.merging([StoragePaths.qaEnvironmentKey: "1"]) { _, new in new }
-        #expect(try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: rotatedConfigURL,
             externalConfigurationURL: externalURL,
             environment: qaEnv
@@ -159,7 +159,7 @@ struct DeveloperCredentialsBootstrapTests {
         defer { validFixture.remove() }
         let externalURL = validFixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
 
-        _ = try DeveloperCredentialsBootstrap.resolveEnvironment(
+        _ = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: validFixture.configurationURL,
             externalConfigurationURL: externalURL,
             environment: validFixture.environment
@@ -168,8 +168,8 @@ struct DeveloperCredentialsBootstrapTests {
 
         let malformedBundledURL = validFixture.root.appendingPathComponent("MalformedBundled.plist")
         try Data("not-a-valid-plist".utf8).write(to: malformedBundledURL)
-        #expect(throws: DeveloperCredentialsBootstrap.Failure.invalidConfiguration) {
-            try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: malformedBundledURL,
                 externalConfigurationURL: externalURL,
                 environment: validFixture.environment
@@ -182,8 +182,8 @@ struct DeveloperCredentialsBootstrapTests {
             "token_reference": "invalid-ref",
             "op_executable": validFixture.root.appendingPathComponent("fake op").path
         ], format: .xml, options: 0).write(to: invalidRefBundledURL)
-        #expect(throws: DeveloperCredentialsBootstrap.Failure.invalidConfiguration) {
-            try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: invalidRefBundledURL,
                 externalConfigurationURL: externalURL,
                 environment: validFixture.environment
@@ -210,15 +210,15 @@ struct DeveloperCredentialsBootstrapTests {
             "op_executable": hungOpURL.path
         ], format: .xml, options: 0).write(to: hungConfigURL)
 
-        #expect(throws: DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut) {
-            try DeveloperCredentialsBootstrap.resolveEnvironment(
+        #expect(throws: DeveloperCredentialsResolver.Failure.credentialReadTimedOut) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: hungConfigURL,
                 environment: fixture.environment,
                 timeoutSeconds: 0.15
             )
         }
-        #expect(DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut.localizedDescription(in: .en).contains("Timed out"))
-        #expect(DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut.localizedDescription(in: .zhHans).contains("超时"))
+        #expect(DeveloperCredentialsResolver.Failure.credentialReadTimedOut.localizedDescription(in: .en).contains("Timed out"))
+        #expect(DeveloperCredentialsResolver.Failure.credentialReadTimedOut.localizedDescription(in: .zhHans).contains("超时"))
 
         if let pidString = try? String(contentsOf: pidFileURL, encoding: .utf8),
            let childPID = pid_t(pidString.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -241,21 +241,31 @@ struct DeveloperCredentialsBootstrapTests {
             StoragePaths.dataDirEnvironmentKey: dataDir.path,
             StoragePaths.antigravityConfigEnvironmentKey: configDir.path
         ]
-        #expect(DeveloperCredentialsBootstrap.hasBundledConfiguration(at: fixture.configurationURL))
-        #expect(!DeveloperCredentialsBootstrap.hasBundledConfiguration(at: nil))
-        #expect(DeveloperCredentialsBootstrap.configurationSource(
+        #expect(DeveloperCredentialsResolver.hasBundledConfiguration(at: fixture.configurationURL))
+        #expect(!DeveloperCredentialsResolver.hasBundledConfiguration(at: nil))
+        #expect(DeveloperCredentialsResolver.configurationSource(
             configurationURL: fixture.configurationURL,
             externalConfigurationURL: externalURL,
             environment: env
         ) == .bundled)
-        #expect(DeveloperCredentialsBootstrap.configurationSource(
+        #expect(DeveloperCredentialsResolver.configurationSource(
             configurationURL: nil,
             externalConfigurationURL: externalURL,
             environment: env
         ) == .externalFallback)
+        #expect(DeveloperCredentialsResolver.configurationSource(
+            configurationURL: fixture.root.appendingPathComponent("NonExistentBundled.plist"),
+            externalConfigurationURL: externalURL,
+            environment: env
+        ) == .externalFallback)
+        #expect(DeveloperCredentialsResolver.configurationSource(
+            configurationURL: fixture.root.appendingPathComponent("NonExistentBundled.plist"),
+            externalConfigurationURL: nil,
+            environment: env
+        ) == .none)
 
         let interactiveBundledEn = CodingRewindAppDelegate.evaluateBootstrapFailure(
-            error: DeveloperCredentialsBootstrap.Failure.credentialReadFailed,
+            error: DeveloperCredentialsResolver.Failure.credentialReadFailed,
             environment: env,
             launchContext: LaunchContext(reason: .interactive),
             bundledConfigurationURL: fixture.configurationURL,
@@ -268,7 +278,7 @@ struct DeveloperCredentialsBootstrapTests {
 
         for silentReason in [LaunchContext.Reason.systemLoginItem, .relaunchedAfterUpdate, .commandLineBackground] {
             let disposition = CodingRewindAppDelegate.evaluateBootstrapFailure(
-                error: DeveloperCredentialsBootstrap.Failure.credentialReadFailed,
+                error: DeveloperCredentialsResolver.Failure.credentialReadFailed,
                 environment: env,
                 launchContext: LaunchContext(reason: silentReason),
                 bundledConfigurationURL: fixture.configurationURL,
@@ -283,7 +293,7 @@ struct DeveloperCredentialsBootstrapTests {
         }
 
         let interactiveExternalFallback = CodingRewindAppDelegate.evaluateBootstrapFailure(
-            error: DeveloperCredentialsBootstrap.Failure.credentialReadTimedOut,
+            error: DeveloperCredentialsResolver.Failure.credentialReadTimedOut,
             environment: env,
             launchContext: LaunchContext(reason: .interactive),
             bundledConfigurationURL: nil,

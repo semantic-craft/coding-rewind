@@ -7,6 +7,7 @@ public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     case accessibilityPermissionDenied
     case noFrontmostApplication
     case invalidClipID(String)
+    case snippetNotFound(String)
     case invalidMemosURL(String)
     case missingCredentials
     case httpError(statusCode: Int, body: String)

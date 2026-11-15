@@ -83,14 +83,11 @@ public enum SnippetFilterParser {
 
     public static func normalizeSnippetID(_ raw: String) throws -> String {
         let trimmed = try normalizeNonEmpty(raw, fieldName: "snippet id")
-        if trimmed.hasPrefix("memos/") {
-            let stripped = String(trimmed.dropFirst("memos/".count)).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !stripped.isEmpty else {
-                throw CLIValidationError("Invalid snippet id '\(raw)'.")
-            }
-            return stripped
+        do {
+            return try MemosWireFormat.normalizeSnippetID(trimmed)
+        } catch {
+            throw CLIValidationError("Invalid snippet id '\(raw)'.")
         }
-        return trimmed
     }
 }
 
@@ -105,7 +102,7 @@ public enum CLICommand: Equatable, Sendable {
 }
 
 public enum CLIParser {
-    public static let versionString = "0.3.2"
+    public static let versionString = "0.4.0"
 
     public static let usageText = """
         coding-rewind \(versionString) — Coding Rewind CLI & Embedded MCP Server

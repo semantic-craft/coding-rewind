@@ -78,6 +78,27 @@ fi
 CODING_REWIND_QA=1 "${REPO_ROOT}/scripts/package-release.sh" "${TEST_RELEASE_DIR}" >/dev/null
 
 EXPECTED_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${APP_BUNDLE}/Contents/Info.plist")"
+if [[ -z "${EXPECTED_VERSION}" ]]; then
+    echo "FAIL: CFBundleShortVersionString is empty in ${APP_BUNDLE}/Contents/Info.plist" >&2
+    exit 1
+fi
+
+HELPER_VERSION_OUT="$("${APP_BUNDLE}/Contents/Helpers/coding-rewind" --version)"
+if [[ "${HELPER_VERSION_OUT}" != "coding-rewind ${EXPECTED_VERSION}" ]]; then
+    echo "FAIL: coding-rewind --version (${HELPER_VERSION_OUT}) did not match Info.plist (${EXPECTED_VERSION})" >&2
+    exit 1
+fi
+
+CLIPPER_MANIFEST_VERSION_NAME="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("version_name", ""))' "${REPO_ROOT}/extensions/web-clipper/manifest.json")"
+if [[ "${CLIPPER_MANIFEST_VERSION_NAME}" != "${EXPECTED_VERSION}" ]]; then
+    echo "FAIL: WebClipper manifest version_name (${CLIPPER_MANIFEST_VERSION_NAME}) did not match Info.plist (${EXPECTED_VERSION})" >&2
+    exit 1
+fi
+
+if CODING_REWIND_RELEASE_VERSION="v9.9.9" CODING_REWIND_QA=1 "${REPO_ROOT}/scripts/package-release.sh" "${TEST_ROOT}/mismatch-out" >/dev/null 2>&1; then
+    echo "FAIL: package-release.sh must fail when CODING_REWIND_RELEASE_VERSION mismatches Info.plist" >&2
+    exit 1
+fi
 MACOS_ARCHIVE="${TEST_RELEASE_DIR}/CodingRewind-v${EXPECTED_VERSION}-macos-arm64.zip"
 CLIPPER_ARCHIVE="${TEST_RELEASE_DIR}/CodingRewind-WebClipper-v${EXPECTED_VERSION}.zip"
 CHECKSUMS_FILE="${TEST_RELEASE_DIR}/SHA256SUMS.txt"

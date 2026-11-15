@@ -99,7 +99,7 @@ public enum DeveloperCredentialsResolver {
         if environment[StoragePaths.qaEnvironmentKey] == "1" {
             return .none
         }
-        if configurationURL != nil {
+        if hasBundledConfiguration(at: configurationURL, fileManager: fileManager) {
             return .bundled
         }
         if let extURL = externalConfigurationURL,
