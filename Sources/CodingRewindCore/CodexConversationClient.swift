@@ -92,15 +92,32 @@ public struct CodexConversationClient: Sendable {
 
     private let binaryURL: URL
     private let environment: [String: String]
+    private let languageProvider: @Sendable () -> AppLanguage
     private let wakeThread: @Sendable (UUID) async -> Bool
 
     public init(
         binaryURL: URL,
         environment: [String: String],
+        language: AppLanguage = .zhHans,
+        wakeThread: @escaping @Sendable (UUID) async -> Bool
+    ) {
+        self.init(
+            binaryURL: binaryURL,
+            environment: environment,
+            languageProvider: { language },
+            wakeThread: wakeThread
+        )
+    }
+
+    public init(
+        binaryURL: URL,
+        environment: [String: String],
+        languageProvider: @escaping @Sendable () -> AppLanguage,
         wakeThread: @escaping @Sendable (UUID) async -> Bool
     ) {
         self.binaryURL = binaryURL
         self.environment = environment
+        self.languageProvider = languageProvider
         self.wakeThread = wakeThread
     }
 
@@ -108,8 +125,15 @@ public struct CodexConversationClient: Sendable {
         let deadline = Date().addingTimeInterval(timeout)
         let binaryURL = self.binaryURL
         let environment = self.environment
+        let threadName = L10n.codexThreadName(in: languageProvider())
         let step = await Self.runBlocking {
-            Self.enqueuePrompt(request, binaryURL: binaryURL, environment: environment, deadline: deadline)
+            Self.enqueuePrompt(
+                request,
+                threadName: threadName,
+                binaryURL: binaryURL,
+                environment: environment,
+                deadline: deadline
+            )
         }
         let threadID: UUID
         let rawThreadID: String
@@ -145,6 +169,7 @@ public struct CodexConversationClient: Sendable {
 
     private static func enqueuePrompt(
         _ request: ConversationRequest,
+        threadName: String,
         binaryURL: URL,
         environment: [String: String],
         deadline: Date
@@ -162,7 +187,7 @@ public struct CodexConversationClient: Sendable {
                   let id = thread["id"] as? String, let threadID = UUID(uuidString: id) else {
                 throw RewindError.ioError("Codex did not return a thread ID")
             }
-            _ = try creator.request("thread/name/set", parameters: ["threadId": id, "name": "CodingRewind 剪藏"])
+            _ = try creator.request("thread/name/set", parameters: ["threadId": id, "name": threadName])
             let unsubscribed = try creator.request("thread/unsubscribe", parameters: ["threadId": id])
             guard ["unsubscribed", "notLoaded"].contains(unsubscribed["status"] as? String ?? "") else {
                 throw RewindError.ioError("Codex did not release the new thread")

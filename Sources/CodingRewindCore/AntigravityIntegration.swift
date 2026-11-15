@@ -23,12 +23,17 @@ public enum AntigravityIntegration {
             .appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
     }
 
+    public static func suggestedPrompts(in language: AppLanguage = .zhHans) -> [String] {
+        L10n.suggestedPrompts(in: language)
+    }
+
     @discardableResult
     public static func installOrRepair(
         dataDirectoryURL: URL,
         configDirectoryURL: URL,
         sourceMCPBridgeURL: URL? = nil,
-        sourceSidecarBinaryURL: URL? = nil
+        sourceSidecarBinaryURL: URL? = nil,
+        language: AppLanguage = .zhHans
     ) throws -> URL {
         let fm = FileManager.default
         let resolvedData = dataDirectoryURL.standardizedFileURL
@@ -64,7 +69,10 @@ public enum AntigravityIntegration {
             try AtomicFile.writeData(Data(contentsOf: source), to: destSidecar, permissions: 0o755)
         }
         guard fm.isExecutableFile(atPath: destSidecar.path) else {
-            throw RewindError.ioError("缺少 coding-rewind-sidecar，请用完整应用包安装插件")
+            let detail = language == .en
+                ? "Missing coding-rewind-sidecar; install the plugin from a packaged app bundle"
+                : "缺少 coding-rewind-sidecar，请用完整应用包安装插件"
+            throw RewindError.ioError(detail)
         }
         _ = try ConversationHandoffStore(dataDirectoryURL: resolvedData)
 
@@ -87,11 +95,7 @@ public enum AntigravityIntegration {
             "name": pluginName,
             "version": pluginVersion,
             "description": "Coding Rewind 72-hour hot-window context stash and Memos bridge for Antigravity 2.x.",
-            "suggestedPrompts": [
-                "/rewind 列出我最近 72 小时暂存的灵感卡片并梳理核心脉络",
-                "/rewind 检索我近期定锚的技术讨论片段并附上原对话出处",
-                "/rewind 将我最近暂存的 Rewind 卡片串联成结构化初稿"
-            ]
+            "suggestedPrompts": suggestedPrompts(in: language)
         ]
         let pluginData = try JSONSerialization.data(
             withJSONObject: pluginManifest,
@@ -136,16 +140,25 @@ public enum AntigravityIntegration {
         var config: [String: Any] = [:]
         if fm.fileExists(atPath: configURL.path) {
             guard let decoded = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
-                throw RewindError.ioError("Antigravity config.json 必须是 JSON 对象，未改写配置")
+                let detail = language == .en
+                    ? "Antigravity config.json must be a JSON object; configuration left unchanged"
+                    : "Antigravity config.json 必须是 JSON 对象，未改写配置"
+                throw RewindError.ioError(detail)
             }
             config = decoded
         }
         guard config["sidecars"] == nil || config["sidecars"] is [String: Any] else {
-            throw RewindError.ioError("Antigravity sidecars 配置类型无效，未改写配置")
+            let detail = language == .en
+                ? "Invalid Antigravity sidecars configuration type; configuration left unchanged"
+                : "Antigravity sidecars 配置类型无效，未改写配置"
+            throw RewindError.ioError(detail)
         }
         var sidecars = config["sidecars"] as? [String: Any] ?? [:]
         guard sidecars["coding-rewind/launcher"] == nil || sidecars["coding-rewind/launcher"] is [String: Any] else {
-            throw RewindError.ioError("Antigravity launcher 配置类型无效，未改写配置")
+            let detail = language == .en
+                ? "Invalid Antigravity launcher configuration type; configuration left unchanged"
+                : "Antigravity launcher 配置类型无效，未改写配置"
+            throw RewindError.ioError(detail)
         }
         var launcher = sidecars["coding-rewind/launcher"] as? [String: Any] ?? [:]
         launcher["enabled"] = true
@@ -196,10 +209,10 @@ public enum AntigravityIntegration {
         return root
     }
 
-    public static func verify(
+    public static func repairReasons(
         dataDirectoryURL: URL,
         configDirectoryURL: URL
-    ) -> Status {
+    ) -> [PluginRepairReason] {
         let resolvedData = dataDirectoryURL.standardizedFileURL
         let pluginDir = configDirectoryURL.standardizedFileURL
             .appendingPathComponent("plugins", isDirectory: true)
@@ -208,43 +221,45 @@ public enum AntigravityIntegration {
         let hooksJSONURL = pluginDir.appendingPathComponent("hooks.json", isDirectory: false)
         let skillURL = pluginDir.appendingPathComponent("skills/rewind/SKILL.md", isDirectory: false)
 
-        var reasons: [String] = []
+        var reasons: [PluginRepairReason] = []
         let allowedPluginKeys: Set<String> = ["name", "version", "description", "suggestedPrompts"]
 
         if let pData = try? Data(contentsOf: pluginJSONURL),
            let pObj = try? JSONSerialization.jsonObject(with: pData) as? [String: Any] {
             if !Set(pObj.keys).isSubset(of: allowedPluginKeys) {
-                reasons.append("插件配置中有不支持的设置")
+                reasons.append(.unsupportedManifestKeys)
             }
             if pObj["name"] as? String != pluginName {
-                reasons.append("插件配置中的名称不匹配")
+                reasons.append(.manifestNameMismatch)
             }
             if pObj["version"] as? String != pluginVersion {
-                reasons.append("插件配置中的版本不匹配")
+                reasons.append(.manifestVersionMismatch)
             }
-            if let prompts = pObj["suggestedPrompts"] as? [String], prompts.count == 3, prompts.allSatisfy({ !$0.isEmpty }) {
+            if let prompts = pObj["suggestedPrompts"] as? [String],
+               prompts.count == 3,
+               prompts.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             } else {
-                reasons.append("插件的三条建议提示词缺失或格式不正确")
+                reasons.append(.invalidSuggestedPrompts)
             }
         } else {
-            reasons.append("插件配置缺失或格式不正确")
+            reasons.append(.missingOrInvalidManifest)
         }
 
         if hooksWithoutLegacyCapture(at: hooksJSONURL, dataDirectory: resolvedData) != nil {
-            reasons.append("仍保留旧版对话记录配置，需要修复")
+            reasons.append(.legacyCaptureHooksPresent)
         }
 
         if let skillText = try? String(contentsOf: skillURL, encoding: .utf8) {
             if !skillText.contains("memo_list_memos") || !skillText.contains("conversation://") {
-                reasons.append("插件说明缺少 Memos 连接指引")
+                reasons.append(.skillMissingMemosGuidance)
             }
         } else {
-            reasons.append("未找到插件说明文件")
+            reasons.append(.missingSkillFile)
         }
 
         let expectedSidecar = stableSidecarBinaryURL(in: resolvedData)
         if !FileManager.default.isExecutableFile(atPath: expectedSidecar.path) {
-            reasons.append("对话发送组件尚未安装")
+            reasons.append(.missingSidecarBinary)
         }
         let sidecarURL = pluginDir.appendingPathComponent("sidecars/launcher/sidecar.json")
         if let data = try? Data(contentsOf: sidecarURL),
@@ -253,18 +268,30 @@ public enum AntigravityIntegration {
            definition["args"] as? [String] == ["--data-dir", resolvedData.path],
            definition["restart_policy"] as? String == "always" {
         } else {
-            reasons.append("对话发送组件的配置缺失或不匹配")
+            reasons.append(.invalidSidecarConfig)
         }
         if let data = try? Data(contentsOf: configDirectoryURL.appendingPathComponent("config.json")),
            let config = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let sidecars = config["sidecars"] as? [String: Any],
            let launcher = sidecars["coding-rewind/launcher"] as? [String: Any], launcher["enabled"] as? Bool == true {
         } else {
-            reasons.append("对话发送组件尚未启用")
+            reasons.append(.sidecarLauncherDisabled)
         }
 
+        return reasons
+    }
+
+    public static func verify(
+        dataDirectoryURL: URL,
+        configDirectoryURL: URL,
+        language: AppLanguage = .zhHans
+    ) -> Status {
+        let pluginDir = configDirectoryURL.standardizedFileURL
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent(pluginName, isDirectory: true)
+        let reasons = repairReasons(dataDirectoryURL: dataDirectoryURL, configDirectoryURL: configDirectoryURL)
         return reasons.isEmpty
             ? .installed(pluginDirectoryURL: pluginDir)
-            : .needsInstallOrRepair(reasons: reasons)
+            : .needsInstallOrRepair(reasons: reasons.map { L10n.pluginRepairReason($0, in: language) })
     }
 }
