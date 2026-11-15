@@ -9,8 +9,13 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "707dea4f472ae0ab0b15cb5fa783ee89f11e6ebf",
-    "open_pulls": [],
+    "main": "6d671b14ad660417d96938107e9e9a4a48de2ad7",
+    "open_pulls": [
+      {
+        "head": "03c0901e511f52cb4b935e0b911fb3f185acc636",
+        "number": 35
+      }
+    ],
     "pulls": [
       {
         "base": "1d36ca0205616cb6fc4ed1a9b379f0d297137e37",
@@ -259,9 +264,24 @@
         "merged": true,
         "number": 33,
         "state": "closed"
+      },
+      {
+        "base": "1ec922b0f085b2d5a5dd049850021c6a1ecc7018",
+        "head": "91b8736d9ce8f8862bee593e807cf278ecbfdd78",
+        "merge_commit": "6d671b14ad660417d96938107e9e9a4a48de2ad7",
+        "merged": true,
+        "number": 34,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 446460644,
+        "prerelease": false,
+        "published_at": "2026-11-15T23:55:24Z",
+        "tag": "v0.4.0"
+      },
       {
         "draft": false,
         "id": 446141462,
@@ -303,7 +323,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-15T15:58:50.447689Z",
+  "observed_at": "2026-11-15T23:56:59.154647Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -319,6 +339,40 @@
     {
       "id": "single-binary-cli-mcp-and-host-sync",
       "items": [
+        {
+          "id": "v040-hardening-and-release",
+          "title": "对抗性代码评审加固（PR #34）、本机 0.4.0 覆盖升级与 GitHub Release v0.4.0 发布",
+          "status": "done",
+          "summary": "经三模型独立对抗评审与实测复现修复 6 项发版门禁问题：移除只读查询 listSnippets 对 hot_cache.json 的覆写并在分页后重读 outbox.jsonl；统一 list、get、archive 与 outbox.jsonl 的状态顺序，归档前幂等冲刷待发条目且远端 HTTP 404 不复活旧缓存卡片；区分 snippetNotFound 与 invalidClipID（非法 ID 在 CLI 解析期返回退出码 64），保留开发凭据失败错误并在 CODING_REWIND_QA=1 缺令牌时快速失败；在 coding-rewind mcp 单次会话内缓存已解析令牌，补齐 SIGPIPE 忽略、4 MiB 单行上限与严格 JSON-RPC 2.0 标量 id 校验，并为对话上下文解析补齐围栏感知；AppUpdater 强制校验候选包 CFBundleShortVersionString 与双辅助二进制可执行属性，应用启动同步刷新已安装的 coding-rewind-sidecar 并自动迁移 v0.3.2 插件清单与 SKILL.md。经非作者独立 Shipping Verifier 端到端实测 PASS（PR #34 合并提交 6d671b1），完成 /Applications/CodingRewind.app 0.3.2 -> 0.4.0（build 7，TeamIdentifier LQAVR62TK2）覆盖升级与静默凭据读取核验，并发布公开 GitHub Release v0.4.0（双端压缩包与 SHA256SUMS.txt）。",
+          "next": "",
+          "evidence": [
+            {
+              "kind": "pull",
+              "ref": 34,
+              "note": "squash 合并至 main（6d671b1），独立 Shipping Verifier 二进制回路实测 PASS（#issuecomment-6903471642）并通过 ./scripts/check 六道门禁。"
+            },
+            {
+              "kind": "release",
+              "ref": "v0.4.0",
+              "note": "公开包 CodingRewind-v0.4.0-macos-arm64.zip（SHA-256 070a124238b2bba280cb0bc80010608b69ec730d9ce3583e7ae7ee1f910e3a86）与 CodingRewind-WebClipper-v0.4.0.zip（SHA-256 9563a8b107c5322bdce2e019520b632bf2e699bfe5ab1b989999b3f26705513c），确认不含 DeveloperCredentials.plist。"
+            },
+            {
+              "kind": "file",
+              "ref": "Tests/CodingRewindCoreTests/SnippetHardeningTests.swift",
+              "note": "覆盖并发缓存保护、outbox 幂等归档、HTTP 404 防复活、凭据错误保留、QA 缺令牌快速失败与 YAML 围栏解析回归测试。"
+            },
+            {
+              "kind": "file",
+              "ref": "Tests/CodingRewindAppTests/UpgradeAndBundleIntegrityTests.swift",
+              "note": "覆盖 AppUpdater 候选包版本号及双辅助二进制门禁与 v0.3.2 -> v0.4.0 启动迁移回归测试。"
+            },
+            {
+              "kind": "note",
+              "ref": "2026-11-16 本机 0.3.2 -> 0.4.0 覆盖升级与静默凭据读取核验",
+              "note": "/Applications/CodingRewind.app（0.4.0 build 7，PID 61367）启动自动同步刷新 bin/coding-rewind、bin/coding-rewind-sidecar 与 plugin.json（0.4.0），真实 Memos 在线静默读取通过。"
+            }
+          ]
+        },
         {
           "evidence": [
             {
@@ -344,7 +398,7 @@
             {
               "kind": "file",
               "note": "覆盖 CLI 子命令、MCP 协议握手、离线回退、凭据隔离与真实子进程退出码。",
-              "ref": "Tests/CodingRewindCLITests/SnippetCLIAndMCPTests.swift"
+              "ref": "Tests/CodingRewindCLITests/SnippetMCPServerTests.swift"
             }
           ],
           "id": "single-binary-cli-mcp-implementation",
@@ -2124,7 +2178,8 @@
       30,
       31,
       32,
-      33
+      33,
+      34
     ]
   }
 }
