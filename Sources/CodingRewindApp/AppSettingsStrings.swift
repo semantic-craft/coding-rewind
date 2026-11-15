@@ -191,8 +191,45 @@ extension AppStrings {
 
     static func memosServiceSectionTitle(in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return "Memos 服务"
-        case .en: return "Memos Server"
+        case .zhHans: return "自建 Memos 服务"
+        case .en: return "Self-hosted Memos Server"
+        }
+    }
+
+    static let deploymentGuideURL = URL(string: "https://github.com/semantic-craft/coding-rewind/tree/main/deploy/vps")!
+
+    static func cloudSyncLocalOnlyIntro(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "不配置也能用。片段会先保存在本机，仍可在 Antigravity 或 Codex 中开始对话。"
+        case .en: return "Works without setup. Clips stay on this Mac, and you can still start chats in Antigravity or Codex."
+        }
+    }
+
+    static func cloudSyncServerIntro(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "配置自建 Memos 服务后，可跨设备同步片段，并自动生成 AI 摘要。"
+        case .en: return "Connect a self-hosted Memos server to sync clips across devices and get automatic AI summaries."
+        }
+    }
+
+    static func deploymentGuideLink(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "查看部署指南 ↗"
+        case .en: return "Deployment Guide ↗"
+        }
+    }
+
+    static func getTokenButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "打开后台拿令牌 ↗"
+        case .en: return "Get Token ↗"
+        }
+    }
+
+    static func verifyingConnection(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "正在验证连接…"
+        case .en: return "Verifying connection…"
         }
     }
 
@@ -230,10 +267,10 @@ extension AppStrings {
         }
     }
 
-    static func accessTokenPlaceholder(in language: AppLanguage) -> String {
+    static func accessTokenPlaceholder(hasSavedToken: Bool, in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return "留空则保留现有令牌"
-        case .en: return "Leave blank to keep existing token"
+        case .zhHans: return hasSavedToken ? "已保存，留空则保留现有令牌" : "请输入访问令牌"
+        case .en: return hasSavedToken ? "Saved; leave blank to keep existing token" : "Enter access token"
         }
     }
 

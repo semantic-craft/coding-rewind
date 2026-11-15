@@ -712,12 +712,13 @@ extension AppShortcutsTests {
         }
         let qaEnv = [
             StoragePaths.qaEnvironmentKey: "1",
+            KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1",
             StoragePaths.dataDirEnvironmentKey: paths.dataDirectoryURL.path,
             StoragePaths.antigravityConfigEnvironmentKey: paths.antigravityConfigDirectoryURL.path
         ]
         let coord = try AppCoordinator(paths: paths, environment: qaEnv, capturer: NoopCapturer(), language: .zhHans)
         let draft = SettingsConnectionDraft(memosURL: "not-a-valid-url")
-        draft.save(using: coord)
+        await draft.save(using: coord)
         #expect(draft.saveFailed)
         #expect(draft.saveMessage == RewindError.invalidMemosURL("not-a-valid-url").localizedDescription(in: .zhHans))
         draft.updateLanguage(.en)
@@ -726,12 +727,131 @@ extension AppShortcutsTests {
 
         draft.urlDraft = "https://memos.example.com"
         draft.tokenDraft = ""
-        draft.save(using: coord)
+        await draft.save(using: coord)
         #expect(!draft.saveFailed)
-        #expect(draft.saveMessage == AppStrings.connectionSavedVerifyHint(in: .zhHans))
+        #expect(draft.saveMessage == AppStrings.connectionCheckMessage(.missingToken, in: .zhHans))
         draft.updateLanguage(.en)
         #expect(!draft.saveFailed)
-        #expect(draft.saveMessage == AppStrings.connectionSavedVerifyHint(in: .en))
+        #expect(draft.saveMessage == AppStrings.connectionCheckMessage(.missingToken, in: .en))
+    }
+
+    @Test func cloudSyncPageUsesPlainTitlesAndIntroLines() {
+        #expect(SettingsPage.connection.title(in: .zhHans) == "云端同步")
+        #expect(SettingsPage.connection.title(in: .en) == "Cloud Sync")
+        #expect(SettingsPage.connection.title == "云端同步")
+        for language in AppLanguage.allCases {
+            let strings = [
+                AppStrings.cloudSyncLocalOnlyIntro(in: language),
+                AppStrings.cloudSyncServerIntro(in: language),
+                AppStrings.deploymentGuideLink(in: language),
+                AppStrings.getTokenButton(in: language),
+                AppStrings.verifyingConnection(in: language),
+                AppStrings.memosServiceSectionTitle(in: language),
+                AppStrings.connectionCheckMessage(.verified, in: language),
+                AppStrings.connectionCheckMessage(.localOnly, in: language),
+                AppStrings.connectionCheckMessage(.missingToken, in: language),
+                AppStrings.connectionCheckMessage(.failed(.invalidServerResponse), in: language),
+                AppStrings.connectionCheckMessage(.failed(.httpError(statusCode: 403, body: "")), in: language)
+            ]
+            for text in strings {
+                #expect(!text.isEmpty)
+                #expect(!text.contains("—"))
+            }
+        }
+        #expect(AppStrings.cloudSyncLocalOnlyIntro(in: .zhHans).contains("Antigravity"))
+        #expect(AppStrings.cloudSyncLocalOnlyIntro(in: .zhHans).contains("Codex"))
+        #expect(AppStrings.cloudSyncServerIntro(in: .zhHans).contains("跨设备"))
+        #expect(AppStrings.cloudSyncServerIntro(in: .en).contains("across devices"))
+        #expect(AppStrings.deploymentGuideURL.absoluteString == "https://github.com/semantic-craft/coding-rewind/tree/main/deploy/vps")
+    }
+
+    @Test func accessTokenPlaceholderFollowsSavedTokenState() {
+        #expect(AppStrings.accessTokenPlaceholder(hasSavedToken: false, in: .zhHans) == "请输入访问令牌")
+        #expect(AppStrings.accessTokenPlaceholder(hasSavedToken: true, in: .zhHans) == "已保存，留空则保留现有令牌")
+        #expect(AppStrings.accessTokenPlaceholder(hasSavedToken: false, in: .en) == "Enter access token")
+        #expect(AppStrings.accessTokenPlaceholder(hasSavedToken: true, in: .en) == "Saved; leave blank to keep existing token")
+    }
+
+    @Test func connectionCheckMessagesDistinguishAuthFromOtherFailures() {
+        let auth401 = AppStrings.connectionCheckMessage(.failed(.httpError(statusCode: 401, body: "x")), in: .zhHans)
+        let auth403 = AppStrings.connectionCheckMessage(.failed(.httpError(statusCode: 403, body: "x")), in: .zhHans)
+        let server = AppStrings.connectionCheckMessage(.failed(.httpError(statusCode: 502, body: "Bad Gateway")), in: .zhHans)
+        let html = AppStrings.connectionCheckMessage(.failed(.invalidServerResponse), in: .en)
+        let network = AppStrings.connectionCheckMessage(.failed(.networkFailure("offline")), in: .en)
+        #expect(auth401 == auth403)
+        #expect(auth401.contains("访问令牌"))
+        #expect(server.contains("HTTP 502"))
+        #expect(html.contains("Memos instance"))
+        #expect(network.contains("offline"))
+        #expect(!AppStrings.connectionCheckMessage(.verified, in: .zhHans).contains("已配置"))
+    }
+
+    @Test func connectionDraftEnablesConsoleButtonOnlyForUsableURLs() {
+        let draft = SettingsConnectionDraft(memosURL: "")
+        #expect(draft.consoleURL == nil)
+        draft.urlDraft = "memos.example.com"
+        #expect(draft.consoleURL == nil)
+        draft.urlDraft = "ftp://memos.example.com"
+        #expect(draft.consoleURL == nil)
+        draft.urlDraft = " https://memos.example.com/api/memos/ "
+        #expect(draft.consoleURL?.absoluteString == "https://memos.example.com")
+        draft.urlDraft = "http://127.0.0.1:5230"
+        #expect(draft.consoleURL?.absoluteString == "http://127.0.0.1:5230")
+    }
+
+    @Test func coordinatorOpensLinksThroughTheSharedOpener() throws {
+        struct NoopCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection { throw RewindError.emptySelection }
+        }
+        let root = makeTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true)
+        )
+        let coord = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: NoopCapturer())
+        var opened: [URL] = []
+        coord.onOpenURL = { opened.append($0) }
+        let draft = SettingsConnectionDraft(memosURL: "https://memos.example.com/api/memos")
+        coord.openURL(AppStrings.deploymentGuideURL)
+        if let consoleURL = draft.consoleURL { coord.openURL(consoleURL) }
+        #expect(opened.map(\.absoluteString) == [
+            "https://github.com/semantic-craft/coding-rewind/tree/main/deploy/vps",
+            "https://memos.example.com"
+        ])
+    }
+
+    @Test func connectionDraftReportsLocalOnlyAndNetworkFailureInline() async throws {
+        struct NoopCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection { throw RewindError.emptySelection }
+        }
+        let root = makeTestRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true)
+        )
+        let environment = [
+            StoragePaths.qaEnvironmentKey: "1",
+            StoragePaths.memosTokenEnvironmentKey: "fixture-token"
+        ]
+        let coord = try AppCoordinator(paths: paths, environment: environment, capturer: NoopCapturer(), language: .zhHans)
+        #expect(coord.connectionSettings.hasSavedToken)
+
+        let draft = SettingsConnectionDraft(memosURL: "")
+        await draft.save(using: coord)
+        #expect(!draft.saveFailed)
+        #expect(!draft.isVerifying)
+        #expect(draft.saveMessage == AppStrings.connectionCheckMessage(.localOnly, in: .zhHans))
+
+        draft.urlDraft = "http://127.0.0.1:1"
+        await draft.save(using: coord)
+        #expect(draft.saveFailed)
+        #expect(!draft.isVerifying)
+        #expect(draft.saveMessage?.hasPrefix("设置已保存，但连接失败。") == true)
+        #expect(coord.connectionSettings.memosURL == "http://127.0.0.1:1")
+        draft.updateLanguage(.en)
+        #expect(draft.saveMessage?.hasPrefix("Settings saved, but the connection failed.") == true)
     }
 
     private func makeTestRoot() -> URL {

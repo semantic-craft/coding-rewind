@@ -391,7 +391,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .openMemosWeb:
             guard let coord = coordinator else { return }
             if let baseURL = coord.paths.resolveMemosBaseURL(environment: coord.environment) {
-                NSWorkspace.shared.open(baseURL)
+                coord.openURL(baseURL)
             } else {
                 perform(.openSettings)
             }

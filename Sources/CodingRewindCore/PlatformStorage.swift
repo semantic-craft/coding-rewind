@@ -137,16 +137,25 @@ public struct StoragePaths: Equatable, Sendable {
         return url
     }
 
+    /// Returns the normalized http or https base URL for typed input, or nil when it is not a usable address.
+    public static func normalizedMemosBaseURL(from rawURL: String) -> URL? {
+        let trimmedInput = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmedInput),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "https" || scheme == "http"),
+              url.host?.isEmpty == false else {
+            return nil
+        }
+        return URL(string: MemosWireFormat.normalizeBaseURLString(trimmedInput))
+    }
+
     public func saveMemosURLString(_ rawURL: String) throws {
         let trimmedInput = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized: String
         if trimmedInput.isEmpty {
             normalized = ""
         } else {
-            guard let url = URL(string: trimmedInput),
-                  let scheme = url.scheme?.lowercased(),
-                  (scheme == "https" || scheme == "http"),
-                  url.host?.isEmpty == false else {
+            guard Self.normalizedMemosBaseURL(from: trimmedInput) != nil else {
                 throw RewindError.invalidMemosURL(rawURL)
             }
             normalized = MemosWireFormat.normalizeBaseURLString(trimmedInput)
@@ -163,11 +172,14 @@ public struct ConnectionSettingsState: Equatable, Sendable {
     public let memosURL: String
     public let isURLManaged: Bool
     public let isTokenManaged: Bool
+    /// True when an access token exists, from the environment or the Keychain. The token itself is never read.
+    public let hasSavedToken: Bool
 
     public init(paths: StoragePaths, environment: [String: String]) {
         memosURL = paths.readConfiguredMemosURLString(environment: environment) ?? ""
         isURLManaged = Self.hasValue(StoragePaths.memosURLEnvironmentKey, in: environment)
         isTokenManaged = Self.hasValue(StoragePaths.memosTokenEnvironmentKey, in: environment)
+        hasSavedToken = KeychainTokenStore.hasToken(environment: environment)
     }
 
     private static func hasValue(_ key: String, in environment: [String: String]) -> Bool {
@@ -219,6 +231,26 @@ public enum KeychainTokenStore {
             return nil
         }
         return token
+    }
+
+    /// Checks that a token exists without reading its data, so the system never asks for Keychain access.
+    public static func hasToken(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        if let envToken = environment[StoragePaths.memosTokenEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !envToken.isEmpty {
+            return true
+        }
+        if environment[disableKeychainFallbackEnvironmentKey] == "1" {
+            return false
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: serviceName(environment: environment),
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 
     public static func saveToken(

@@ -27,23 +27,23 @@ public final class AccessibilityPermissionState {
 @Observable
 public final class SettingsConnectionDraft {
     private enum SaveOutcome {
-        case savedVerified
+        case checked(ConnectionCheckOutcome)
         case rewindError(RewindError)
         case otherError(String)
 
         var isError: Bool {
             switch self {
-            case .savedVerified:
-                return false
-            case .rewindError, .otherError:
+            case .checked(.failed), .rewindError, .otherError:
                 return true
+            case .checked:
+                return false
             }
         }
 
         func message(in language: AppLanguage) -> String {
             switch self {
-            case .savedVerified:
-                return AppStrings.connectionSavedVerifyHint(in: language)
+            case .checked(let outcome):
+                return AppStrings.connectionCheckMessage(outcome, in: language)
             case .rewindError(let rewindError):
                 return rewindError.localizedDescription(in: language)
             case .otherError(let detail):
@@ -56,6 +56,7 @@ public final class SettingsConnectionDraft {
     public var tokenDraft: String = ""
     public private(set) var saveMessage: String?
     public private(set) var saveFailed = false
+    public private(set) var isVerifying = false
     private var lastOutcome: SaveOutcome?
 
     public init(memosURL: String) {
@@ -70,14 +71,23 @@ public final class SettingsConnectionDraft {
         saveFailed = false
     }
 
-    public func save(using coordinator: AppCoordinator) {
-        let lang = coordinator.language
+    /// The Memos web address for the typed URL, or nil while the input is not a valid http or https address.
+    public var consoleURL: URL? {
+        StoragePaths.normalizedMemosBaseURL(from: urlDraft)
+    }
+
+    public func save(using coordinator: AppCoordinator) async {
+        guard !isVerifying else { return }
+        isVerifying = true
+        saveMessage = nil
+        saveFailed = false
+        defer { isVerifying = false }
         let outcome: SaveOutcome
         do {
-            try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
+            let checked = try await coordinator.saveAndVerifyConnection(memosURL: urlDraft, token: tokenDraft)
             urlDraft = coordinator.connectionSettings.memosURL
             tokenDraft = ""
-            outcome = .savedVerified
+            outcome = .checked(checked)
         } catch {
             if let rewindError = error as? RewindError {
                 outcome = .rewindError(rewindError)
@@ -87,7 +97,7 @@ public final class SettingsConnectionDraft {
         }
         lastOutcome = outcome
         saveFailed = outcome.isError
-        saveMessage = outcome.message(in: lang)
+        saveMessage = outcome.message(in: coordinator.language)
     }
 
     public func updateLanguage(_ language: AppLanguage) {
@@ -412,48 +422,84 @@ public struct SettingsRootView: View {
     }
 
     private var connection: some View {
-        Group {
+        let connectionState = coordinator.connectionSettings
+        return Group {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(AppStrings.cloudSyncLocalOnlyIntro(in: lang))
+                Text(AppStrings.cloudSyncServerIntro(in: lang))
+                Button(AppStrings.deploymentGuideLink(in: lang)) {
+                    coordinator.openURL(AppStrings.deploymentGuideURL)
+                }
+                .buttonStyle(.link)
+                .accessibilityIdentifier("settings.deploymentGuide")
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
             SettingsSection(AppStrings.memosServiceSectionTitle(in: lang)) {
                 SettingsRow(
                     AppStrings.serverURLTitle(in: lang),
                     layout: .field,
-                    help: coordinator.connectionSettings.isURLManaged
+                    help: connectionState.isURLManaged
                         ? AppStrings.serverURLManagedHelp(in: lang) : nil
                 ) {
-                    TextField(
-                        AppStrings.serverURLTitle(in: lang),
-                        text: $connectionDraft.urlDraft,
-                        prompt: Text("https://memos.example.com")
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(coordinator.connectionSettings.isURLManaged)
-                    .accessibilityIdentifier("settings.memosURL")
+                    HStack(spacing: 8) {
+                        TextField(
+                            AppStrings.serverURLTitle(in: lang),
+                            text: $connectionDraft.urlDraft,
+                            prompt: Text("https://memos.example.com")
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(connectionState.isURLManaged)
+                        .accessibilityIdentifier("settings.memosURL")
+                        Button(AppStrings.getTokenButton(in: lang)) {
+                            if let url = connectionDraft.consoleURL {
+                                coordinator.openURL(url)
+                            }
+                        }
+                        .rewindButtonRole(.secondary)
+                        .disabled(connectionDraft.consoleURL == nil)
+                        .accessibilityIdentifier("settings.openMemosConsole")
+                    }
                 }
                 Divider()
                 SettingsRow(
                     AppStrings.accessTokenTitle(in: lang),
                     layout: .field,
                     help: AppStrings.accessTokenHelp(
-                        isManaged: coordinator.connectionSettings.isTokenManaged,
+                        isManaged: connectionState.isTokenManaged,
                         in: lang
                     )
                 ) {
                     SecureField(
                         AppStrings.accessTokenTitle(in: lang),
                         text: $connectionDraft.tokenDraft,
-                        prompt: Text(AppStrings.accessTokenPlaceholder(in: lang))
+                        prompt: Text(AppStrings.accessTokenPlaceholder(hasSavedToken: connectionState.hasSavedToken, in: lang))
                     )
                     .textFieldStyle(.roundedBorder)
-                    .disabled(coordinator.connectionSettings.isTokenManaged)
+                    .disabled(connectionState.isTokenManaged)
                     .accessibilityIdentifier("settings.memosToken")
                 }
                 SettingsRow("", layout: .field) {
-                    Button(AppStrings.saveConnectionButton(in: lang)) {
-                        connectionDraft.save(using: coordinator)
+                    HStack(spacing: 8) {
+                        Button(AppStrings.saveConnectionButton(in: lang)) {
+                            Task { @MainActor in
+                                await connectionDraft.save(using: coordinator)
+                            }
+                        }
+                        .rewindButtonRole(.primary)
+                        .disabled(
+                            connectionDraft.isVerifying
+                                || (connectionState.isURLManaged && connectionState.isTokenManaged)
+                        )
+                        .accessibilityIdentifier("settings.saveConnection")
+                        if connectionDraft.isVerifying {
+                            ProgressView().controlSize(.small)
+                            Text(AppStrings.verifyingConnection(in: lang))
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .rewindButtonRole(.primary)
-                    .disabled(coordinator.connectionSettings.isURLManaged && coordinator.connectionSettings.isTokenManaged)
-                    .accessibilityIdentifier("settings.saveConnection")
                 }
                 if let saveMessage = connectionDraft.saveMessage {
                     Text(saveMessage)

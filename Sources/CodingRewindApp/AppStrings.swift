@@ -359,10 +359,35 @@ enum AppStrings {
         }
     }
 
-    static func connectionSavedVerifyHint(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "连接设置已保存，尚未确认同步成功。请点击“立即同步”检查。"
-        case .en: return "Connection settings saved. Click \"Sync Now\" to verify connectivity."
+    static func connectionCheckMessage(_ outcome: ConnectionCheckOutcome, in language: AppLanguage) -> String {
+        switch outcome {
+        case .verified:
+            switch language {
+            case .zhHans: return "设置已保存，已连接到 Memos 服务。"
+            case .en: return "Settings saved. Connected to the Memos server."
+            }
+        case .localOnly:
+            switch language {
+            case .zhHans: return "设置已保存。未填写服务地址，片段仅保存在本机。"
+            case .en: return "Settings saved. No server URL is set, so clips stay on this Mac."
+            }
+        case .missingToken:
+            switch language {
+            case .zhHans: return "设置已保存，但还没有访问令牌，尚未验证连接。"
+            case .en: return "Settings saved, but there is no access token yet, so the connection was not verified."
+            }
+        case .failed(let error):
+            if case .httpError(let code, _) = error, code == 401 || code == 403 {
+                switch language {
+                case .zhHans: return "设置已保存，但访问令牌无效或权限不足。请在 Memos 后台重新生成令牌。"
+                case .en: return "Settings saved, but the access token is invalid or lacks permission. Generate a new token in Memos."
+                }
+            }
+            let detail = error.localizedDescription(in: language)
+            switch language {
+            case .zhHans: return "设置已保存，但连接失败。\(detail)"
+            case .en: return "Settings saved, but the connection failed. \(detail)"
+            }
         }
     }
 
@@ -371,14 +396,14 @@ enum AppStrings {
         case .zhHans:
             switch page {
             case .general: return "通用"
-            case .connection: return "Memos 连接"
+            case .connection: return "云端同步"
             case .keyboard: return "快捷键"
             case .integrations: return "插件与权限"
             }
         case .en:
             switch page {
             case .general: return "General"
-            case .connection: return "Memos"
+            case .connection: return "Cloud Sync"
             case .keyboard: return "Shortcuts"
             case .integrations: return "Integrations"
             }

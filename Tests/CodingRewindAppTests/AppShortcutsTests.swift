@@ -529,7 +529,10 @@ struct AppShortcutsTests {
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
         let coord = try AppCoordinator(
             paths: paths,
-            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            environment: [
+                StoragePaths.qaEnvironmentKey: "1",
+                KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
+            ],
             capturer: UnusedSelectionCapturer(),
             codexDelivery: { _ in (.unknown, nil) }
         )
@@ -558,9 +561,10 @@ struct AppShortcutsTests {
         #expect(settings.window?.isVisible == true)
 
         settings.connectionDraft.urlDraft = "https://memos.example.com/api/memos/"
-        settings.connectionDraft.save(using: coord)
+        await settings.connectionDraft.save(using: coord)
         #expect(settings.connectionDraft.urlDraft == "https://memos.example.com")
         #expect(settings.connectionDraft.saveFailed == false)
+        #expect(settings.connectionDraft.saveMessage == AppStrings.connectionCheckMessage(.missingToken, in: .zhHans))
 
         settings.connectionDraft.urlDraft = "https://unsaved-draft.example.com"
         trustedFlag.value = true

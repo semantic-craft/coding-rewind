@@ -72,7 +72,21 @@
       padding-top: 20px;
       border-top: 1px solid var(--border);
     }
-    h2 { margin: 0 0 15px; font-size: 13px; font-weight: 600; }
+    h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+    .section-intro {
+      margin: 0 0 18px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    .section-intro p { margin: 0; }
+    .section-intro p + p { margin-top: 4px; }
+    .section-intro a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 500;
+    }
+    .section-intro a:hover { text-decoration: underline; }
     .fields { display: flex; flex-direction: column; gap: 18px; }
     .field {
       display: grid;
@@ -82,6 +96,19 @@
     }
     .field > label { padding-top: 7px; }
     .input-stack { min-width: 0; }
+    .url-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .url-row input[type="url"] {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .inline-action {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
     input[type="url"],
     input[type="password"],
     select,
@@ -128,12 +155,16 @@
     }
     button:hover { background: var(--bg); }
     button:active { filter: brightness(0.96); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:disabled:hover { background: var(--surface); }
+    button:disabled:active { filter: none; }
     .primary { border-color: var(--accent); background: var(--accent); color: #ffffff; }
     .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
     input:focus-visible,
     select:focus-visible,
     textarea:focus-visible,
-    button:focus-visible {
+    button:focus-visible,
+    a:focus-visible {
       outline: 3px solid var(--accent);
       outline-offset: 3px;
     }
@@ -161,6 +192,8 @@
       .content { padding: 20px; }
       .field { grid-template-columns: 1fr; gap: 5px; }
       .field > label { padding-top: 0; }
+      .url-row { flex-wrap: wrap; }
+      .inline-action { width: 100%; }
       .footer { padding: 14px 20px; }
       .footer-actions { margin-left: auto; }
     }
@@ -188,16 +221,28 @@
     <form id="settings-form">
       <div class="content">
         <section aria-labelledby="connection-heading">
-          <h2 id="connection-heading" data-i18n="connectionHeading">Memos 连接</h2>
+          <h2 id="connection-heading" data-i18n="connectionHeading">云端同步</h2>
+          <div class="section-intro">
+            <p data-i18n="cloudSyncIntroLine1">不配置也能使用桌面端本地暂存和 Antigravity / Codex 对话，网页剪藏需要自托管 Memos。</p>
+            <p>
+              <span data-i18n="cloudSyncIntroLine2">配置自托管 Memos 服务后，可开启跨设备同步与 AI 自动摘要。</span>
+              <a id="deploy-guide-link" href="https://github.com/semantic-craft/coding-rewind/tree/main/deploy/vps" target="_blank" rel="noopener noreferrer" data-i18n="deployGuideLink">查看部署指南 ↗</a>
+            </p>
+          </div>
           <div class="fields">
             <div class="field">
               <label for="memos-url" data-i18n="memosUrlLabel">服务地址</label>
-              <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" data-i18n-placeholder="memosUrlPlaceholder">
+              <div class="input-stack">
+                <div class="url-row">
+                  <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" data-i18n-placeholder="memosUrlPlaceholder">
+                  <button id="open-console-btn" type="button" class="inline-action" data-i18n="openConsoleBtn" disabled>打开后台拿令牌 ↗</button>
+                </div>
+              </div>
             </div>
             <div class="field">
               <label for="memos-token" data-i18n="memosTokenLabel">访问令牌</label>
               <div class="input-stack">
-                <input id="memos-token" type="password" autocomplete="off" placeholder="输入 Memos 访问令牌" data-i18n-placeholder="memosTokenPlaceholder" aria-describedby="token-help">
+                <input id="memos-token" type="password" autocomplete="off" placeholder="请输入访问令牌" data-i18n-placeholder="memosTokenPlaceholder" aria-describedby="token-help">
                 <p class="help" id="token-help" data-i18n="tokenHelp">用于将片段保存到你的 Memos。</p>
               </div>
             </div>

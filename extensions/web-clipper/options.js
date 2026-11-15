@@ -86,7 +86,33 @@ export async function testMemosConnection({
         : `连接失败 (HTTP ${resp.status})`;
       return { ok: false, status: resp.status, message: msg };
     }
-    await resp.json();
+    const unexpectedResponse = () => ({
+      ok: false,
+      message: i18n
+        ? i18n.t(resolvedLocale, "connUnexpectedResponse")
+        : "服务返回的不是有效的 Memos 接口响应，请确认服务地址"
+    });
+    const contentType = typeof resp.headers?.get === "function"
+      ? String(resp.headers.get("content-type") || "").trim().toLowerCase()
+      : "";
+    if (contentType && !contentType.includes("json")) {
+      return unexpectedResponse();
+    }
+    let data;
+    try {
+      if (typeof resp.json === "function") {
+        data = await resp.json();
+      } else if (typeof resp.text === "function") {
+        data = JSON.parse(await resp.text());
+      } else {
+        return unexpectedResponse();
+      }
+    } catch {
+      return unexpectedResponse();
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data) || !Array.isArray(data.memos)) {
+      return unexpectedResponse();
+    }
     const msg = i18n
       ? i18n.t(resolvedLocale, "connSuccessReadOnly")
       : "连接成功，可读取片段。尚未验证保存。";
@@ -134,6 +160,7 @@ export function initOptionsPage() {
   const formEl = document.getElementById("settings-form");
   const urlInput = document.getElementById("memos-url") || document.getElementById("base-url");
   const tokenInput = document.getElementById("memos-token") || document.getElementById("token");
+  const openConsoleBtn = document.getElementById("open-console-btn");
   const pillScopeSelect = document.getElementById("pill-scope");
   const excludedDomainsInput = document.getElementById("excluded-domains");
   const languageSelect = document.getElementById("ui-language");
@@ -146,8 +173,29 @@ export function initOptionsPage() {
   let preferredLanguage = "auto";
   let currentLocale = i18n.resolveLocale(preferredLanguage, detectBrowserLanguage());
   let currentOutbox = [];
+  let savedToken = "";
   let statusMessageFactory = null;
   let statusKind = "info";
+
+  function refreshTokenPlaceholder() {
+    if (!tokenInput) return;
+    const key = savedToken ? "memosTokenSavedPlaceholder" : "memosTokenPlaceholder";
+    const translated = i18n.t(currentLocale, key);
+    tokenInput.setAttribute?.("data-i18n-placeholder", key);
+    tokenInput.placeholder = translated;
+    tokenInput.setAttribute?.("placeholder", translated);
+  }
+
+  function updateOpenConsoleButton() {
+    if (!openConsoleBtn) return;
+    const normalized = normalizeMemosBaseUrl(urlInput?.value || "");
+    openConsoleBtn.disabled = !normalized;
+    if (normalized) {
+      openConsoleBtn.removeAttribute?.("disabled");
+    } else {
+      openConsoleBtn.setAttribute?.("disabled", "");
+    }
+  }
 
   function renderStatus() {
     if (!statusMessageFactory) {
@@ -205,11 +253,16 @@ export function initOptionsPage() {
     if (testBtn) {
       testBtn.textContent = i18n.t(currentLocale, "testConnectionBtn");
     }
+    if (openConsoleBtn) {
+      openConsoleBtn.textContent = i18n.t(currentLocale, "openConsoleBtn");
+    }
+    refreshTokenPlaceholder();
     renderOutboxCount(currentOutbox);
     renderStatus();
   }
 
   applyLanguagePreference("auto");
+  updateOpenConsoleButton();
 
   async function loadInitialState() {
     if (typeof chrome === "undefined" || !chrome.storage?.local) return;
@@ -222,8 +275,9 @@ export function initOptionsPage() {
       "uiLanguage",
       "outbox"
     ]);
-    if (typeof items.memosUrl === "string") urlInput.value = items.memosUrl;
-    if (typeof items.memosToken === "string") tokenInput.value = items.memosToken;
+    if (typeof items.memosUrl === "string" && urlInput) urlInput.value = items.memosUrl;
+    savedToken = typeof items.memosToken === "string" ? items.memosToken.trim() : "";
+    if (tokenInput) tokenInput.value = "";
     if (pillScopeSelect) {
       pillScopeSelect.value = resolvePillScope(items);
     }
@@ -235,6 +289,7 @@ export function initOptionsPage() {
     }
     currentOutbox = Array.isArray(items.outbox) ? items.outbox : [];
     applyLanguagePreference(items.uiLanguage);
+    updateOpenConsoleButton();
   }
 
   void loadInitialState();
@@ -257,10 +312,27 @@ export function initOptionsPage() {
     await chrome.storage?.local?.set?.({ excludedDomains });
   });
 
+  urlInput?.addEventListener("input", updateOpenConsoleButton);
+  urlInput?.addEventListener("change", updateOpenConsoleButton);
+
+  openConsoleBtn?.addEventListener("click", async () => {
+    const normalized = normalizeMemosBaseUrl(urlInput?.value || "");
+    if (!normalized) return;
+    if (typeof chrome !== "undefined" && typeof chrome.tabs?.create === "function") {
+      await chrome.tabs.create({ url: normalized });
+    } else if (typeof globalThis.open === "function") {
+      globalThis.open(normalized, "_blank", "noopener,noreferrer");
+    }
+  });
+
   chrome.storage?.onChanged?.addListener((changes, area) => {
     if (area !== "local" || !changes) return;
     if (changes.outbox) {
       renderOutboxCount(changes.outbox.newValue);
+    }
+    if (changes.memosToken) {
+      savedToken = typeof changes.memosToken.newValue === "string" ? changes.memosToken.newValue.trim() : "";
+      refreshTokenPlaceholder();
     }
     if (changes.uiLanguage) {
       const incoming = normalizeUiLanguagePreference(changes.uiLanguage.newValue);
@@ -282,6 +354,18 @@ export function initOptionsPage() {
       return "";
     }
     return normalized;
+  }
+
+  async function persistConnectionCredentials(memosUrl, effectiveToken) {
+    if (urlInput) urlInput.value = memosUrl;
+    updateOpenConsoleButton();
+    await chrome.storage?.local?.set?.({
+      memosUrl,
+      memosToken: effectiveToken
+    });
+    savedToken = effectiveToken;
+    if (tokenInput) tokenInput.value = "";
+    refreshTokenPlaceholder();
   }
 
   formEl.addEventListener("submit", async (event) => {
@@ -306,35 +390,47 @@ export function initOptionsPage() {
     });
     await chrome.storage?.local?.remove?.(["showSelectionPill"]);
 
-    if (!urlInput.value.trim()) {
-      urlInput.value = "";
-      await chrome.storage?.local?.set?.({
-        memosUrl: "",
-        memosToken: tokenInput.value.trim()
-      });
-      setStatusKey("statusSettingsSaved", undefined, "ok");
+    const effectiveToken = (tokenInput?.value || "").trim() || savedToken;
+    const rawUrl = String(urlInput?.value || "").trim();
+
+    if (!rawUrl) {
+      await persistConnectionCredentials("", effectiveToken);
+      setStatusKey("statusSavedLocalOnly", undefined, "ok");
       return;
     }
 
     const normalized = await resolveAuthorizedBaseUrl();
     if (!normalized) return;
 
-    urlInput.value = normalized;
-    await chrome.storage?.local?.set?.({
-      memosUrl: normalized,
-      memosToken: tokenInput.value.trim()
-    });
-    setStatusKey("statusSettingsSaved", undefined, "ok");
+    await persistConnectionCredentials(normalized, effectiveToken);
     chrome.runtime?.sendMessage?.({ type: "REWIND_FLUSH_OUTBOX" });
+
+    if (!effectiveToken) {
+      setStatusKey("statusSavedMissingToken", undefined, "info");
+      return;
+    }
+
+    setStatusKey("statusSavingAndVerifying", undefined, "info");
+    const res = await testMemosConnection({
+      baseUrl: normalized,
+      token: effectiveToken,
+      locale: currentLocale
+    });
+    if (res.ok) {
+      setStatusKey("statusSavedAndConnected", undefined, "ok");
+    } else {
+      setStatusKey("statusSavedConnectionFailed", { detail: res.message }, "error");
+    }
   });
 
   testBtn?.addEventListener("click", async () => {
     const normalized = await resolveAuthorizedBaseUrl();
     if (!normalized) return;
+    const effectiveToken = (tokenInput?.value || "").trim() || savedToken;
     setStatusKey("statusTestingConnection", undefined, "info");
     const res = await testMemosConnection({
       baseUrl: normalized,
-      token: tokenInput.value.trim(),
+      token: effectiveToken,
       locale: currentLocale
     });
     setStatusText(res.message, res.ok ? "ok" : "error");
