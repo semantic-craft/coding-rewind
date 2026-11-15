@@ -18,9 +18,9 @@
 
 系统以单实例原版 `usememos/memos` 为唯一事实源，不在客户端另建业务数据库或自定义编辑器：
 
-- **云端主干 `deploy/vps/`**，运行官方固定版本 `neosmemo/memos:26.11.0` 容器提供 `/api/memos` 与原生 Streamable HTTP `/mcp`，旁挂纯 Python 3 标准库服务 `deploy/vps/enricher/enricher.py`，同时支持 Standard Webhooks `POST /webhook` 验签触发与 5 秒容器内网轮询自愈。
-- **网页端剪藏 `extensions/web-clipper/`**，Manifest V3 薄扩展，适配 ChatGPT、Claude 与 Gemini，支持选区上方悬浮“暂存”胶囊、右键菜单及 `⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 快捷键，提取选中 Markdown、会话标题、紧邻前序提问及最近 4 轮对话，由后台 Service Worker 直连 Memos REST API 并附带 `chrome.storage.local` 离线重放队列。
-- **桌面端浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，原生 Swift 6 AppKit 状态栏（`NSStatusItem` + `NSMenu`）、应用主菜单与非激活毛玻璃浮窗，支持在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话后弹出非激活“暂存”胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区、`⌃⌥R` 速览近 72 小时热流卡片。`⌘Return` 通过统一 `AppCoordinator.launchChecked(in:)` 在所选 Antigravity 或 Codex 接聊。Antigravity 经官方 `coding-rewind/launcher` sidecar 调用 `agentapi new-conversation`；Codex 经短暂官方 app-server 排队、App wake 与真实首轮原文回读。未知结果不自动重发。通过 `outbox.jsonl` 与 `hot_cache.json` 保障断网可用。
+- **云端主干 `deploy/vps/`**，运行官方固定版本 `neosmemo/memos:26.11.0` 容器提供 `/api/memos` 与原生 Streamable HTTP `/mcp`，旁挂纯 Python 3 标准库服务 `deploy/vps/enricher/enricher.py`，支持 Standard Webhooks `POST /webhook` 验签触发、5 秒容器内网轮询自愈，以及通过 `REWIND_SUMMARY_LANGUAGE`（`auto`、`zh-Hans`、`en`）按剪藏语种自动或固定生成中英文摘要抬头。
+- **网页端剪藏 `extensions/web-clipper/`**，Manifest V3 薄扩展，内置简体中文与英文界面本地化（`_locales/` 与 `i18n.js`，支持跟随浏览器或手动切换），适配 ChatGPT、Claude 与 Gemini，支持选区上方悬浮“暂存”胶囊、右键菜单及 `⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 快捷键，提取选中 Markdown、会话标题、紧邻前序提问及最近 4 轮对话，由后台 Service Worker 直连 Memos REST API 并附带 `chrome.storage.local` 离线重放队列。
+- **桌面端浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，原生 Swift 6 AppKit 状态栏（`NSStatusItem` + `NSMenu`）、应用主菜单与非激活毛玻璃浮窗，支持简体中文与英文界面实时无重启切换、`SMAppService.mainApp` 登录时静默启动（同步读取 `keyAELaunchedAsLogInItem` 不弹浮窗），以及基于 GitHub Releases、`SHA256SUMS.txt` 与 `SecStaticCode`（含 `TeamIdentifier` 防降级门禁）的应用内自动更新。支持在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话后弹出非激活“暂存”胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区、`⌃⌥R` 速览近 72 小时热流卡片。`⌘Return` 通过统一 `AppCoordinator.launchChecked(in:)` 在所选 Antigravity 或 Codex 接聊。Antigravity 经官方 `coding-rewind/launcher` sidecar 调用 `agentapi new-conversation`；Codex 经短暂官方 app-server 排队、App wake 与真实首轮原文回读。未知结果不自动重发。通过 `outbox.jsonl` 与 `hot_cache.json` 保障断网可用。
 - **宿主上下文与桥接**，`AntigravityCaptureContext.swift` 只读取已确认会话编号对应的官方 transcript，以唯一选区消息确定前序提问和最多 4 个用户轮；无法定位时省略上下文。`ConversationSidecar` 负责接聊；`memos-mcp-bridge.sh` 从钥匙串读取令牌后调用 `mcp-remote` 连接远端 `/mcp`。
 
 ## Memos REST 线级契约不变量
@@ -35,11 +35,11 @@
 
 - **数据目录**，`CODING_REWIND_DATA_DIR` 优先，缺省为 `~/Library/Application Support/CodingRewind`。
 - **服务地址**，`CODING_REWIND_MEMOS_URL` 优先，其次读取 `<dataDir>/config.json` 的 `memos_url` 字段；严禁将访问令牌写入 `config.json`、`mcp_config.json` 或 `servers.json`。
-- **访问令牌与 QA 隔离**，`CODING_REWIND_MEMOS_TOKEN` 优先，其次读取 macOS Keychain 服务 `com.codingrewind.memos`；当设置 `CODING_REWIND_QA=1` 时强制切换至独立钥匙串服务 `com.codingrewind.memos.qa`，缺失时直接报错退出，绝不回退读取个人钥匙串。
+- **访问令牌与 QA 隔离**，`CODING_REWIND_MEMOS_TOKEN` 优先，其次在非 QA 启动时支持本机 `<dataDir>/DeveloperCredentials.plist`（`0600` 权限，由本地开发包自动幂等外迁，跨自动更新保留）调用 `op read`，再其次读取 macOS Keychain 服务 `com.codingrewind.memos`；当设置 `CODING_REWIND_QA=1` 时强制切换至独立钥匙串服务 `com.codingrewind.memos.qa` 并忽略开发凭据文件，缺失时直接报错退出，绝不回退读取个人钥匙串。
 - **宿主接聊**，`coding-rewind-sidecar` 由 Antigravity 管理并从其 `PATH` 解析 `agentapi`，不得从其他进程提取运行环境。私有 `handoff/` 与 `codex-handoff/` 分别保存两种宿主的请求与回执，旧 sidecar 只消费前者。共用 durable worker 先持久化执行状态，再调用宿主，未知结果不重发。Codex 不接收 Memos 凭据或 `CODING_REWIND_*` 环境。实际接聊边界见 [README.md](README.md#在-antigravity-接聊)。
-- **固定安装位置与目录禁区**，安装 Antigravity 插件时必须将辅助可执行文件拷入 `~/Library/Application Support/CodingRewind/bin/`，严禁在插件或钩子配置中引用 `.build/`；任何构建输出与本地 QA 目录均不得使用 `/tmp` 或 `/private/tmp`。
+- **固定安装位置与目录禁区**，安装 Antigravity 插件时必须将辅助可执行文件拷入 `~/Library/Application Support/CodingRewind/bin/`，应用自动更新就绪替换时同步刷新已安装的辅助二进制，严禁在插件或钩子配置中引用 `.build/`；任何构建输出、更新暂存（固定位于 `<dataDir>/updates/`）与本地 QA 目录均不得使用 `/tmp` 或 `/private/tmp`。
 
 ## 验证与构建入口
 
-- 全仓统一门禁运行 `./scripts/check`，依次执行静态卫生与边界检查、`swift test`、`deploy/vps/enricher` 单元测试、`extensions/web-clipper` 单元测试、Shell 语法校验与应用图标规格校验。
-- 原生应用打包运行 `./scripts/build-app-bundle.sh`，在 `.build/CodingRewind.app` 生成内嵌 `AppIcon.icns`、`MenuBarIcon` 模板图标并启用 `LSUIElement` 的签名校验包。
+- 全仓统一门禁运行 `./scripts/check`，依次执行静态卫生与边界检查、`swift test`、`deploy/vps/enricher` 单元测试、`extensions/web-clipper` 单元测试、Shell 语法校验与应用图标、本地化资源及发布打包校验。
+- 原生应用打包运行 `./scripts/build-app-bundle.sh`，在 `.build/CodingRewind.app` 生成内嵌 `AppIcon.icns`、`MenuBarIcon` 模板图标、`zh-Hans.lproj`/`en.lproj` 资源并启用 `LSUIElement` 的签名校验包；公开构建运行 `./scripts/package-release.sh`（自动传入 `SKIP_DEVELOPER_CREDENTIALS=1`）输出双端压缩包与 `SHA256SUMS.txt`。
