@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "952298af2e938ffadc62ad031afcb40a6452e00d",
+    "main": "f1caaa5fbcac6de4b2635e77ab9f201ab53d6446",
     "open_pulls": [],
     "pulls": [
       {
@@ -219,6 +219,22 @@
         "merged": true,
         "number": 28,
         "state": "closed"
+      },
+      {
+        "base": "ac8e61ec018686ef3ff139cd03da1df148bbafca",
+        "head": "058088eb30dc53f9b63f568e8cc7967f87b5bb1a",
+        "merge_commit": "415c306dea02d2119386e226d67d5e6ade9d4380",
+        "merged": true,
+        "number": 29,
+        "state": "closed"
+      },
+      {
+        "base": "415c306dea02d2119386e226d67d5e6ade9d4380",
+        "head": "c88345892e49ffa97705c6e18333f221b4a7db72",
+        "merge_commit": "f1caaa5fbcac6de4b2635e77ab9f201ab53d6446",
+        "merged": true,
+        "number": 30,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -256,7 +272,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-15T07:37:51.510618Z",
+  "observed_at": "2026-11-15T10:26:41.744964Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -269,6 +285,139 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "chrome-universal-clipper-and-zero-glue-unification",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "全网 http(s) 26px 划词胶囊、指针手势门控、同行客户端矩形合并翻转定位、Shadow DOM 可编辑区与在线代码编辑器避让及 CodingRewindI18n 实时重渲染。",
+              "ref": "extensions/web-clipper/content.js"
+            },
+            {
+              "kind": "file",
+              "note": "Shiki、Prism、Highlight.js、Rouge、Hugo、GitHub 与 CodeMirror 行号槽剥离，以及任务列表、表格、图片与 kbd 等富文本 Markdown 转换。",
+              "ref": "extensions/web-clipper/extractors.mjs"
+            },
+            {
+              "kind": "file",
+              "note": "普通网页剪藏省略 #rewind/has-ctx 与空评论请求，强化 Source URL 协议白名单与控制字符清洗，移除静态重复常量导出。",
+              "ref": "extensions/web-clipper/memos_payload.mjs"
+            },
+            {
+              "kind": "file",
+              "note": "收敛为单一 testMemosConnection 入口与中英双语的 selectionPillScope 三档范围及 excludedDomains 域名归一化设置。",
+              "ref": "extensions/web-clipper/options.js"
+            },
+            {
+              "kind": "file",
+              "note": "登记 6 个固定提交 MIT 上游与非 MIT 排除项。",
+              "ref": "docs/sources.md"
+            },
+            {
+              "kind": "pull",
+              "note": "变基至 415c306dea02d2119386e226d67d5e6ade9d4380 完成零胶水代码双语合流，精确 head c88345892e49ffa97705c6e18333f221b4a7db72 经非作者独立复验 PASS 后合并至 main（f1caaa5fbcac6de4b2635e77ab9f201ab53d6446）。",
+              "ref": 30
+            }
+          ],
+          "id": "universal-clipper-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "将网页剪藏划词暂存胶囊与 Hyper+S 快捷键从 3 个对话站点扩展至任意 http(s) 网页，版本升至 0.3.2（0.3.2.0）。按固定提交裁剪引入 floating-ui/floating-ui、crimx/ext-saladict、ChatGPTBox-dev/chatGPTBox、mixmark-io/turndown、kepano/defuddle 与 obsidianmd/obsidian-clipper 六个 MIT 项目机制，实现多行就近翻转贴靠、拖拽与键盘选区门控、在线编辑器避让、主流代码高亮行号剥离、富文本转 Markdown 及扩展重载幂等清理。普通网页剪藏仅写 #rewind/pending 与 #source/web，不触发 enricher 15 秒评论等待窗口。与双语模块合流时彻底删除 UI_COPY、probeMemosConnection、TOAST_MESSAGES 与旧单选框，实现零胶水代码收敛。",
+          "title": "全网页划词胶囊、MIT 抽取器与零胶水双语合流"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "覆盖中英双语实时切换、全网手势门控、代码行号剥离、无 Array 原型 NodeList 夹具与安全转义的 64 项单测套件。",
+              "ref": "extensions/web-clipper/test_extractors.mjs"
+            },
+            {
+              "kind": "pull",
+              "note": "非作者独立验证子代理跑通 315 项自动化测试、18 文件发布 ZIP 核验与真实无头 Chromium CDP 解包扩展实测，结论 PASS。",
+              "ref": 30
+            },
+            {
+              "kind": "note",
+              "note": "真实 Chromium 加载解包扩展完成中英实时无刷新切换（暂存 / Stash）、多行正文与 GitHub 行号代码块点击暂存及本地回路 Memos 载荷断言；主仓源码已同步至 f1caaa5，日常桌面 Chrome 管理页待按需点按刷新。",
+              "ref": "2026-11-15 真实 Chromium CDP 解包扩展双语与代码块验收"
+            }
+          ],
+          "id": "universal-clipper-verification-and-local-sync",
+          "next": "在日常桌面 Chrome 扩展管理页对已挂载的 extensions/web-clipper 目录点按一次刷新以载入 0.3.2 运行文件。",
+          "status": "done",
+          "summary": "三模型对抗审查检出的 6 项边界问题与真实浏览器检出的 NodeList 原型差异均已修复并写入 lessons.md。非作者子代理对精确提交 c88345892e49ffa97705c6e18333f221b4a7db72 独立执行全仓 6 道门禁（共 315 项测试零失败，其中网页扩展 64/64）、发布打包核验（CodingRewind-WebClipper-v0.3.2.zip 共 57339 字节，SHA-256 79206e9b2f235b01a38ba168a7ecafaf6276dad021ee8d29ca286852f9c8f65a，精确 18 个运行文件）及真实 Chromium CDP 解包扩展验证，确认零胶水残留后合并至 main。本机主仓源码已快进同步至 f1caaa5fbcac6de4b2635e77ab9f201ab53d6446。",
+          "title": "对抗审查、真实浏览器双语验收与源码同步"
+        }
+      ],
+      "title": "Chrome 全网页划词暂存胶囊与零胶水双语合流"
+    },
+    {
+      "id": "lifecycle-updater-and-bilingual-ui",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "SMAppService.mainApp 开机自启控制与 keyAELaunchedAsLogInItem 同步静默启动采样。",
+              "ref": "Sources/CodingRewindApp/LoginItemController.swift"
+            },
+            {
+              "kind": "file",
+              "note": "GitHub Releases 检查、SHA256SUMS.txt 校验、SecStaticCode 严格验签、TeamIdentifier 防降级门禁、原子替换与 sidecar 同步更新。",
+              "ref": "Sources/CodingRewindApp/AppUpdater.swift"
+            },
+            {
+              "kind": "file",
+              "note": "兼容独立无 bundle sidecar 进程的纯枚举中英双语词表与偏好模型。",
+              "ref": "Sources/CodingRewindCore/Localization.swift"
+            },
+            {
+              "kind": "file",
+              "note": "支持 REWIND_SUMMARY_LANGUAGE（auto、zh-Hans、en）按剪藏语种自适应或固定语言生成摘要抬头。",
+              "ref": "deploy/vps/enricher/enricher.py"
+            },
+            {
+              "kind": "file",
+              "note": "双端发布归档与 SHA256SUMS.txt 生成脚本，开启 SKIP_DEVELOPER_CREDENTIALS=1 排除个人开发凭据。",
+              "ref": "scripts/package-release.sh"
+            },
+            {
+              "kind": "pull",
+              "note": "精确 head 058088eb30dc53f9b63f568e8cc7967f87b5bb1a 经对抗审查修复与非作者独立复验 PASS 后合并至 main（415c306dea02d2119386e226d67d5e6ade9d4380）。",
+              "ref": 29
+            }
+          ],
+          "id": "lifecycle-updater-bilingual-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "桌面端新增开机自启动（同步识别系统登录项 AppleEvent 与更新重启参数，后台静默驻留不抢焦点）、应用内安全自动更新（校验 SHA-256 摘要、SecStaticCode 严格签名与 BundleSignatureAuthority.canReplace 团队标识门禁，防止 Developer ID 被低信任签名覆盖破坏 TCC 辅助功能授权，并同步刷新固定目录 sidecar）以及无重启实时切换的中英双语界面。网页扩展补齐 _locales 与 i18n.js，VPS enricher 支持按剪藏语种自动切换中英文提示词，新增 scripts/package-release.sh 统一生成双端发布包与校验文件。",
+          "title": "登录静默自启、防降级自动更新与三端双语"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "非作者独立验证子代理跑通 230 项 Swift 测试、14 项 enricher 测试、发布打包与严格验签，结论 PASS。",
+              "ref": 29
+            },
+            {
+              "kind": "note",
+              "note": "标准目录 /Applications/CodingRewind.app（CDHash a607e005b2fef80add35ee8550481d3ead06fa90，主程序 SHA-256 7ad44f3cbe94ca1dd385a5141163a43fc4c5197e6ce08ffd0f4644cbbce0a444）与 sidecar（SHA-256 7481a206c713330077e78f710d3ec2ccfca9bcae68e7e2e323be23ccdcc68946）已基于合并后 main（f1caaa5）完成 Developer ID 重签升级，空闲 CPU 0.0%。",
+              "ref": "2026-11-15 本机标准目录与辅助进程合流升级核验"
+            }
+          ],
+          "id": "lifecycle-updater-verification-and-daily-upgrade",
+          "next": "",
+          "status": "done",
+          "summary": "非作者独立子代理对提交 058088eb30dc53f9b63f568e8cc7967f87b5bb1a 完成全仓门禁与发布包核验（桌面包不含 DeveloperCredentials.plist，扩展包不含测试桩，SHA256SUMS.txt 与严格 codesign 校验通过）。两支 PR 全部合入后，已基于 main（f1caaa5fbcac6de4b2635e77ab9f201ab53d6446）使用 Developer ID Application（LQAVR62TK2）重签升级 /Applications/CodingRewind.app 及固定目录 coding-rewind-sidecar 与 memos-mcp-bridge.sh，升级前后 Designated Requirement 完全一致，双语 InfoPlist.strings 已就位，主进程与 sidecar 静默常驻且空闲 CPU 均为 0.0%，临时工作树与已合并分支已全部清理。",
+          "title": "独立复验、标准目录重签升级与工作树清理"
+        }
+      ],
+      "title": "开机自启动、安全校验自动更新与三端中英双语"
+    },
     {
       "id": "chatgpt-selection-popup-and-antigravity-style",
       "items": [
@@ -1685,7 +1834,9 @@
       25,
       26,
       27,
-      28
+      28,
+      29,
+      30
     ]
   }
 }
