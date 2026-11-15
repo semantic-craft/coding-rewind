@@ -3,8 +3,22 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-14T17:55:21.866699Z</p>
-<p>Main: <code>main: 817ecad4b39a0e51949170bab0b73485490a4d22</code></p>
+<p>Observed: 2026-11-15T03:11:04.863505Z</p>
+<p>Main: <code>main: 278d3be8d74f9a9e96952e7de75b4405173597e8</code></p>
+<section id="stable-signing-and-hygiene-032"><h2>稳定证书签名、权限自愈与运行期清理</h2>
+<article id="stable-signing-implementation-and-verification"><h3>稳定证书签名、KVO 自激修复与零残留门禁</h3><span class="badge">done</span><p>修复临时签名每次重编变更 cdhash 导致系统设置辅助功能开关看似开启而 AXIsProcessTrusted 返回 false 的根因；构建脚本自动选用本机开发者签名身份并注销 .build 临时包 LaunchServices 记录。消除 macOS 27 下状态栏图标赋值重触发按钮外观 KVO 的 98.1% 空闲 CPU 死循环，补齐权限页实时轮询与一键 tccutil 重置按钮，并将 QA 偏好套件改为固定域且在门禁中强制校验零残留。全仓 6 道门禁与非作者独立复验全部通过。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/build-app-bundle.sh">file scripts/build-app-bundle.sh: 自动探测本地开发者证书签名并在构建后注销临时包 LaunchServices 记录，跨重编保持稳定 TCC Designated Requirement。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/test-bundle-signing.sh">file scripts/test-bundle-signing.sh: 覆盖显式身份、钥匙串自动探测与无证书临时签名回退三条路径的自动化脚本测试。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/SettingsViews.swift">file Sources/CodingRewindApp/SettingsViews.swift: 插件与权限页增加 1 秒实时权限轮询、激活通知刷新与一键重置失效 TCC 授权入口。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/AppMenusAndStatusBar.swift">file Sources/CodingRewindApp/AppMenusAndStatusBar.swift: 通过 IconRenderKey 去重、NSApp 外观监听与基础模板图标缓存消除 macOS 27 下状态栏按钮 KVO 自激重绘循环。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/scripts/check">file scripts/check: 固化 QA plist 零泄漏断言、临时构建包 LaunchServices 反注册与测试数据自动清理。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/27">pull 27: 提交 1b43784e6cc672f88253bedf69be424209045db4 经非作者独立子代理复核 PASS 后合并至 main（278d3be8d74f9a9e96952e7de75b4405173597e8）。</a></li>
+</ul><p>Next: </p></article>
+<article id="local-032-upgrade-and-tcc-regrant"><h3>本机 0.3.2 升级、系统残留清理与辅助功能重授</h3><span class="badge">in_progress</span><p>已清空历史 .scratch、dist、_artifacts 验收残留、486 个 dev.codingrewind.qa.*.plist、退役 Hook 脚手架、4 个空工作树、重复 LaunchServices 注册与过期 TCC 记录。/Applications/CodingRewind.app 已升级为开发者证书签名的 0.3.2（build 6），全机仅存唯一 LaunchServices 注册，常驻进程与 sidecar 空闲 CPU 均为 0.0%，并已引导系统设置注册新签名条目，仅待人工开启系统 TCC 开关完成设备侧授权确认。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/27">pull 27: 0.3.2（build 6）随 PR #27 合入并完成本机 /Applications/CodingRewind.app 开发者证书重签升级与辅助程序更新。</a></li>
+<li>note 2026-11-15 本机 0.3.2 升级与残留清理: 本机已清理 486 个 QA plist、历史验收目录、退役 Hook 文件、重复 LaunchServices 项及旧 TCC 记录；常驻进程空闲 CPU 实测 0.0%。</li>
+</ul><p>Next: 用户在已打开的系统设置辅助功能列表中为新版开发者证书签名的 CodingRewind 打开一次开关，即可永久绑定证书链授权。</p></article>
+</section>
 <section id="coherence-release-031"><h2>跨端融贯重构与 0.3.1 小版本发布</h2>
 <article id="coherence-implementation"><h3>跨端胶水清理与架构融贯重构</h3><span class="badge">done</span><p>拆分核心模型与网络层为 DomainModels、MemosWireFormat、PlatformStorage 与纯 HTTP 传输层 MemosClient，补齐 HTTP 409 同 ID 重放回读及离线队列冲刷后的选中卡片 ID 对齐。统一双端对话切片器 ConversationContextSlicer 与多态接聊通道 ConversationHostChannel，延长请求有效期至 45 秒，移除 Codex 唤醒路径上的主线程同步阻塞，补齐 .codex 启动恢复与非阻塞 worker 锁。桌面端收敛 AccessibilitySupport 与 AppCommand 动作路由；网页扩展将 330 行测试 DOM 解析桩移入 test_dom_shim.mjs，生产发布包精简为 12 个运行文件，并对齐三端已同步与待同步文案及 enricher CRLF 解析。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/MemosWireFormat.swift">file Sources/CodingRewindCore/MemosWireFormat.swift: 线级编解码、URL 规范化、32 位客户端 ID 与括号标题转义集中管理。</a></li>

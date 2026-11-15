@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "817ecad4b39a0e51949170bab0b73485490a4d22",
+    "main": "278d3be8d74f9a9e96952e7de75b4405173597e8",
     "open_pulls": [],
     "pulls": [
       {
@@ -203,6 +203,14 @@
         "merged": true,
         "number": 26,
         "state": "closed"
+      },
+      {
+        "base": "e29bfae845a700b99de92157647087886ad2a6fc",
+        "head": "1b43784e6cc672f88253bedf69be424209045db4",
+        "merge_commit": "278d3be8d74f9a9e96952e7de75b4405173597e8",
+        "merged": true,
+        "number": 27,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -240,7 +248,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-14T17:55:21.866699Z",
+  "observed_at": "2026-11-15T03:11:04.863505Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -253,6 +261,70 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "stable-signing-and-hygiene-032",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "自动探测本地开发者证书签名并在构建后注销临时包 LaunchServices 记录，跨重编保持稳定 TCC Designated Requirement。",
+              "ref": "scripts/build-app-bundle.sh"
+            },
+            {
+              "kind": "file",
+              "note": "覆盖显式身份、钥匙串自动探测与无证书临时签名回退三条路径的自动化脚本测试。",
+              "ref": "scripts/test-bundle-signing.sh"
+            },
+            {
+              "kind": "file",
+              "note": "插件与权限页增加 1 秒实时权限轮询、激活通知刷新与一键重置失效 TCC 授权入口。",
+              "ref": "Sources/CodingRewindApp/SettingsViews.swift"
+            },
+            {
+              "kind": "file",
+              "note": "通过 IconRenderKey 去重、NSApp 外观监听与基础模板图标缓存消除 macOS 27 下状态栏按钮 KVO 自激重绘循环。",
+              "ref": "Sources/CodingRewindApp/AppMenusAndStatusBar.swift"
+            },
+            {
+              "kind": "file",
+              "note": "固化 QA plist 零泄漏断言、临时构建包 LaunchServices 反注册与测试数据自动清理。",
+              "ref": "scripts/check"
+            },
+            {
+              "kind": "pull",
+              "note": "提交 1b43784e6cc672f88253bedf69be424209045db4 经非作者独立子代理复核 PASS 后合并至 main（278d3be8d74f9a9e96952e7de75b4405173597e8）。",
+              "ref": 27
+            }
+          ],
+          "id": "stable-signing-implementation-and-verification",
+          "next": "",
+          "status": "done",
+          "summary": "修复临时签名每次重编变更 cdhash 导致系统设置辅助功能开关看似开启而 AXIsProcessTrusted 返回 false 的根因；构建脚本自动选用本机开发者签名身份并注销 .build 临时包 LaunchServices 记录。消除 macOS 27 下状态栏图标赋值重触发按钮外观 KVO 的 98.1% 空闲 CPU 死循环，补齐权限页实时轮询与一键 tccutil 重置按钮，并将 QA 偏好套件改为固定域且在门禁中强制校验零残留。全仓 6 道门禁与非作者独立复验全部通过。",
+          "title": "稳定证书签名、KVO 自激修复与零残留门禁"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "0.3.2（build 6）随 PR #27 合入并完成本机 /Applications/CodingRewind.app 开发者证书重签升级与辅助程序更新。",
+              "ref": 27
+            },
+            {
+              "kind": "note",
+              "note": "本机已清理 486 个 QA plist、历史验收目录、退役 Hook 文件、重复 LaunchServices 项及旧 TCC 记录；常驻进程空闲 CPU 实测 0.0%。",
+              "ref": "2026-11-15 本机 0.3.2 升级与残留清理"
+            }
+          ],
+          "id": "local-032-upgrade-and-tcc-regrant",
+          "next": "用户在已打开的系统设置辅助功能列表中为新版开发者证书签名的 CodingRewind 打开一次开关，即可永久绑定证书链授权。",
+          "status": "in_progress",
+          "summary": "已清空历史 .scratch、dist、_artifacts 验收残留、486 个 dev.codingrewind.qa.*.plist、退役 Hook 脚手架、4 个空工作树、重复 LaunchServices 注册与过期 TCC 记录。/Applications/CodingRewind.app 已升级为开发者证书签名的 0.3.2（build 6），全机仅存唯一 LaunchServices 注册，常驻进程与 sidecar 空闲 CPU 均为 0.0%，并已引导系统设置注册新签名条目，仅待人工开启系统 TCC 开关完成设备侧授权确认。",
+          "title": "本机 0.3.2 升级、系统残留清理与辅助功能重授"
+        }
+      ],
+      "title": "稳定证书签名、权限自愈与运行期清理"
+    },
     {
       "id": "coherence-release-031",
       "items": [
@@ -1539,7 +1611,8 @@
       23,
       24,
       25,
-      26
+      26,
+      27
     ]
   }
 }
