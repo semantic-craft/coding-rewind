@@ -112,6 +112,7 @@ public enum SettingsPage: String, CaseIterable, Identifiable, Sendable {
     case connection
     case keyboard
     case integrations
+    case about
 
     public var id: Self { self }
 
@@ -129,6 +130,7 @@ public enum SettingsPage: String, CaseIterable, Identifiable, Sendable {
         case .connection: "network"
         case .keyboard: "keyboard"
         case .integrations: "puzzlepiece.extension"
+        case .about: "info.circle"
         }
     }
 }
@@ -222,6 +224,7 @@ public struct SettingsRootView: View {
                         case .connection: connection
                         case .keyboard: keyboard
                         case .integrations: integrations
+                        case .about: about
                         }
                     }
                     .padding(24)
@@ -296,80 +299,6 @@ public struct SettingsRootView: View {
                     }
                     if let error = loginItemController.errorMessage {
                         Text(error).foregroundStyle(.red)
-                    }
-                }
-            }
-
-            if let updater {
-                SettingsSection(AppStrings.updatesSectionTitle(in: lang)) {
-                    SettingsRow(
-                        AppStrings.autoCheckUpdatesTitle(in: lang),
-                        help: AppStrings.autoCheckUpdatesHelp(in: lang)
-                    ) {
-                        Toggle(
-                            AppStrings.autoCheckUpdatesTitle(in: lang),
-                            isOn: Binding(
-                                get: { updater.automaticallyChecksForUpdates },
-                                set: { updater.setAutomaticallyChecksForUpdates($0) }
-                            )
-                        )
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .accessibilityIdentifier("settings.autoUpdate")
-                    }
-                    Divider()
-                    let updateState = updater.state
-                    let isBusy: Bool = {
-                        switch updateState {
-                        case .checking, .downloading, .verifying, .installing:
-                            return true
-                        default:
-                            return false
-                        }
-                    }()
-                    SettingsRow(
-                        AppStrings.currentVersionTitle(version: updater.currentVersion, in: lang),
-                        help: AppStrings.updaterStatusSummary(
-                            state: updateState,
-                            lastCheckedAt: updater.lastCheckedAt,
-                            in: lang
-                        )
-                    ) {
-                        HStack(spacing: 8) {
-                            switch updateState {
-                            case .readyToInstall(let staged):
-                                Button(AppStrings.restartToUpdateButton(version: staged.candidate.version, in: lang)) {
-                                    Task { @MainActor in
-                                        await updater.installReadyUpdateAndRelaunch()
-                                    }
-                                }
-                                .rewindButtonRole(.primary)
-                                .accessibilityIdentifier("settings.restartToUpdate")
-                            case .manualDownloadRequired(let candidate, _):
-                                Button(AppStrings.viewReleaseOnGitHubButton(in: lang)) {
-                                    updater.openReleasePage(candidate)
-                                }
-                                .rewindButtonRole(.secondary)
-                                .accessibilityIdentifier("settings.viewReleaseOnGitHub")
-
-                                Button(AppStrings.checkForUpdatesButton(isBusy: false, in: lang)) {
-                                    Task { @MainActor in
-                                        await updater.checkForUpdates(userInitiated: true)
-                                    }
-                                }
-                                .rewindButtonRole(.secondary)
-                                .accessibilityIdentifier("settings.checkForUpdates")
-                            default:
-                                Button(AppStrings.checkForUpdatesButton(isBusy: isBusy, in: lang)) {
-                                    Task { @MainActor in
-                                        await updater.checkForUpdates(userInitiated: true)
-                                    }
-                                }
-                                .rewindButtonRole(.secondary)
-                                .disabled(isBusy)
-                                .accessibilityIdentifier("settings.checkForUpdates")
-                            }
-                        }
                     }
                 }
             }
@@ -594,6 +523,180 @@ public struct SettingsRootView: View {
                     .foregroundStyle(permissionState.isTrusted ? Color.secondary : Color.orange)
             }
         }
+    }
+
+    private var about: some View {
+        Group {
+            HStack(alignment: .top, spacing: 16) {
+                Image(nsImage: AppAboutMetadata.appIcon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 64, height: 64)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("Coding Rewind")
+                            .font(.title3.weight(.semibold))
+                        Text(
+                            AppStrings.aboutVersionLine(
+                                version: AppAboutMetadata.versionString(updater: updater),
+                                build: AppAboutMetadata.buildNumber(),
+                                in: lang
+                            )
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("settings.about.version")
+                        Text(AppStrings.aboutSummary(in: lang))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    HStack(spacing: 8) {
+                        Button(AppStrings.aboutGitHubRepoButton(in: lang)) {
+                            AppAboutMetadata.openGitHubRepo(using: coordinator)
+                        }
+                        .rewindButtonRole(.secondary)
+                        .accessibilityLabel(AppStrings.aboutGitHubRepoAccessibilityLabel(in: lang))
+                        .accessibilityIdentifier("settings.about.github")
+
+                        Button(AppStrings.aboutReleaseNotesButton(in: lang)) {
+                            AppAboutMetadata.openReleaseNotes(using: coordinator)
+                        }
+                        .rewindButtonRole(.secondary)
+                        .accessibilityLabel(AppStrings.aboutReleaseNotesAccessibilityLabel(in: lang))
+                        .accessibilityIdentifier("settings.about.releases")
+                    }
+                }
+            }
+
+            if let updater {
+                Divider()
+                SettingsSection(AppStrings.updatesSectionTitle(in: lang)) {
+                    let updateState = updater.state
+                    let isBusy: Bool = {
+                        switch updateState {
+                        case .checking, .downloading, .verifying, .installing:
+                            return true
+                        default:
+                            return false
+                        }
+                    }()
+                    SettingsRow(
+                        AppStrings.currentVersionTitle(version: updater.currentVersion, in: lang),
+                        help: AppStrings.updaterStatusSummary(
+                            state: updateState,
+                            lastCheckedAt: updater.lastCheckedAt,
+                            in: lang
+                        )
+                    ) {
+                        HStack(spacing: 8) {
+                            switch updateState {
+                            case .readyToInstall(let staged):
+                                Button(AppStrings.restartToUpdateButton(version: staged.candidate.version, in: lang)) {
+                                    Task { @MainActor in
+                                        await updater.installReadyUpdateAndRelaunch()
+                                    }
+                                }
+                                .rewindButtonRole(.primary)
+                                .accessibilityIdentifier("settings.restartToUpdate")
+                            case .manualDownloadRequired(let candidate, _):
+                                Button(AppStrings.viewReleaseOnGitHubButton(in: lang)) {
+                                    updater.openReleasePage(candidate)
+                                }
+                                .rewindButtonRole(.secondary)
+                                .accessibilityIdentifier("settings.viewReleaseOnGitHub")
+
+                                Button(AppStrings.checkForUpdatesButton(isBusy: false, in: lang)) {
+                                    Task { @MainActor in
+                                        await updater.checkForUpdates(userInitiated: true)
+                                    }
+                                }
+                                .rewindButtonRole(.secondary)
+                                .accessibilityIdentifier("settings.checkForUpdates")
+                            default:
+                                Button(AppStrings.checkForUpdatesButton(isBusy: isBusy, in: lang)) {
+                                    Task { @MainActor in
+                                        await updater.checkForUpdates(userInitiated: true)
+                                    }
+                                }
+                                .rewindButtonRole(.secondary)
+                                .disabled(isBusy)
+                                .accessibilityIdentifier("settings.checkForUpdates")
+                            }
+                        }
+                    }
+                    Divider()
+                    SettingsRow(
+                        AppStrings.autoCheckUpdatesTitle(in: lang),
+                        help: AppStrings.autoCheckUpdatesHelp(in: lang)
+                    ) {
+                        Toggle(
+                            AppStrings.autoCheckUpdatesTitle(in: lang),
+                            isOn: Binding(
+                                get: { updater.automaticallyChecksForUpdates },
+                                set: { updater.setAutomaticallyChecksForUpdates($0) }
+                            )
+                        )
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityIdentifier("settings.autoUpdate")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@MainActor
+enum AppAboutMetadata {
+    static let gitHubRepoURL = URL(string: "https://github.com/semantic-craft/coding-rewind")!
+    static let releasesURL = URL(string: "https://github.com/semantic-craft/coding-rewind/releases")!
+
+    static let appIcon: NSImage = {
+        Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+            .flatMap(NSImage.init(contentsOf:))
+            ?? NSApplication.shared.applicationIconImage
+    }()
+
+    static var appBundleInfoDictionary: [String: Any]? {
+        guard let bundleID = Bundle.main.bundleIdentifier,
+              bundleID == AppBundleID.selfApp || bundleID == AppBundleID.selfQAApp else {
+            return nil
+        }
+        return Bundle.main.infoDictionary
+    }
+
+    static func versionString(
+        updater: AppUpdater?,
+        infoDictionary: [String: Any]? = AppAboutMetadata.appBundleInfoDictionary
+    ) -> String? {
+        if let raw = infoDictionary?["CFBundleShortVersionString"] as? String {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
+        }
+        return updater?.currentVersion.description
+    }
+
+    static func buildNumber(
+        infoDictionary: [String: Any]? = AppAboutMetadata.appBundleInfoDictionary
+    ) -> String? {
+        guard let raw = infoDictionary?["CFBundleVersion"] as? String else {
+            return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func openGitHubRepo(using coordinator: AppCoordinator) {
+        coordinator.openURL(gitHubRepoURL)
+    }
+
+    static func openReleaseNotes(using coordinator: AppCoordinator) {
+        coordinator.openURL(releasesURL)
     }
 }
 

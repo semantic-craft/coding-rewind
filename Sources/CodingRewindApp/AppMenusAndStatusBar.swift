@@ -514,13 +514,6 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
-                title: AppStrings.checkForUpdatesMenu(in: lang),
-                command: .checkForUpdates,
-                handler: onCommand
-            )
-        )
-        menu.addItem(
-            makeCommandMenuItem(
                 title: AppStrings.settingsEllipsis(in: lang),
                 command: .openSettings,
                 keyEquivalent: ",",
@@ -530,7 +523,6 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
 
         menu.addItem(.separator())
-        menu.addItem(makeCommandMenuItem(title: AppStrings.aboutApp(in: lang), command: .showAbout, handler: onCommand))
         menu.addItem(
             makeCommandMenuItem(
                 title: AppStrings.quitApp(in: lang),

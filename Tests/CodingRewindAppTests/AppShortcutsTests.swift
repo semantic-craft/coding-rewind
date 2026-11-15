@@ -11,7 +11,7 @@ import Testing
 @MainActor
 struct AppShortcutsTests {
     nonisolated private static let suite = "dev.codingrewind.qa.tests"
-    private static let defaults: UserDefaults = {
+    static let defaults: UserDefaults = {
         let value = UserDefaults(suiteName: suite)!
         KeyboardShortcuts.configure(userDefaults: value)
         atexit {

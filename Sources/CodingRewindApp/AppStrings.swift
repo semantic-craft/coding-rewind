@@ -399,6 +399,7 @@ enum AppStrings {
             case .connection: return "云端同步"
             case .keyboard: return "快捷键"
             case .integrations: return "插件与权限"
+            case .about: return "关于"
             }
         case .en:
             switch page {
@@ -406,6 +407,7 @@ enum AppStrings {
             case .connection: return "Cloud Sync"
             case .keyboard: return "Shortcuts"
             case .integrations: return "Integrations"
+            case .about: return "About"
             }
         }
     }

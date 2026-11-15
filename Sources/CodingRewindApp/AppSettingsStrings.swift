@@ -100,8 +100,69 @@ extension AppStrings {
 
     static func checkForUpdatesButton(isBusy: Bool, in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return isBusy ? "检查中…" : "立即检查"
-        case .en: return isBusy ? "Checking…" : "Check Now"
+        case .zhHans: return isBusy ? "检查中…" : "检查更新"
+        case .en: return isBusy ? "Checking…" : "Check for Updates"
+        }
+    }
+
+    static func aboutVersionLine(version: String?, build: String?, in language: AppLanguage) -> String {
+        let trimmedVersion = version?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedVersion = trimmedVersion.flatMap { $0.isEmpty ? nil : $0 }
+        let trimmedBuild = build?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedBuild = trimmedBuild.flatMap { $0.isEmpty ? nil : $0 }
+
+        switch language {
+        case .zhHans:
+            guard let resolvedVersion else {
+                return "MIT 许可证"
+            }
+            if let resolvedBuild {
+                return "版本 \(resolvedVersion)（Build \(resolvedBuild)） · MIT 许可证"
+            }
+            return "版本 \(resolvedVersion) · MIT 许可证"
+        case .en:
+            guard let resolvedVersion else {
+                return "MIT License"
+            }
+            if let resolvedBuild {
+                return "Version \(resolvedVersion) (Build \(resolvedBuild)) · MIT License"
+            }
+            return "Version \(resolvedVersion) · MIT License"
+        }
+    }
+
+    static func aboutSummary(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "跨 AI 对话与网页顺手暂存灵感片段，保留提问脉络并一键接聊。"
+        case .en: return "Stash highlights across AI chats and the web with conversation context intact."
+        }
+    }
+
+    static func aboutGitHubRepoButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "GitHub 仓库 ↗"
+        case .en: return "GitHub Repository ↗"
+        }
+    }
+
+    static func aboutReleaseNotesButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "发布版本与更新日志 ↗"
+        case .en: return "Releases & Changelog ↗"
+        }
+    }
+
+    static func aboutGitHubRepoAccessibilityLabel(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "GitHub 仓库"
+        case .en: return "GitHub Repository"
+        }
+    }
+
+    static func aboutReleaseNotesAccessibilityLabel(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "发布版本与更新日志"
+        case .en: return "Releases & Changelog"
         }
     }
 
