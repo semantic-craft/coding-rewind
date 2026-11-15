@@ -198,11 +198,17 @@ public enum MemosWireFormat {
         return "\(tags)\n\n\(sourceLine)\n\n\(cleanedBody)"
     }
 
+    public static let contextCommentMarker = "<!-- rewind-context-v1 -->"
+
     public static func replacingWithSynthesizedTag(_ rawContent: String) -> String {
         let headerEnd = rawContent.firstIndex(where: \.isNewline) ?? rawContent.endIndex
+        var emittedSynthesized = false
         let updatedHeader = headerTokens(rawContent).compactMap { token -> String? in
             switch token {
-            case "#rewind/pending", "#rewind/ready": return "#rewind/synthesized"
+            case "#rewind/pending", "#rewind/ready", "#rewind/synthesized":
+                guard !emittedSynthesized else { return nil }
+                emittedSynthesized = true
+                return "#rewind/synthesized"
             case "#rewind/has-ctx": return nil
             default: return String(token)
             }
@@ -312,6 +318,208 @@ public enum MemosWireFormat {
             createdAt: createdAt,
             isOfflinePending: isOfflinePending
         )
+    }
+
+    public static func parseSnippetRecord(
+        id: String,
+        rawContent: String,
+        createdAt: Date,
+        dataOrigin: SnippetDataOrigin,
+        conversationContext: CaptureContext? = nil
+    ) -> SnippetRecord? {
+        let tags = headerTokens(rawContent)
+        let status: SnippetStatus? = tags.contains("#rewind/synthesized") ? .synthesized
+            : tags.contains("#rewind/ready") ? .ready
+            : tags.contains("#rewind/pending") ? .pending : nil
+        guard let status else {
+            return nil
+        }
+
+        var sourcePlatform = "macos"
+        for token in tags where token.hasPrefix("#source/") {
+            let candidate = String(token.dropFirst("#source/".count))
+            if !candidate.isEmpty {
+                sourcePlatform = candidate
+            }
+        }
+
+        var cursor = nextLine(in: rawContent, from: rawContent.startIndex)?.nextStart ?? rawContent.endIndex
+
+        var title: String?
+        var sessionTopic: String?
+        var contextSummary: String?
+        var keywords: [String] = []
+        var sourceTitle = sourcePlatform
+        var sourceURL: String?
+
+        let metadataPrefixes = [
+            "> **Title:**",
+            "> **Session:**",
+            "> **Context:**",
+            "> **Keywords:**",
+            "> **Source:**"
+        ]
+
+        var metadataCursor = cursor
+        while let (line, afterLine) = nextLine(in: rawContent, from: metadataCursor),
+              isHorizontalBlank(line) {
+            metadataCursor = afterLine
+        }
+
+        if let (firstCandidate, _) = nextLine(in: rawContent, from: metadataCursor),
+           metadataPrefixes.contains(where: { firstCandidate.hasPrefix($0) }) {
+            cursor = metadataCursor
+            while let (line, afterLine) = nextLine(in: rawContent, from: cursor) {
+                guard let matched = metadataPrefixes.first(where: { line.hasPrefix($0) }) else {
+                    break
+                }
+                let value = trimHorizontalWhitespace(line.dropFirst(matched.count))
+                switch matched {
+                case "> **Title:**":
+                    title = value.isEmpty ? nil : value
+                case "> **Session:**":
+                    sessionTopic = value.isEmpty ? nil : value
+                case "> **Context:**":
+                    contextSummary = value.isEmpty ? nil : value
+                case "> **Keywords:**":
+                    keywords = value
+                        .split(separator: ",")
+                        .map { trimHorizontalWhitespace($0) }
+                        .filter { !$0.isEmpty }
+                case "> **Source:**":
+                    let parsed = parseSourceLine(value)
+                    if !parsed.title.isEmpty { sourceTitle = parsed.title }
+                    sourceURL = parsed.url
+                default:
+                    break
+                }
+                cursor = afterLine
+            }
+        }
+
+        if let (separatorLine, afterSeparator) = nextLine(in: rawContent, from: cursor),
+           isHorizontalBlank(separatorLine) {
+            cursor = afterSeparator
+        }
+        let verbatim = String(rawContent[cursor...])
+        let normalizedID = id.hasPrefix("memos/") ? String(id.dropFirst("memos/".count)) : id
+
+        return SnippetRecord(
+            id: normalizedID,
+            status: status,
+            sourcePlatform: sourcePlatform,
+            title: title,
+            sessionTopic: sessionTopic,
+            contextSummary: contextSummary,
+            keywords: keywords,
+            sourceTitle: sourceTitle,
+            sourceURL: sourceURL,
+            verbatimText: verbatim,
+            createdAt: createdAt,
+            dataOrigin: dataOrigin,
+            conversationContext: conversationContext
+        )
+    }
+
+    public static func parseContextComment(_ rawComment: String) -> CaptureContext? {
+        let normalized = rawComment
+            .replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let trimmedLeading = normalized.drop(while: { $0.isWhitespace || $0.isNewline })
+        guard trimmedLeading.hasPrefix(contextCommentMarker) else {
+            return nil
+        }
+
+        let afterMarkerLine: Substring
+        if let newlineIdx = trimmedLeading.firstIndex(of: "\n") {
+            afterMarkerLine = trimmedLeading[trimmedLeading.index(after: newlineIdx)...]
+        } else {
+            return nil
+        }
+
+        let lines = afterMarkerLine.split(separator: "\n", omittingEmptySubsequences: false)
+        var index = 0
+        var sessionTitle = ""
+
+        while index < lines.count && lines[index].allSatisfy({ $0 == " " || $0 == "\t" }) {
+            index += 1
+        }
+
+        if index < lines.count, lines[index].hasPrefix("Session Title:") {
+            sessionTitle = String(lines[index].dropFirst("Session Title:".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            index += 1
+        }
+
+        let recentTurnsHeaderIndex = lines[index...].firstIndex { line in
+            trimHorizontalWhitespace(line) == "### Recent Turns"
+        }
+
+        let promptEndIndex = recentTurnsHeaderIndex ?? lines.count
+        var promptLines = Array(lines[index..<promptEndIndex])
+        while let first = promptLines.first, first.allSatisfy({ $0 == " " || $0 == "\t" }) {
+            promptLines.removeFirst()
+        }
+
+        var prompt = ""
+        if let firstPromptLine = promptLines.first, firstPromptLine.hasPrefix("Prompt:") {
+            var remainder = firstPromptLine.dropFirst("Prompt:".count)
+            if remainder.first == " " {
+                remainder = remainder.dropFirst()
+            }
+            promptLines[0] = remainder
+            prompt = promptLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var recentTurns: [ConversationTurn] = []
+        if let headerIdx = recentTurnsHeaderIndex {
+            var currentRole: String?
+            var currentTurnLines: [Substring] = []
+
+            func flushTurn() {
+                guard let role = currentRole else { return }
+                let text = currentTurnLines.joined(separator: "\n")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    recentTurns.append(ConversationTurn(role: role, text: text))
+                }
+                currentRole = nil
+                currentTurnLines.removeAll(keepingCapacity: true)
+            }
+
+            for turnLine in lines[(headerIdx + 1)...] {
+                if let (role, firstLineBody) = parseTurnHeader(turnLine) {
+                    flushTurn()
+                    currentRole = role
+                    currentTurnLines = [firstLineBody]
+                } else if currentRole != nil {
+                    currentTurnLines.append(turnLine)
+                }
+            }
+            flushTurn()
+        }
+
+        let context = CaptureContext(
+            sessionTitle: sessionTitle,
+            prompt: prompt,
+            recentTurns: recentTurns
+        )
+        return context.isEmpty ? nil : context
+    }
+
+    private static func parseTurnHeader(_ line: Substring) -> (role: String, body: Substring)? {
+        guard let colonIndex = line.firstIndex(of: ":") else { return nil }
+        let rawRole = line[..<colonIndex]
+        let lowered = rawRole.lowercased()
+        guard lowered == "user" || lowered == "assistant" || lowered == "system" else {
+            return nil
+        }
+        var remainder = line[line.index(after: colonIndex)...]
+        if remainder.first == " " {
+            remainder = remainder.dropFirst()
+        }
+        return (String(rawRole), remainder)
     }
 
     private static func nextLine(in text: String, from start: String.Index) -> (line: Substring, nextStart: String.Index)? {
