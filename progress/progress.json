@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "278d3be8d74f9a9e96952e7de75b4405173597e8",
+    "main": "952298af2e938ffadc62ad031afcb40a6452e00d",
     "open_pulls": [],
     "pulls": [
       {
@@ -211,6 +211,14 @@
         "merged": true,
         "number": 27,
         "state": "closed"
+      },
+      {
+        "base": "8abddf06453b7b19185fdfaa57dbff35529405a6",
+        "head": "c65dade6d29e3c10686250046f5c6efee87d765b",
+        "merge_commit": "952298af2e938ffadc62ad031afcb40a6452e00d",
+        "merged": true,
+        "number": 28,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -248,7 +256,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-15T03:11:04.863505Z",
+  "observed_at": "2026-11-15T07:37:51.510618Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -261,6 +269,70 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "chatgpt-selection-popup-and-antigravity-style",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "26pt 实底胶囊、1px 细边框、8pt 透明阴影外边距点击穿透、ChatGPT 懒加载 AXWebArea 预热及下方锚定避让。",
+              "ref": "Sources/CodingRewindApp/SelectionPopupController.swift"
+            },
+            {
+              "kind": "file",
+              "note": "与选区探测共用 ChatGPTWebAreaClassification，保证带 #fragment 或 ?query 的壳页完整保留 4 轮对话上下文。",
+              "ref": "Sources/CodingRewindApp/NativeChatCapture.swift"
+            },
+            {
+              "kind": "file",
+              "note": "冷启动快捷键捕获前唤醒 AXEnhancedUserInterface 并轮询等待焦点窗口与 AXWebArea 挂载。",
+              "ref": "Sources/CodingRewindApp/MacOSSelection.swift"
+            },
+            {
+              "kind": "file",
+              "note": "网页端 .rw-pill 同步收敛为 26px 实底表面与无前置加号的精简就绪态。",
+              "ref": "extensions/web-clipper/content.js"
+            },
+            {
+              "kind": "file",
+              "note": "覆盖宿主白名单、URL 与表面分类、键盘选区按键、下方布局翻转、最小宽度及阴影边距点击穿透的单测套件。",
+              "ref": "Tests/CodingRewindAppTests/SelectionPopupTests.swift"
+            },
+            {
+              "kind": "pull",
+              "note": "提交 c65dade6d29e3c10686250046f5c6efee87d765b 经多模型对抗审查与全仓 6 道门禁通过后合并至 main（952298af2e938ffadc62ad031afcb40a6452e00d）。",
+              "ref": 28
+            }
+          ],
+          "id": "antigravity-pill-style-and-chatgpt-probe",
+          "next": "",
+          "status": "done",
+          "summary": "桌面端与网页剪藏胶囊统一对齐 Antigravity 原生选区工具栏（26pt 纯色表面、1px 细边框、双层柔和环境阴影、12pt 标题配 11.5pt 快捷键提示，移除就绪态前置加号与 NSPanel 暗色外框阴影，并通过动态鼠标穿透保证 8pt 阴影边距不拦截底层点击与拖拽）。桌面端新增 ChatGPT.app（com.openai.codex）划词胶囊支持，按需唤醒 Chromium 懒加载 AXWebArea、绕过 Electron 常驻启用的 Cut 菜单误判、识别对话正文与只读代码块、支持 Shift 方向键扩选，并默认锚定在选区下方 8pt 以彻底避开 OpenAI 原生上方工具栏。多模型审查检出的 URL 分类共享、冷启动窗口重试与最小视觉宽度一致性均已修复并通过 53 项 Swift 测试与 39 项扩展测试。",
+          "title": "划词胶囊视觉对齐、ChatGPT 宿主探测与多模型审查"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "标准安装目录与固定辅助进程已随 PR #28 合并代码重签升级。",
+              "ref": 28
+            },
+            {
+              "kind": "note",
+              "note": "实屏验证 ChatGPT.app 划词时 OpenAI 原生栏居上 8pt、CodingRewind 胶囊居下 8pt，零重叠且测试后恢复零残留窗口。",
+              "ref": "2026-11-15 ChatGPT.app 实屏双栏避让与标准包升级核验"
+            }
+          ],
+          "id": "chatgpt-live-windowserver-and-bundle-upgrade",
+          "next": "",
+          "status": "done",
+          "summary": "标准目录 CodingRewind.app（0.3.2 build 6）已按开发者证书重签安装并静默拉起后台常驻进程，同步更新固定目录 coding-rewind-sidecar，严格 codesign 校验通过。在真实运行的 ChatGPT.app（com.openai.codex）对话窗口内完成辅助功能实测与 WindowServer 截图取证，选区上方 OpenAI 原生工具栏与选区下方 CodingRewind 暂存胶囊上下分列、互不遮挡。",
+          "title": "标准目录重签安装与 ChatGPT.app 实屏双栏避让验证"
+        }
+      ],
+      "title": "划词暂存胶囊视觉对齐与 ChatGPT 桌面端接入"
+    },
     {
       "id": "stable-signing-and-hygiene-032",
       "items": [
@@ -317,9 +389,9 @@
             }
           ],
           "id": "local-032-upgrade-and-tcc-regrant",
-          "next": "用户在已打开的系统设置辅助功能列表中为新版开发者证书签名的 CodingRewind 打开一次开关，即可永久绑定证书链授权。",
-          "status": "in_progress",
-          "summary": "已清空历史 .scratch、dist、_artifacts 验收残留、486 个 dev.codingrewind.qa.*.plist、退役 Hook 脚手架、4 个空工作树、重复 LaunchServices 注册与过期 TCC 记录。/Applications/CodingRewind.app 已升级为开发者证书签名的 0.3.2（build 6），全机仅存唯一 LaunchServices 注册，常驻进程与 sidecar 空闲 CPU 均为 0.0%，并已引导系统设置注册新签名条目，仅待人工开启系统 TCC 开关完成设备侧授权确认。",
+          "next": "",
+          "status": "done",
+          "summary": "已清空历史 .scratch、dist、_artifacts 验收残留、486 个 dev.codingrewind.qa.*.plist、退役 Hook 脚手架、4 个空工作树、重复 LaunchServices 注册与过期 TCC 记录。标准目录 CodingRewind.app 已升级为开发者证书签名的 0.3.2（build 6），全机仅存唯一 LaunchServices 注册，常驻进程与 sidecar 空闲 CPU 均为 0.0%，开发者证书链辅助功能授权已在系统设置中开启并经真实跨应用划词探测验证生效。",
           "title": "本机 0.3.2 升级、系统残留清理与辅助功能重授"
         }
       ],
@@ -1612,7 +1684,8 @@
       24,
       25,
       26,
-      27
+      27,
+      28
     ]
   }
 }
