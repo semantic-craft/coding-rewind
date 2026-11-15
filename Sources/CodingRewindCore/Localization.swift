@@ -361,8 +361,8 @@ public enum L10n {
         switch notice {
         case .savedOfflineNeedsConfig:
             switch language {
-            case .zhHans: return "已保存到本机，设置 Memos 连接后将自动同步"
-            case .en: return "Saved locally. Will sync automatically once Memos is configured."
+            case .zhHans: return "已保存到本机，配置云端同步后将自动同步"
+            case .en: return "Saved locally. Will sync automatically once Cloud Sync is configured."
             }
         case .savedClip(let sourceTitle):
             switch language {
@@ -401,8 +401,8 @@ public enum L10n {
             }
         case .sentArchiveBlockedUnconfigured:
             switch language {
-            case .zhHans: return "内容已发送，Memos 连接尚未设置，暂时无法归档。片段已保留，可重试归档"
-            case .en: return "Sent, but Memos is not configured to archive yet. Clips remain checked to retry archiving."
+            case .zhHans: return "内容已发送，云端同步尚未配置，暂时无法归档。片段已保留，可重试归档"
+            case .en: return "Sent, but Cloud Sync is not configured to archive yet. Clips remain checked to retry archiving."
             }
         case .sentPartialArchiveFailure:
             switch language {
@@ -473,13 +473,13 @@ public enum L10n {
             }
         case .archiveCardBlockedOfflineOrUnconfigured:
             switch language {
-            case .zhHans: return "片段尚未同步或 Memos 连接尚未设置，暂时无法归档"
-            case .en: return "Clip is not synced yet or Memos is not configured; cannot archive right now."
+            case .zhHans: return "片段尚未同步或云端同步尚未配置，暂时无法归档"
+            case .en: return "Clip is not synced yet or Cloud Sync is not configured; cannot archive right now."
             }
         case .savedConnectionSettings:
             switch language {
-            case .zhHans: return "已保存 Memos 连接设置"
-            case .en: return "Saved Memos connection settings."
+            case .zhHans: return "已保存云端同步设置"
+            case .en: return "Saved Cloud Sync settings."
             }
         case .pluginInstalled:
             return pluginInstalledSummary(in: language)

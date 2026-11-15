@@ -221,7 +221,7 @@ extension AppStrings {
 
     static func getTokenButton(in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return "打开后台获取令牌 ↗"
+        case .zhHans: return "打开后台拿令牌 ↗"
         case .en: return "Get Token ↗"
         }
     }
