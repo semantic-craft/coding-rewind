@@ -81,6 +81,7 @@ struct LocalizationAndUpdateModelsTests {
             .legacyCaptureHooksPresent,
             .skillMissingMemosGuidance,
             .missingSkillFile,
+            .missingCLIBinary,
             .missingSidecarBinary,
             .invalidSidecarConfig,
             .sidecarLauncherDisabled
@@ -455,14 +456,14 @@ struct LocalizationAndUpdateModelsTests {
         #expect(!FileManager.default.fileExists(atPath: paths.antigravityConfigDirectoryURL.path))
 
         let dummySidecar = root.appendingPathComponent("src-sidecar")
-        let dummyBridge = root.appendingPathComponent("src-bridge.sh")
+        let dummyCLI = root.appendingPathComponent("src-coding-rewind")
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: dummySidecar, permissions: 0o755)
-        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: dummyBridge, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: dummyCLI, permissions: 0o755)
 
         let pluginDir = try AntigravityIntegration.installOrRepair(
             dataDirectoryURL: paths.dataDirectoryURL,
             configDirectoryURL: paths.antigravityConfigDirectoryURL,
-            sourceMCPBridgeURL: dummyBridge,
+            sourceCLIBinaryURL: dummyCLI,
             sourceSidecarBinaryURL: dummySidecar,
             language: .zhHans
         )

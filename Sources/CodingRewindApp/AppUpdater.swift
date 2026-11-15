@@ -452,8 +452,8 @@ public final class AppUpdater {
         }
 
         let helpersDir = sameVolumeStagedApp.appendingPathComponent("Contents/Helpers", isDirectory: true)
-        guard Self.isAbsentOrRegularFile(at: helpersDir.appendingPathComponent("coding-rewind-sidecar")),
-              Self.isAbsentOrRegularFile(at: helpersDir.appendingPathComponent("memos-mcp-bridge.sh")) else {
+        guard Self.isAbsentOrRegularExecutableFile(at: helpersDir.appendingPathComponent("coding-rewind-sidecar")),
+              Self.isAbsentOrRegularExecutableFile(at: helpersDir.appendingPathComponent("coding-rewind")) else {
             Self.cleanupDirectory(swapWorkDir)
             Self.cleanupDirectory(staged.stagingDirectoryURL)
             setFailure(.tamperedSignature)
@@ -469,7 +469,7 @@ public final class AppUpdater {
             _ = chmod(scriptURL.path, 0o700)
 
             let destSidecar = AntigravityIntegration.stableSidecarBinaryURL(in: paths.dataDirectoryURL)
-            let destBridge = AntigravityIntegration.stableMCPBridgeURL(in: paths.dataDirectoryURL)
+            let destCLI = AntigravityIntegration.stableCLIBinaryURL(in: paths.dataDirectoryURL)
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -480,7 +480,7 @@ public final class AppUpdater {
                 swapWorkDir.path,
                 staged.stagingDirectoryURL.path,
                 destSidecar.path,
-                destBridge.path,
+                destCLI.path,
                 relaunchExecutablePath
             ]
             process.standardInput = FileHandle.nullDevice
@@ -620,12 +620,14 @@ public final class AppUpdater {
         return (st.st_mode & S_IFMT) == S_IFDIR
     }
 
-    private static nonisolated func isAbsentOrRegularFile(at url: URL) -> Bool {
+    private static nonisolated func isAbsentOrRegularExecutableFile(at url: URL) -> Bool {
         var st = stat()
         if lstat(url.path, &st) != 0 {
             return errno == ENOENT
         }
-        return (st.st_mode & S_IFMT) == S_IFREG
+        let isRegular = (st.st_mode & S_IFMT) == S_IFREG
+        let isExecutable = (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0
+        return isRegular && isExecutable
     }
 
     private static nonisolated func cleanupDirectory(_ directoryURL: URL) {
@@ -700,7 +702,7 @@ public final class AppUpdater {
     SWAP_WORK_DIR="$3"
     STAGING_DIR="$4"
     DEST_SIDECAR="$5"
-    DEST_BRIDGE="$6"
+    DEST_CLI="$6"
     RELAUNCH_OVERRIDE="$7"
 
     STAGED_APP="$SWAP_WORK_DIR/staged.app"
@@ -718,7 +720,9 @@ public final class AppUpdater {
     refresh_helper() {
       src_file="$1"
       dest_file="$2"
-      if [ -n "$dest_file" ] && [ -e "$dest_file" ] && [ -f "$src_file" ] && [ ! -L "$src_file" ]; then
+      force_stage="${3:-0}"
+      if [ -n "$dest_file" ] && { [ -e "$dest_file" ] || [ "$force_stage" = "1" ]; } && [ -f "$src_file" ] && [ ! -L "$src_file" ]; then
+        /bin/mkdir -p "$(/usr/bin/dirname "$dest_file")"
         tmp_file="${dest_file}.tmp.$$"
         if /bin/cp "$src_file" "$tmp_file" && /bin/chmod 755 "$tmp_file"; then
           /bin/mv -f "$tmp_file" "$dest_file" || /bin/rm -f "$tmp_file"
@@ -753,8 +757,21 @@ public final class AppUpdater {
 
     if [ "$move_ok" -eq 1 ]; then
       /usr/bin/xattr -dr com.apple.quarantine "$INSTALLED_APP" 2>/dev/null || true
-      refresh_helper "$INSTALLED_APP/Contents/Helpers/coding-rewind-sidecar" "$DEST_SIDECAR"
-      refresh_helper "$INSTALLED_APP/Contents/Helpers/memos-mcp-bridge.sh" "$DEST_BRIDGE"
+      legacy_bridge=""
+      if [ -n "$DEST_CLI" ]; then
+        legacy_bridge="$(/usr/bin/dirname "$DEST_CLI")/memos-mcp-bridge.sh"
+      fi
+      stage_cli=0
+      if [ -n "$DEST_SIDECAR" ] && [ -e "$DEST_SIDECAR" ]; then
+        stage_cli=1
+      elif [ -n "$legacy_bridge" ] && [ -e "$legacy_bridge" ]; then
+        stage_cli=1
+      fi
+      refresh_helper "$INSTALLED_APP/Contents/Helpers/coding-rewind-sidecar" "$DEST_SIDECAR" 0
+      refresh_helper "$INSTALLED_APP/Contents/Helpers/coding-rewind" "$DEST_CLI" "$stage_cli"
+      if [ -n "$legacy_bridge" ]; then
+        /bin/rm -f "$legacy_bridge"
+      fi
       /bin/rm -rf "$SWAP_WORK_DIR" "$STAGING_DIR"
       relaunch_installed_app
       exit 0

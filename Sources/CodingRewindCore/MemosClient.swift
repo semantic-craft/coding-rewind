@@ -36,6 +36,38 @@ private struct ListMemosResponseDTO: Codable {
     let nextPageToken: String?
 }
 
+private struct CommentItemWireDTO: Codable {
+    let name: String
+    let content: String
+    let createTime: String?
+    let updateTime: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case content
+        case createTime
+        case updateTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+        self.content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
+        self.createTime = try container.decodeIfPresent(String.self, forKey: .createTime)
+        self.updateTime = try container.decodeIfPresent(String.self, forKey: .updateTime)
+    }
+
+    var memoDTO: MemoWireDTO {
+        MemoWireDTO(name: name, content: content, createTime: createTime, updateTime: updateTime)
+    }
+}
+
+private struct ListCommentsResponseDTO: Codable {
+    let memos: [CommentItemWireDTO]?
+    let comments: [CommentItemWireDTO]?
+    let nextPageToken: String?
+}
+
 private struct CreateMemoRequestDTO: Codable {
     let content: String
     let visibility: String
@@ -199,6 +231,169 @@ public struct MemosClient: Sendable {
         guard (200..<300).contains(status) else {
             throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
         }
+    }
+
+    public func listAllMemos(
+        baseURL: URL,
+        token: String,
+        pageSize: Int = 100
+    ) async throws -> [MemoWireDTO] {
+        let clampedPageSize = min(max(pageSize, 1), 500)
+        var pageToken: String?
+        var seenPageTokens: Set<String> = []
+        var allMemos: [MemoWireDTO] = []
+
+        repeat {
+            var queryItems = [URLQueryItem(name: "pageSize", value: String(clampedPageSize))]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            let listURL = try endpointURL(baseURL: baseURL, path: "/api/memos", queryItems: queryItems)
+            let (data, status) = try await performCheckedRequest(url: listURL, method: "GET", token: token, body: nil)
+            guard (200..<300).contains(status) else {
+                throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+            }
+            let decoded: ListMemosResponseDTO
+            do {
+                decoded = try JSONDecoder().decode(ListMemosResponseDTO.self, from: data)
+            } catch {
+                throw RewindError.invalidServerResponse
+            }
+            if let pageMemos = decoded.memos {
+                allMemos.append(contentsOf: pageMemos)
+            }
+            if let next = decoded.nextPageToken, !next.isEmpty {
+                guard seenPageTokens.insert(next).inserted else {
+                    throw RewindError.invalidServerResponse
+                }
+                pageToken = next
+            } else {
+                pageToken = nil
+            }
+        } while pageToken != nil
+
+        return allMemos
+    }
+
+    public func getMemo(
+        id: String,
+        baseURL: URL,
+        token: String
+    ) async throws -> MemoWireDTO {
+        let encodedID = try Self.encodedMemoPathComponent(from: id)
+        let getURL = try endpointURL(baseURL: baseURL, path: "/api/memos/\(encodedID)", queryItems: [])
+        let (data, status) = try await performCheckedRequest(url: getURL, method: "GET", token: token, body: nil)
+        guard (200..<300).contains(status) else {
+            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+        }
+        do {
+            return try JSONDecoder().decode(MemoWireDTO.self, from: data)
+        } catch {
+            throw RewindError.invalidServerResponse
+        }
+    }
+
+    public func listMemoComments(
+        id: String,
+        baseURL: URL,
+        token: String,
+        pageSize: Int = 100
+    ) async throws -> [MemoWireDTO] {
+        let encodedID = try Self.encodedMemoPathComponent(from: id)
+        let clampedPageSize = min(max(pageSize, 1), 500)
+        var pageToken: String?
+        var seenPageTokens: Set<String> = []
+        var allComments: [MemoWireDTO] = []
+
+        repeat {
+            var queryItems = [URLQueryItem(name: "pageSize", value: String(clampedPageSize))]
+            if let pageToken {
+                queryItems.append(URLQueryItem(name: "pageToken", value: pageToken))
+            }
+            let commentsURL = try endpointURL(
+                baseURL: baseURL,
+                path: "/api/memos/\(encodedID)/comments",
+                queryItems: queryItems
+            )
+            let (data, status) = try await performCheckedRequest(url: commentsURL, method: "GET", token: token, body: nil)
+            guard (200..<300).contains(status) else {
+                throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+            }
+            let decoded: ListCommentsResponseDTO
+            do {
+                decoded = try JSONDecoder().decode(ListCommentsResponseDTO.self, from: data)
+            } catch {
+                throw RewindError.invalidServerResponse
+            }
+            let items = decoded.memos ?? decoded.comments ?? []
+            allComments.append(contentsOf: items.map(\.memoDTO))
+            if let next = decoded.nextPageToken, !next.isEmpty {
+                guard seenPageTokens.insert(next).inserted else {
+                    throw RewindError.invalidServerResponse
+                }
+                pageToken = next
+            } else {
+                pageToken = nil
+            }
+        } while pageToken != nil
+
+        return allComments
+    }
+
+    @discardableResult
+    public func updateMemoContent(
+        id: String,
+        content: String,
+        baseURL: URL,
+        token: String
+    ) async throws -> MemoWireDTO? {
+        let encodedID = try Self.encodedMemoPathComponent(from: id)
+        let patchURL = try endpointURL(
+            baseURL: baseURL,
+            path: "/api/memos/\(encodedID)",
+            queryItems: [URLQueryItem(name: "updateMask", value: "content")]
+        )
+        let jsonEncoder = JSONEncoder()
+        jsonEncoder.outputFormatting = [.withoutEscapingSlashes]
+        let body = try jsonEncoder.encode(UpdateMemoRequestDTO(content: content))
+        let (data, status) = try await performCheckedRequest(url: patchURL, method: "PATCH", token: token, body: body)
+        guard (200..<300).contains(status) else {
+            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+        }
+        return try? JSONDecoder().decode(MemoWireDTO.self, from: data)
+    }
+
+    private func performCheckedRequest(
+        url: URL,
+        method: String,
+        token: String,
+        body: Data?
+    ) async throws -> (Data, Int) {
+        do {
+            return try await performRequest(url: url, method: method, token: token, body: body)
+        } catch let error as URLError {
+            throw RewindError.networkFailure(error.localizedDescription)
+        }
+    }
+
+    private static func encodedMemoPathComponent(from rawID: String) throws -> String {
+        let trimmed = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.hasPrefix("memos/") ? String(trimmed.dropFirst("memos/".count)) : trimmed
+        guard !normalized.isEmpty,
+              !normalized.contains("/"),
+              normalized != ".",
+              normalized != "..",
+              !normalized.contains(".."),
+              normalized.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else {
+            throw RewindError.invalidClipID(rawID)
+        }
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/")
+        guard let encoded = normalized.addingPercentEncoding(withAllowedCharacters: allowed),
+              !encoded.isEmpty else {
+            throw RewindError.invalidClipID(rawID)
+        }
+        return encoded
     }
 
     private static func parseServerMemoID(from resourceName: String) -> String? {

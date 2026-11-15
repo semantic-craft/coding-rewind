@@ -38,6 +38,24 @@ if ! echo "${CODESIGN_INFO}" | grep -q "Identifier=dev.codingrewind.app.qa"; the
     exit 1
 fi
 
+for helper_name in coding-rewind-sidecar coding-rewind; do
+    helper_path="${APP_BUNDLE}/Contents/Helpers/${helper_name}"
+    if [[ ! -x "${helper_path}" ]]; then
+        echo "FAIL: Missing executable helper at ${helper_path}" >&2
+        exit 1
+    fi
+    if [[ "$(/usr/bin/file -b "${helper_path}")" != Mach-O* ]]; then
+        echo "FAIL: Expected Mach-O helper at ${helper_path}" >&2
+        exit 1
+    fi
+    codesign --verify --strict "${helper_path}"
+done
+
+if [[ -e "${APP_BUNDLE}/Contents/Helpers/memos-mcp-bridge.sh" ]]; then
+    echo "FAIL: Retired memos-mcp-bridge.sh must not be bundled in Contents/Helpers" >&2
+    exit 1
+fi
+
 for locale_dir in zh-Hans.lproj en.lproj; do
     strings_file="${APP_BUNDLE}/Contents/Resources/${locale_dir}/InfoPlist.strings"
     if [[ ! -f "${strings_file}" ]]; then
@@ -75,6 +93,20 @@ done
     cd "${TEST_RELEASE_DIR}"
     /usr/bin/shasum -a 256 -c SHA256SUMS.txt >/dev/null
 )
+
+MACOS_ENTRIES="$(/usr/bin/unzip -Z1 "${MACOS_ARCHIVE}")"
+for expected_entry in \
+    "CodingRewind.app/Contents/Helpers/coding-rewind-sidecar" \
+    "CodingRewind.app/Contents/Helpers/coding-rewind"; do
+    if ! echo "${MACOS_ENTRIES}" | grep -Fxq "${expected_entry}"; then
+        echo "FAIL: macOS release archive is missing ${expected_entry}" >&2
+        exit 1
+    fi
+done
+if echo "${MACOS_ENTRIES}" | grep -Fq "memos-mcp-bridge.sh"; then
+    echo "FAIL: macOS release archive leaked retired memos-mcp-bridge.sh" >&2
+    exit 1
+fi
 
 CLIPPER_ENTRIES="$(/usr/bin/unzip -Z1 "${CLIPPER_ARCHIVE}")"
 if ! echo "${CLIPPER_ENTRIES}" | grep -Fxq "i18n.js"; then

@@ -10,12 +10,12 @@
 
 | 项目 | 仓库与许可证据 | 在本项目中的具体复用与适配 |
 | --- | --- | --- |
-| `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 零修改直接采用官方固定版本 `neosmemo/memos:26.11.0` 容器作为唯一后端事实源，使用其 `/api/memos`、评论接口、`internal/webhook/webhook.go` 的 Standard Webhooks HMAC-SHA256 签名约定以及进程内原生 `/mcp` Streamable HTTP 服务 |
+| `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 零修改直接采用官方固定版本 `neosmemo/memos:26.11.0` 容器作为唯一后端事实源，使用其 `/api/memos`、评论接口与 `internal/webhook/webhook.go` 的 Standard Webhooks HMAC-SHA256 签名约定 |
 | `p0deje/Maccy` | [p0deje/Maccy](https://github.com/p0deje/Maccy)，`MIT License`，Copyright Alex Rodionov | 在 `CodingRewindApp` 适配其 `FloatingPanel` 的 `.nonactivatingPanel` 非激活浮窗标志位、`.hudWindow` 毛玻璃视觉材质、键盘多选列表手感与剪贴板快照保护思路 |
 | `GaimsDevSoftware/linuxpop` | [GaimsDevSoftware/linuxpop](https://github.com/GaimsDevSoftware/linuxpop)，`MIT License`（2026-11-14 Asia/Shanghai 读取 `README.md` 与 `LICENSE`） | 在 `SelectionPopupController.swift` 借鉴其 PopClip 风格划词探测与执行两阶段分离思路，第一阶段仅在满足拖拽或双击手势阈值后以纯只读方式判定选区并展示非激活胶囊，第二阶段仅在用户点击胶囊或按下快捷键时执行实际捕获 |
 | `sindresorhus/KeyboardShortcuts` | [3.1.0 上游源码](https://github.com/sindresorhus/KeyboardShortcuts/tree/772133d9dbe800fdac0473226822994c5c162c58)，`MIT License`，Copyright Sindre Sorhus | `Vendor/KeyboardShortcuts/` 保留源码、测试、本地化资源、manifest 与原许可，提供 Recorder、Hyper、配置持久化、Carbon 注册与菜单跟踪。本地补丁提供真实注册状态、失败重试、可注入偏好域和复用菜单冲突查询；版本与补丁边界见该目录 README |
 | `tisfeng/SelectedTextKit` | [tisfeng/SelectedTextKit](https://github.com/tisfeng/SelectedTextKit)，`MIT License`，Copyright Tao Shi | 在 `MacOSSelection.swift` 采用其选区获取双阶段策略，先读焦点元素 `kAXSelectedTextAttribute`，为空时完整备份 `NSPasteboardItem` 全部类型数据与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 校验计数递增后在 `defer` 无条件还原剪贴板 |
-| `wxtsky/CodeIsland` | [wxtsky/CodeIsland](https://github.com/wxtsky/CodeIsland)，`MIT License`，Copyright wxtsky | 在 `AntigravityIntegration.swift` 借鉴将辅助二进制固定拷入 `~/Library/Application Support/CodingRewind/bin/` 避免 `.build/` 断链的安装模式。早期借鉴的 Hook 快照管线已由按选区读取官方 transcript 替代 |
+| `wxtsky/CodeIsland` | [wxtsky/CodeIsland](https://github.com/wxtsky/CodeIsland)，`MIT License`，Copyright wxtsky | 在 `AntigravityIntegration.swift` 借鉴将 `coding-rewind-sidecar` 与 `coding-rewind` 固定拷入 `~/Library/Application Support/CodingRewind/bin/` 避免 `.build/` 断链的安装模式。早期借鉴的 Hook 快照管线已由按选区读取官方 transcript 替代 |
 | `mem0ai/mem0-chrome-extension` | [mem0ai/mem0-chrome-extension](https://github.com/mem0ai/mem0-chrome-extension)，`MIT License` | 在 `extensions/web-clipper/` 适配其 Manifest V3 划选捕获、右键菜单加快捷键触发、后台 Service Worker 直连远端 REST 接口以及右上角 2.2 秒轻量非抢焦点提示条交互，彻底替代自定义 URL 协议唤醒 |
 | `revivalstack/ai-chat-exporter` | [revivalstack/ai-chat-exporter](https://github.com/revivalstack/ai-chat-exporter)，`MIT License` | 在 `extensions/web-clipper/extractors.mjs` 参考其跨 AI 聊天站点的消息轮次角色识别、会话标题清洗及代码块与列表 HTML 转 Markdown 规则 |
 | `pionxzh/chatgpt-exporter` | [pionxzh/chatgpt-exporter](https://github.com/pionxzh/chatgpt-exporter)，`MIT License` | 在 `extensions/web-clipper/extractors.mjs` 参考其针对聊天 DOM 选区与围栏代码块语言类名的稳健清洗转换策略，提取选中内容与前序 4 轮问答脉络 |
@@ -46,6 +46,7 @@
 | `webclipper/web-clipper` | [webclipper/web-clipper](https://github.com/webclipper/web-clipper)，`NOASSERTION` | GitHub 许可识别为 `NOASSERTION`，授权边界不符合标准 `MIT` 要求，严格排除代码复用 |
 | `hcfyapp/crx-selection-translate` | [hcfyapp/crx-selection-translate](https://github.com/hcfyapp/crx-selection-translate)，无 `LICENSE` | 划词翻译扩展缺失开源许可文件，按默认保留全部权利原则排除一切代码参考与复用 |
 | `deathau/markdownload` | [deathau/markdownload](https://github.com/deathau/markdownload)，`Apache-2.0` | 网页转 Markdown 扩展采用 `Apache-2.0` 协议；本项目代码级裁剪限定在标准 `MIT` 上游（`kepano/defuddle` 与 `mixmark-io/turndown`），保持零代码复用 |
+| `modelcontextprotocol/swift-sdk` | [modelcontextprotocol/swift-sdk](https://github.com/modelcontextprotocol/swift-sdk)，`Apache-2.0` | 官方 Swift MCP SDK 已由早期宽松许可转为 `Apache-2.0`；为保持全仓纯 `MIT` 零协议混用与零第三方外部包依赖，严格排除引入或复制其源码，改由 `CodingRewindCLI` 基于 `Foundation` 自研 JSON-RPC 2.0 `stdio` 服务端 |
 
 ## 目标宿主与早期机制对照来源
 
@@ -87,3 +88,13 @@
 ## 2026-11-13 桌面入口与设置复核
 
 核读 Maccy 提交 `f0b571e32e4031d7b91ba811f50d0f33e8e5548b` 的 [AppDelegate](https://github.com/p0deje/Maccy/blob/f0b571e32e4031d7b91ba811f50d0f33e8e5548b/Maccy/AppDelegate.swift)、[GeneralSettingsPane](https://github.com/p0deje/Maccy/blob/f0b571e32e4031d7b91ba811f50d0f33e8e5548b/Maccy/Settings/GeneralSettingsPane.swift) 与 [AppearanceSettingsPane](https://github.com/p0deje/Maccy/blob/f0b571e32e4031d7b91ba811f50d0f33e8e5548b/Maccy/Settings/AppearanceSettingsPane.swift)，再次读取根 LICENSE 确认为 MIT。此次沿用状态栏对象集中持有、偏好集中保存、原生设置分组的做法，不引入其 Defaults 或 Settings 依赖，不复制源码。具体验收规则见 [代码质量与验收标准](code-quality.md)。
+
+## 2026-11-15 单二进制 CLI 与内嵌领域 MCP 架构模式对照
+
+核查下列三个标准 `MIT` 开源项目的架构组织（均已核实仓库根目录 `LICENSE` 为标准 `MIT`，仅作架构模式参考，**零第三方代码复制**）：
+
+| 项目 | 仓库与核实许可 | 架构模式参考（零代码复制） |
+| --- | --- | --- |
+| `tobi/qmd` | [tobi/qmd](https://github.com/tobi/qmd)，`MIT License` | 参考同一单二进制同时承载终端 CLI 子命令（`search`、`get` 等）与 `mcp` `stdio` 子命令、收敛为少量高信噪比领域工具而非透传底层通用 CRUD 接口的分层设计 |
+| `openclaw/gogcli` | [openclaw/gogcli](https://github.com/openclaw/gogcli)，`MIT License` | 参考面向 Coding Agent 的稳定 `--json` 机器可读输出、标准错误与非零退出码分离及最小可组合动词集设计 |
+| `steipete/Peekaboo` | [steipete/Peekaboo](https://github.com/steipete/Peekaboo)，`MIT License` | 参考 macOS 原生应用与同名 CLI / `mcp` 工具共享底层 Swift Core 模块并随应用包统一分发签名的双面入口组织 |

@@ -413,13 +413,15 @@ extension AppShortcutsTests {
             at: installedURL,
             version: "0.3.2",
             bundleID: AppBundleID.selfQAApp,
-            sidecarMarker: "sidecar-v0.3.2"
+            sidecarMarker: "sidecar-v0.3.2",
+            cliMarker: "cli-v0.3.2"
         )
         try buildSignedDummyApp(
             at: newBuildURL,
             version: "0.3.3",
             bundleID: AppBundleID.selfQAApp,
-            sidecarMarker: "sidecar-v0.3.3"
+            sidecarMarker: "sidecar-v0.3.3",
+            cliMarker: "cli-v0.3.3"
         )
 
         let archiveURL = root.appendingPathComponent("Artifacts/CodingRewind-v0.3.3-macos-arm64.zip")
@@ -432,7 +434,10 @@ extension AppShortcutsTests {
             antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true)
         )
         let installedSidecarURL = AntigravityIntegration.stableSidecarBinaryURL(in: paths.dataDirectoryURL)
+        let installedCLIURL = AntigravityIntegration.stableCLIBinaryURL(in: paths.dataDirectoryURL)
+        let staleBridgeURL = paths.dataDirectoryURL.appendingPathComponent("bin/memos-mcp-bridge.sh")
         try AtomicFile.writeUTF8("#!/bin/sh\n# sidecar-v0.3.2\nexit 0\n", to: installedSidecarURL, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\n# legacy-bridge\nexit 0\n", to: staleBridgeURL, permissions: 0o755)
 
         let relaunchArgsFile = root.appendingPathComponent("relaunch-args.txt")
         let fakeOpenScript = root.appendingPathComponent("fake-open.sh")
@@ -490,6 +495,10 @@ extension AppShortcutsTests {
 
         let refreshedSidecar = try String(contentsOf: installedSidecarURL, encoding: .utf8)
         #expect(refreshedSidecar.contains("sidecar-v0.3.3"))
+        let refreshedCLI = try String(contentsOf: installedCLIURL, encoding: .utf8)
+        #expect(refreshedCLI.contains("cli-v0.3.3"))
+        #expect(FileManager.default.isExecutableFile(atPath: installedCLIURL.path))
+        #expect(!FileManager.default.fileExists(atPath: staleBridgeURL.path))
 
         let recordedArgs = try String(contentsOf: relaunchArgsFile, encoding: .utf8)
         #expect(recordedArgs == "\(installedURL.path)/Contents/MacOS/CodingRewindApp\n--restarted-after-update\n")
@@ -1087,7 +1096,8 @@ extension AppShortcutsTests {
         at bundleURL: URL,
         version: String,
         bundleID: String,
-        sidecarMarker: String = "sidecar-fixture"
+        sidecarMarker: String = "sidecar-fixture",
+        cliMarker: String = "cli-fixture"
     ) throws {
         let fm = FileManager.default
         let candidates = Bundle.allBundles.map {
@@ -1107,6 +1117,8 @@ extension AppShortcutsTests {
 
         let sidecarURL = helpersURL.appendingPathComponent("coding-rewind-sidecar", isDirectory: false)
         try AtomicFile.writeUTF8("#!/bin/sh\n# \(sidecarMarker)\nexit 0\n", to: sidecarURL, permissions: 0o755)
+        let cliURL = helpersURL.appendingPathComponent("coding-rewind", isDirectory: false)
+        try AtomicFile.writeUTF8("#!/bin/sh\n# \(cliMarker)\nexit 0\n", to: cliURL, permissions: 0o755)
 
         let infoPlist: [String: Any] = [
             "CFBundleIdentifier": bundleID,
@@ -1121,6 +1133,7 @@ extension AppShortcutsTests {
         try plistData.write(to: contentsURL.appendingPathComponent("Info.plist", isDirectory: false))
 
         try runChecked("/usr/bin/codesign", arguments: ["--force", "--sign", "-", sidecarURL.path])
+        try runChecked("/usr/bin/codesign", arguments: ["--force", "--sign", "-", cliURL.path])
         try runChecked("/usr/bin/codesign", arguments: ["--force", "--sign", "-", bundleURL.path])
         AppUpdater.unregisterBundleFromLaunchServices(bundleURL)
     }
