@@ -14,7 +14,6 @@
       --border: #dfe3e8;
       --accent: #0068d9;
       --accent-hover: #005fc7;
-      --switch-bg: #e9ecf0;
       --ok: #16713b;
       --error: #b52632;
     }
@@ -27,7 +26,6 @@
         --border: #41454c;
         --accent: #0a84ff;
         --accent-hover: #409cff;
-        --switch-bg: #41454c;
         --ok: #7ddc9d;
         --error: #ff9199;
       }
@@ -78,13 +76,17 @@
     .fields { display: flex; flex-direction: column; gap: 18px; }
     .field {
       display: grid;
-      grid-template-columns: 98px minmax(0, 1fr);
+      grid-template-columns: 112px minmax(0, 1fr);
       gap: 14px;
       align-items: start;
     }
     .field > label { padding-top: 7px; }
     .input-stack { min-width: 0; }
-    input[type="url"], input[type="password"], select {
+    input[type="url"],
+    input[type="password"],
+    select,
+    textarea {
+      width: 100%;
       min-height: 34px;
       padding: 6px 10px;
       border: 1px solid var(--border);
@@ -93,15 +95,20 @@
       color: var(--text);
       font: inherit;
     }
-    input[type="url"], input[type="password"] {
-      width: 100%;
-    }
     select {
       min-height: 32px;
       padding: 4px 10px;
       cursor: pointer;
     }
-    input::placeholder { color: var(--muted); opacity: 1; }
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+      line-height: 1.45;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12.5px;
+    }
+    input::placeholder,
+    textarea::placeholder { color: var(--muted); opacity: 1; }
     .help { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
     .connection-actions {
       display: flex;
@@ -123,46 +130,13 @@
     button:active { filter: brightness(0.96); }
     .primary { border-color: var(--accent); background: var(--accent); color: #ffffff; }
     .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-    input:focus-visible, select:focus-visible, button:focus-visible {
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    button:focus-visible {
       outline: 3px solid var(--accent);
       outline-offset: 3px;
     }
-    .preference {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 18px;
-      min-height: 38px;
-      cursor: pointer;
-    }
-    .preference + .preference {
-      margin-top: 8px;
-    }
-    .switch {
-      appearance: none;
-      position: relative;
-      width: 32px;
-      height: 20px;
-      flex: 0 0 32px;
-      margin: 0;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: var(--switch-bg);
-      cursor: pointer;
-    }
-    .switch::after {
-      content: "";
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      background: #ffffff;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
-    }
-    .switch:checked { background: var(--accent); border-color: var(--accent); }
-    .switch:checked::after { left: 14px; }
     .footer {
       display: flex;
       flex-wrap: wrap;
@@ -192,8 +166,10 @@
     }
     @media (pointer: coarse) {
       button { min-height: 44px; }
-      .preference { min-height: 48px; }
-      input[type="url"], input[type="password"], select { min-height: 44px; font-size: 16px; }
+      input[type="url"],
+      input[type="password"],
+      select,
+      textarea { min-height: 44px; font-size: 16px; }
     }
   </style>
 </head>
@@ -216,7 +192,7 @@
           <div class="fields">
             <div class="field">
               <label for="memos-url" data-i18n="memosUrlLabel">服务地址</label>
-              <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" data-i18n-placeholder="memosUrlPlaceholder" required>
+              <input id="memos-url" type="url" autocomplete="url" placeholder="输入 Memos 服务地址" data-i18n-placeholder="memosUrlPlaceholder">
             </div>
             <div class="field">
               <label for="memos-token" data-i18n="memosTokenLabel">访问令牌</label>
@@ -227,25 +203,42 @@
             </div>
           </div>
           <div class="connection-actions">
-            <button id="test-btn" type="button">测试连接</button>
+            <button id="test-btn" type="button" data-i18n="testConnectionBtn">测试连接</button>
           </div>
         </section>
 
         <section aria-labelledby="preferences-heading">
           <h2 id="preferences-heading" data-i18n="preferencesHeading">保存偏好</h2>
-          <div class="preference">
-            <label for="ui-language" data-i18n="uiLanguageLabel">界面语言</label>
-            <select id="ui-language">
-              <option value="auto" data-i18n="uiLanguageAuto">跟随浏览器 / Follow Browser</option>
-              <option value="zh-CN">简体中文</option>
-              <option value="en">English</option>
-            </select>
+          <div class="fields">
+            <div class="field">
+              <label for="ui-language" data-i18n="uiLanguageLabel">界面语言</label>
+              <div class="input-stack">
+                <select id="ui-language">
+                  <option value="auto" data-i18n="uiLanguageAuto">跟随浏览器 / Follow Browser</option>
+                  <option value="zh-CN">简体中文</option>
+                  <option value="en">English</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="pill-scope" data-i18n="pillScopeLabel">暂存胶囊</label>
+              <div class="input-stack">
+                <select id="pill-scope" aria-describedby="selection-help">
+                  <option value="all" data-i18n="pillScopeOptionAll">所有网页选中文本时显示</option>
+                  <option value="chat" data-i18n="pillScopeOptionChat">仅在 ChatGPT / Claude / Gemini 显示</option>
+                  <option value="off" data-i18n="pillScopeOptionOff">关闭（仅使用快捷键与右键菜单）</option>
+                </select>
+                <p class="help" id="selection-help" data-i18n="pillScopeHelp">在选区附近弹出 26px 暂存胶囊；⌃⌥⇧⌘S（Hyper+S）、Alt+Shift+S 与右键菜单在任意网页始终可用。</p>
+              </div>
+            </div>
+            <div class="field">
+              <label for="excluded-domains" data-i18n="excludedDomainsLabel">排除域名</label>
+              <div class="input-stack">
+                <textarea id="excluded-domains" rows="4" placeholder="docs.google.com&#10;figma.com&#10;canva.com" data-i18n-placeholder="excludedDomainsPlaceholder" aria-describedby="excluded-help"></textarea>
+                <p class="help" id="excluded-help" data-i18n="excludedDomainsHelp">每行一个域名，这些网站及其子域名不自动弹出划词胶囊，快捷键与右键菜单仍可使用。</p>
+              </div>
+            </div>
           </div>
-          <label class="preference" for="show-pill">
-            <span data-i18n="showPillLabel">选中文本时显示暂存胶囊</span>
-            <input id="show-pill" class="switch" type="checkbox" role="switch" aria-describedby="selection-help" checked>
-          </label>
-          <p class="help" id="selection-help" data-i18n="selectionHelp">在 ChatGPT、Claude、Gemini 中，也可使用右键菜单、⌃⌥⇧⌘S（Hyper+S）或 Alt+Shift+S 暂存。</p>
         </section>
       </div>
 

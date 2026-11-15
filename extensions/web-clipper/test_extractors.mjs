@@ -29,16 +29,23 @@ import {
   generateClipId,
   normalizeMemosBaseUrl,
   buildAuthHeaders,
+  hasClipContext,
   buildMemosWirePayloads,
   parseServerMemoId,
   saveClipWithOutbox,
-  flushOutbox,
-  hasClipContext
+  flushOutbox
 } from "./memos_payload.mjs";
 
-const defaultToasts = getToastMessages("auto");
+import {
+  DEFAULT_EXCLUDED_DOMAINS,
+  normalizeDomainEntry,
+  parseExcludedDomains,
+  resolvePillScope,
+  testMemosConnection,
+  initOptionsPage
+} from "./options.js";
 
-import { initOptionsPage, probeMemosConnection, testMemosConnection } from "./options.js";
+import { injectContentScriptIntoOpenTabs } from "./background.js";
 
 function createMemoryOutboxStorage(initial = []) {
   let state = structuredClone(initial);
@@ -334,13 +341,13 @@ test("background save response does not claim an offline clip is queued after st
   assert.deepEqual(persistedOutbox, []);
   assert.equal(response.status, "error", "a failed storage write must not be reported as queued");
   assert.equal(response.queued, false);
-  assert.match(response.toast, /保存失败|Save failed/);
+  assert.match(response.toast, /(?:保存失败|Save failed)/);
 
   rejectWrites = false;
   const queued = await new Promise((resolve) => onMessage({ type: "REWIND_SAVE_CLIP", clip }, {}, resolve));
   assert.equal(queued.status, "queued");
   assert.equal(queued.queued, true);
-  assert.equal(queued.toast, defaultToasts.QUEUED);
+  assert.equal(queued.toast, getToastMessages("auto").QUEUED);
   assert.equal(persistedOutbox.length, 1);
   assert.equal(persistedOutbox[0].clipId, clip.clipId);
 
@@ -690,14 +697,11 @@ test("buildMemosWirePayloads matches exact canonical wire contract with and with
       sessionTitle: "",
       prompt: "",
       recentTurns: "",
-      sourceUrl: "https://chatgpt.com/c/untitled"
+      sourceUrl: "https://example.org/notes"
     },
     { clipId: "rw-1794366666123-plain002", createdAt: "2026-11-11T03:16:00Z", locale: "en" }
   );
-  assert.match(
-    withoutCtxEn.memoBody.content,
-    /^#rewind\/pending #source\/chatgpt\n\n> \*\*Source:\*\* \[Untitled Session\]\(https:\/\/chatgpt\.com\/c\/untitled\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/
-  );
+  assert.match(withoutCtxEn.memoBody.content, /^#rewind\/pending #source\/chatgpt\n\n> \*\*Source:\*\* \[Untitled Session\]\(https:\/\/example\.org\/notes\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/);
   assert.equal(parseServerMemoId({ name: "memos/abc999" }), "abc999");
 });
 
@@ -713,6 +717,1036 @@ test("buildMemosWirePayloads validates selected text without trimming its conten
     () => buildMemosWirePayloads({ selectedMarkdown: " \n\t " }),
     /selectedMarkdown must not be empty/
   );
+});
+
+test("saveClipWithOutbox queues malformed successful responses for same-ID replay", async (t) => {
+  const malformedResponseCases = [
+    {
+      name: "invalid JSON",
+      response: {
+        ok: true,
+        status: 201,
+        async json() {
+          throw new SyntaxError("invalid JSON response");
+        }
+      }
+    },
+    {
+      name: "missing memo name",
+      response: { ok: true, status: 201, async json() { return {}; } }
+    }
+  ];
+
+  for (let i = 0; i < malformedResponseCases.length; i += 1) {
+    const malformedCase = malformedResponseCases[i];
+    await t.test(malformedCase.name, async () => {
+      const storage = createMemoryOutboxStorage();
+      const selectedMarkdown = `\n  preserved ${malformedCase.name}  \n`;
+      const clip = {
+        selectedMarkdown,
+        sourcePlatform: "chatgpt",
+        sessionTitle: "Retry malformed response",
+        prompt: "How should a malformed success response retry?",
+        recentTurns: "User: How should a malformed success response retry?\n\nAssistant: Reuse the same memo ID.",
+        sourceUrl: "https://chatgpt.com/c/retry-malformed"
+      };
+      const calls = [];
+      let memoPostCount = 0;
+      const fetchImpl = async (requestUrl, init) => {
+        const url = new URL(requestUrl);
+        const body = init.body ? JSON.parse(init.body) : null;
+        calls.push({ method: init.method, pathname: url.pathname, memoId: url.searchParams.get("memoId"), body });
+
+        if (init.method === "POST" && url.pathname === "/api/memos" && url.searchParams.has("memoId")) {
+          memoPostCount += 1;
+          return memoPostCount === 1
+            ? malformedCase.response
+            : { ok: false, status: 409, async json() { return {}; } };
+        }
+        if (init.method === "GET" && url.pathname.startsWith("/api/memos/")) {
+          return { ok: true, status: 200, async json() { return { name: "memos/server-recovered" }; } };
+        }
+        if (init.method === "POST" && url.pathname.endsWith("/comments")) {
+          return { ok: true, status: 201, async json() { return { name: "memos/server-recovered/comments/1" }; } };
+        }
+        throw new Error(`Unexpected request ${init.method} ${url.pathname}`);
+      };
+
+      const saved = await saveClipWithOutbox({
+        clip,
+        baseUrl: "https://memos.internal.test",
+        token: "test-token",
+        storage,
+        fetchImpl,
+        nowMs: 1794366900000 + i,
+        randomFn: () => 0.4
+      });
+
+      assert.equal(saved.status, "queued");
+      assert.equal(saved.queued, true);
+      assert.equal(storage.peek().length, 1);
+      assert.equal(storage.peek()[0].clipId, saved.clipId);
+      assert.ok(storage.peek()[0].memoBody.content.endsWith(selectedMarkdown));
+
+      const flushed = await flushOutbox({
+        baseUrl: "https://memos.internal.test",
+        token: "test-token",
+        storage,
+        fetchImpl
+      });
+
+      assert.deepEqual(flushed, { flushed: 1, remaining: 0 });
+      assert.equal(storage.peek().length, 0);
+      const memoPosts = calls.filter((call) => call.method === "POST" && call.pathname === "/api/memos");
+      assert.equal(memoPosts.length, 2);
+      assert.deepEqual(memoPosts.map((call) => call.memoId), [saved.clipId, saved.clipId]);
+      assert.equal(calls.filter((call) => call.method === "GET").length, 1);
+      const commentPosts = calls.filter((call) => call.pathname.endsWith("/comments"));
+      assert.equal(commentPosts.length, 1);
+      assert.equal(commentPosts[0].pathname, "/api/memos/server-recovered/comments");
+    });
+  }
+});
+
+test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-item cap, and idempotent retry", async () => {
+  const storage = createMemoryOutboxStorage();
+  const sampleClip = {
+    selectedMarkdown: "Idempotent capture test",
+    sourcePlatform: "claude",
+    sessionTitle: "Retry Session",
+    prompt: "Test retry?",
+    recentTurns: "User: Test retry?\n\nAssistant: Idempotent capture test",
+    sourceUrl: "https://claude.ai/chat/retry-1"
+  };
+
+  const unconfiguredRes = await saveClipWithOutbox({
+    clip: sampleClip,
+    baseUrl: "",
+    token: "",
+    storage,
+    nowMs: 1794366666001,
+    randomFn: () => 0.1
+  });
+  assert.equal(unconfiguredRes.status, "unconfigured");
+  assert.equal(unconfiguredRes.toast, getToastMessages("auto").UNCONFIGURED);
+  assert.equal(storage.peek().length, 1);
+  const firstClipId = unconfiguredRes.clipId;
+
+  const calls = [];
+  let failNetwork = true;
+  const mockFetch = async (reqUrl, init) => {
+    calls.push({ url: reqUrl, method: init.method, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
+    if (failNetwork) {
+      return { ok: false, status: 503, async json() { return {}; } };
+    }
+    if (reqUrl.includes("/comments?")) {
+      return { ok: true, status: 200, async json() { return { name: "memos/srv-1/comments/1" }; } };
+    }
+    const u = new URL(reqUrl);
+    const memoId = u.searchParams.get("memoId");
+    return { ok: true, status: 200, async json() { return { name: `memos/srv-${memoId}` }; } };
+  };
+
+  const offlineRes = await saveClipWithOutbox({
+    clip: { ...sampleClip, selectedMarkdown: "Second clip while 503" },
+    baseUrl: "https://memos.internal.test/",
+    token: "test-token",
+    storage,
+    fetchImpl: mockFetch,
+    nowMs: 1794366666002,
+    randomFn: () => 0.2
+  });
+
+  assert.equal(offlineRes.status, "queued");
+  assert.equal(offlineRes.toast, getToastMessages("auto").QUEUED);
+  assert.equal(storage.peek().length, 2);
+
+  failNetwork = false;
+  const flushRes = await flushOutbox({
+    baseUrl: "https://memos.internal.test/api/v1",
+    token: "test-token",
+    storage,
+    fetchImpl: mockFetch
+  });
+
+  assert.equal(flushRes.flushed, 2);
+  assert.equal(flushRes.remaining, 0);
+  assert.equal(storage.peek().length, 0);
+
+  const retriedFirstMemoCall = calls.filter(
+    (c) => c.url === `https://memos.internal.test/api/memos?memoId=${encodeURIComponent(firstClipId)}`
+  );
+  assert.equal(retriedFirstMemoCall.length, 2);
+  assert.equal(retriedFirstMemoCall[1].headers.Authorization, "Bearer test-token");
+
+  const retriedFirstCommentCall = calls.find(
+    (c) => c.url === `https://memos.internal.test/api/memos/srv-${firstClipId}/comments?commentId=${encodeURIComponent(`${firstClipId}-ctx`)}`
+  );
+  assert.ok(retriedFirstCommentCall, "Expected comment POST with serverId parsed from resp.name");
+
+  const capStorage = createMemoryOutboxStorage();
+  for (let i = 0; i < 55; i += 1) {
+    await saveClipWithOutbox({
+      clip: { ...sampleClip, selectedMarkdown: `Item ${i}` },
+      baseUrl: "",
+      token: "",
+      storage: capStorage,
+      nowMs: 1794366700000 + i,
+      randomFn: () => (i % 30) / 36
+    });
+  }
+  assert.equal(capStorage.peek().length, MAX_OUTBOX_ITEMS);
+  assert.match(capStorage.peek()[0].memoBody.content, /Item 5$/);
+  assert.match(capStorage.peek()[49].memoBody.content, /Item 54$/);
+
+  const partialStorage = createMemoryOutboxStorage();
+  let commentShouldFail = true;
+  const partialCalls = [];
+  const partialFetch = async (reqUrl, init) => {
+    partialCalls.push({ url: reqUrl, method: init.method });
+    if (reqUrl.includes("/comments?")) {
+      if (commentShouldFail) {
+        return { ok: false, status: 502, async json() { return {}; } };
+      }
+      return { ok: true, status: 200, async json() { return { name: "memos/srv-partial/comments/1" }; } };
+    }
+    return { ok: true, status: 200, async json() { return { name: "memos/srv-partial" }; } };
+  };
+
+  const partialSave = await saveClipWithOutbox({
+    clip: sampleClip,
+    baseUrl: "https://memos.internal.test",
+    token: "test-token",
+    storage: partialStorage,
+    fetchImpl: partialFetch,
+    nowMs: 1794366800000,
+    randomFn: () => 0.3
+  });
+  assert.equal(partialSave.status, "queued");
+  assert.equal(partialStorage.peek()[0].serverId, "srv-partial");
+
+  commentShouldFail = false;
+  const partialFlush = await flushOutbox({
+    baseUrl: "https://memos.internal.test",
+    token: "test-token",
+    storage: partialStorage,
+    fetchImpl: partialFetch
+  });
+  assert.equal(partialFlush.flushed, 1);
+  assert.equal(partialFlush.remaining, 0);
+});
+
+test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.json is valid MV3", async () => {
+  let seenUrl = "";
+  let seenHeaders = null;
+  const methods = [];
+  const conn = await testMemosConnection({
+    baseUrl: "https://memos.internal.test/",
+    token: "tok-abc",
+    fetchImpl: async (url, init) => {
+      seenUrl = url;
+      seenHeaders = init.headers;
+      methods.push(init.method);
+      return { ok: true, status: 200, async json() { return { memos: [] }; } };
+    }
+  });
+  assert.equal(conn.ok, true);
+  assert.equal(conn.message, "连接成功，可读取片段。尚未验证保存。");
+  assert.equal(seenUrl, "https://memos.internal.test/api/memos?pageSize=1");
+  assert.deepEqual(seenHeaders, { Authorization: "Bearer tok-abc" });
+  assert.deepEqual(buildAuthHeaders("tok-abc"), {
+    "Content-Type": "application/json",
+    Authorization: "Bearer tok-abc"
+  });
+  assert.deepEqual(methods, ["GET"]);
+
+  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/memos/"), "https://memos.internal.test");
+  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/v1/memos/"), "https://memos.internal.test");
+  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/"), "https://memos.internal.test");
+
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const optionsHtml = fs.readFileSync(path.join(__dirname, "options.html"), "utf8");
+  assert.match(optionsHtml, /<button id="test-btn" type="button"[^>]*>测试连接<\/button>/);
+  assert.match(optionsHtml, /<select id="pill-scope"/);
+  assert.match(optionsHtml, /<textarea id="excluded-domains"/);
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"));
+  assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.version, "0.3.2.0");
+  assert.equal(manifest.version_name, "0.3.2");
+  for (const perm of ["storage", "contextMenus", "activeTab", "scripting"]) {
+    assert.ok(manifest.permissions.includes(perm), `missing permission ${perm}`);
+  }
+  assert.deepEqual(manifest.host_permissions, ["https://*/*", "http://*/*"]);
+  assert.deepEqual(manifest.content_scripts[0].matches, ["https://*/*", "http://*/*"]);
+  assert.deepEqual(manifest.web_accessible_resources[0].resources, ["extractors.mjs"]);
+  for (const matchPattern of ["https://*/*", "http://*/*", "file:///*"]) {
+    assert.ok(
+      manifest.web_accessible_resources[0].matches.includes(matchPattern),
+      `missing web_accessible_resources match ${matchPattern}`
+    );
+  }
+  assert.equal(manifest.web_accessible_resources[0].use_dynamic_url, true);
+});
+
+test("extension and toolbar icons provide each declared PNG size", () => {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest.icons), ["16", "32", "48", "128"]);
+  assert.deepEqual(manifest.action.default_icon, manifest.icons);
+
+  for (const [size, resource] of Object.entries(manifest.icons)) {
+    const png = fs.readFileSync(path.join(extensionDir, resource));
+    assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    assert.equal(png.toString("ascii", 12, 16), "IHDR");
+    assert.equal(png.readUInt32BE(16), Number(size), `${resource} width`);
+    assert.equal(png.readUInt32BE(20), Number(size), `${resource} height`);
+  }
+});
+
+test("captured range keeps its excerpt and context after the live selection moves", () => {
+  const doc = parseHtmlDocument(`
+    <div data-message-author-role="user">Question A</div>
+    <div data-message-author-role="assistant" id="a">Answer A</div>
+    <div data-message-author-role="user">Question B</div>
+    <div data-message-author-role="assistant" id="b">Answer B</div>
+  `, { url: "https://chatgpt.com/c/selection-race" });
+  const selectionRange = doc.createRangeFromNode(doc.querySelector("#a"));
+  const changedRange = doc.createRangeFromNode(doc.querySelector("#b"));
+  const selection = {
+    rangeCount: 1,
+    isCollapsed: false,
+    getRangeAt() { return changedRange; },
+    toString() { return changedRange.toString(); }
+  };
+  const clip = extractClipContext({ doc, selectionRange, selectedText: "Answer A", selection });
+  assert.equal(clip.selectedMarkdown, "Answer A");
+  assert.equal(clip.prompt, "Question A");
+  assert.equal(clip.recentTurns, "User: Question A\n\nAssistant: Answer A");
+});
+
+test("content.js Hyper+S shortcut accepts only non-repeating Hyper+S and rejects Alt+Shift+S, partial modifiers, and other keys", async () => {
+  const harness = createContentScriptHarness();
+
+  const rejectedEvents = [
+    { key: "S", code: "KeyS", ctrlKey: false, altKey: true, shiftKey: true, metaKey: false, repeat: false },
+    { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: false, metaKey: true, repeat: false },
+    { key: "s", code: "KeyS", ctrlKey: false, altKey: false, shiftKey: false, metaKey: true, repeat: false },
+    { key: "r", code: "KeyR", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, repeat: false },
+    { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, repeat: true }
+  ];
+
+  for (const evt of rejectedEvents) {
+    const res = harness.document.dispatch("keydown", evt);
+    assert.equal(res.defaultPrevented, false);
+  }
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 0);
+
+  const accepted = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(accepted.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].type, "REWIND_SAVE_CLIP");
+});
+
+function createContentScriptHarness({
+  extractorsUrl,
+  sendMessageImpl,
+  url = "https://chatgpt.com/c/capsule-vm",
+  html = `<html><head><title>Capsule VM Test - ChatGPT</title></head><body>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Why did Alt+Shift+S duplicate?</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p id="picked">Keep <code>Hyper+S</code> in content script only.</p></div></div>
+    </body></html>`,
+  pickedSelector = "#picked",
+  clientRects = null,
+  storageData = { showSelectionPill: true },
+  storageGetDelayMs = 0,
+  preExistingOrphanHosts = 0,
+  uiLanguage = "auto",
+  browserLanguage = undefined
+} = {}) {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const i18nScriptPath = path.join(extensionDir, "i18n.js");
+  const i18nCode = fs.readFileSync(i18nScriptPath, "utf8");
+  const contentScriptPath = path.join(extensionDir, "content.js");
+  const contentCode = fs.readFileSync(contentScriptPath, "utf8");
+  const resolvedExtractorsUrl = extractorsUrl || pathToFileURL(path.join(extensionDir, "extractors.mjs")).href;
+
+  let nowMs = 1_000_000;
+  let nextTimerId = 1;
+  const timers = new Map();
+
+  function scheduleTimeout(cb, ms = 0) {
+    const id = nextTimerId++;
+    timers.set(id, { cb, dueAt: nowMs + Number(ms) });
+    return id;
+  }
+
+  function cancelTimeout(id) {
+    timers.delete(id);
+  }
+
+  function advanceTime(deltaMs) {
+    nowMs += deltaMs;
+    while (true) {
+      let earliestId = null;
+      let earliestDue = Infinity;
+      for (const [id, entry] of timers.entries()) {
+        if (entry.dueAt <= nowMs && entry.dueAt < earliestDue) {
+          earliestDue = entry.dueAt;
+          earliestId = id;
+        }
+      }
+      if (earliestId === null) break;
+      const entry = timers.get(earliestId);
+      timers.delete(earliestId);
+      entry.cb();
+    }
+  }
+
+  function makeEventTarget() {
+    const map = new Map();
+    return {
+      addEventListener(type, fn, options) {
+        const capture = typeof options === "boolean" ? options : Boolean(options && options.capture);
+        if (!map.has(type)) map.set(type, []);
+        map.get(type).push({ fn, capture });
+      },
+      removeEventListener(type, fn, options) {
+        const list = map.get(type);
+        if (!list) return;
+        const capture = typeof options === "boolean" ? options : Boolean(options && options.capture);
+        const idx = list.findIndex((e) => e.fn === fn && e.capture === capture);
+        if (idx >= 0) list.splice(idx, 1);
+      },
+      dispatch(type, rawEvent = {}) {
+        let defaultPrevented = false;
+        let propagationStopped = false;
+        const event = {
+          type,
+          ...rawEvent,
+          get defaultPrevented() {
+            return defaultPrevented;
+          },
+          preventDefault() {
+            defaultPrevented = true;
+          },
+          stopPropagation() {
+            propagationStopped = true;
+          },
+          composedPath() {
+            return rawEvent.path || [];
+          }
+        };
+        const entries = (map.get(type) || []).slice();
+        const ordered = [
+          ...entries.filter((e) => e.capture),
+          ...entries.filter((e) => !e.capture)
+        ];
+        for (const { fn } of ordered) {
+          if (propagationStopped) break;
+          fn(event);
+        }
+        return { event, defaultPrevented, propagationStopped };
+      }
+    };
+  }
+
+  function createFakeElement(tagName) {
+    const target = makeEventTarget();
+    const el = {
+      nodeType: 1,
+      tagName: String(tagName).toUpperCase(),
+      className: "",
+      type: "",
+      tabIndex: 0,
+      hidden: false,
+      textContent: "",
+      isConnected: false,
+      offsetWidth: 116,
+      offsetHeight: 26,
+      style: {},
+      attributes: {},
+      children: [],
+      childNodes: [],
+      parentElement: null,
+      shadowRoot: null,
+      setAttribute(name, val) {
+        this.attributes[String(name)] = String(val);
+      },
+      getAttribute(name) {
+        const k = String(name);
+        return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
+      },
+      appendChild(child) {
+        if (child.parentElement && typeof child.parentElement.removeChild === "function") {
+          child.parentElement.removeChild(child);
+        }
+        child.parentElement = this;
+        child.isConnected = this.isConnected;
+        this.children.push(child);
+        this.childNodes.push(child);
+        return child;
+      },
+      removeChild(child) {
+        const idx = this.children.indexOf(child);
+        if (idx >= 0) this.children.splice(idx, 1);
+        const cIdx = this.childNodes.indexOf(child);
+        if (cIdx >= 0) this.childNodes.splice(cIdx, 1);
+        child.parentElement = null;
+        child.isConnected = false;
+        return child;
+      },
+      remove() {
+        if (this.parentElement && typeof this.parentElement.removeChild === "function") {
+          this.parentElement.removeChild(this);
+        }
+      },
+      append(...nodes) {
+        for (const n of nodes) this.appendChild(n);
+      },
+      attachShadow({ mode }) {
+        const sr = {
+          mode,
+          host: el,
+          children: [],
+          append(...nodes) {
+            for (const n of nodes) this.children.push(n);
+          },
+          querySelector(cls) {
+            if (cls.startsWith(".")) {
+              const targetCls = cls.slice(1);
+              return this.children.find((c) => (c.className || "").split(/\s+/).includes(targetCls)) || null;
+            }
+            return this.children.find((c) => c.tagName === cls.toUpperCase()) || null;
+          }
+        };
+        el.shadowRoot = sr;
+        return sr;
+      },
+      addEventListener: target.addEventListener,
+      removeEventListener: target.removeEventListener,
+      dispatch: target.dispatch
+    };
+    return el;
+  }
+
+  const parsedDoc = parseHtmlDocument(html, { url });
+  let pickedEl = parsedDoc.querySelector(pickedSelector) || parsedDoc.body;
+  let anchorNode = pickedEl;
+  let anchorOffset = 0;
+  let focusNode = pickedEl;
+  let focusOffset = 1;
+  let selectionCollapsed = false;
+  let selectionRect = { left: 300, top: 200, bottom: 224, width: 160, height: 24 };
+  let selectionClientRects = clientRects;
+
+  const currentSelection = {
+    get rangeCount() {
+      return selectionCollapsed ? 0 : 1;
+    },
+    get isCollapsed() {
+      return selectionCollapsed;
+    },
+    get anchorNode() {
+      return anchorNode;
+    },
+    get anchorOffset() {
+      return anchorOffset;
+    },
+    get focusNode() {
+      return focusNode;
+    },
+    get focusOffset() {
+      return focusOffset;
+    },
+    collapse() {
+      selectionCollapsed = true;
+    },
+    toString() {
+      return selectionCollapsed ? "" : (pickedEl.textContent || "Selected sample text");
+    },
+    getRangeAt() {
+      const baseRange = parsedDoc.createRangeFromNode(pickedEl);
+      return {
+        ...baseRange,
+        getBoundingClientRect() {
+          return selectionRect;
+        },
+        getClientRects() {
+          return Array.isArray(selectionClientRects) ? selectionClientRects : [selectionRect];
+        },
+        cloneRange() {
+          return parsedDoc.createRangeFromNode(pickedEl);
+        }
+      };
+    }
+  };
+
+  const docEvents = makeEventTarget();
+  const winEvents = makeEventTarget();
+  const documentElement = createFakeElement("html");
+  documentElement.isConnected = true;
+  for (let i = 0; i < preExistingOrphanHosts; i += 1) {
+    const orphan = createFakeElement("div");
+    orphan.setAttribute("data-coding-rewind-ui", "1");
+    documentElement.appendChild(orphan);
+  }
+
+  const fakeDocument = {
+    title: parsedDoc.title,
+    location: parsedDoc.location,
+    hidden: false,
+    activeElement: null,
+    documentElement,
+    body: documentElement,
+    createElement: createFakeElement,
+    querySelectorAll: (sel) => {
+      if (sel === '[data-coding-rewind-ui="1"]') {
+        return documentElement.children.filter((c) => c.getAttribute("data-coding-rewind-ui") === "1");
+      }
+      return parsedDoc.querySelectorAll(sel);
+    },
+    querySelector: (sel) => parsedDoc.querySelector(sel),
+    addEventListener: docEvents.addEventListener,
+    removeEventListener: docEvents.removeEventListener,
+    dispatch: docEvents.dispatch
+  };
+
+  const fakeWindow = {
+    innerWidth: 1280,
+    innerHeight: 800,
+    getSelection: () => currentSelection,
+    addEventListener: winEvents.addEventListener,
+    removeEventListener: winEvents.removeEventListener,
+    dispatch: winEvents.dispatch
+  };
+
+  const sentMessages = [];
+  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: getToastMessages("auto").SAVED }));
+  const onMessageListeners = [];
+  const onStorageChangedListeners = [];
+  const liveStorage = {
+    showSelectionPill: true,
+    uiLanguage,
+    ...(storageData && typeof storageData === "object" ? storageData : {})
+  };
+
+  const fakeChrome = {
+    ...(browserLanguage !== undefined
+      ? {
+          i18n: {
+            getUILanguage() {
+              return browserLanguage;
+            }
+          }
+        }
+      : {}),
+    runtime: {
+      getURL() {
+        return resolvedExtractorsUrl;
+      },
+      async sendMessage(payload) {
+        sentMessages.push(payload);
+        return messageHandler(payload);
+      },
+      onMessage: {
+        addListener(fn) {
+          onMessageListeners.push(fn);
+        },
+        removeListener(fn) {
+          const idx = onMessageListeners.indexOf(fn);
+          if (idx >= 0) onMessageListeners.splice(idx, 1);
+        }
+      }
+    },
+    storage: {
+      local: {
+        get(_keys, cb) {
+          const snapshot = { ...liveStorage };
+          if (storageGetDelayMs > 0) {
+            scheduleTimeout(() => cb(snapshot), storageGetDelayMs);
+          } else {
+            cb(snapshot);
+          }
+        }
+      },
+      onChanged: {
+        addListener(fn) {
+          onStorageChangedListeners.push(fn);
+        },
+        removeListener(fn) {
+          const idx = onStorageChangedListeners.indexOf(fn);
+          if (idx >= 0) onStorageChangedListeners.splice(idx, 1);
+        }
+      }
+    }
+  };
+
+  const sandbox = {
+    Array,
+    Date: { now: () => nowMs },
+    Math,
+    Number,
+    String,
+    Boolean,
+    Object,
+    Set,
+    WeakMap,
+    URL,
+    Promise,
+    setTimeout: scheduleTimeout,
+    clearTimeout: cancelTimeout,
+    navigator: { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh)" },
+    location: parsedDoc.location,
+    window: fakeWindow,
+    document: fakeDocument,
+    chrome: fakeChrome
+  };
+  sandbox.globalThis = sandbox;
+
+  function executeContentScript() {
+    vm.runInNewContext(i18nCode + "\n;" + contentCode, sandbox, {
+      filename: contentScriptPath,
+      importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
+    });
+  }
+
+  executeContentScript();
+
+  return {
+    advanceTime,
+    sentMessages,
+    parsedDoc,
+    reinjectContentScript: executeContentScript,
+    setSendMessageHandler(fn) {
+      messageHandler = fn;
+    },
+    setSelectionCollapsed(collapsed) {
+      selectionCollapsed = collapsed;
+    },
+    setSelectionRect(rect) {
+      selectionRect = rect;
+    },
+    setClientRects(rects) {
+      selectionClientRects = rects;
+    },
+    setPickedElement(el) {
+      pickedEl = el;
+      anchorNode = el;
+      focusNode = el;
+    },
+    setSelectionNodes({ anchorNode: aNode, anchorOffset: aOff = 0, focusNode: fNode, focusOffset: fOff = 1 }) {
+      anchorNode = aNode;
+      anchorOffset = aOff;
+      focusNode = fNode;
+      focusOffset = fOff;
+    },
+    setActiveElement(el) {
+      fakeDocument.activeElement = el;
+    },
+    setDocumentHidden(hidden) {
+      fakeDocument.hidden = Boolean(hidden);
+    },
+    emitStorageChanged(changes, area = "local") {
+      for (const [k, v] of Object.entries(changes)) {
+        liveStorage[k] = v.newValue;
+      }
+      for (const fn of onStorageChangedListeners.slice()) {
+        fn(changes, area);
+      }
+    },
+    emitStorageChange(changes, area = "local") {
+      this.emitStorageChanged(changes, area);
+    },
+    async sendRuntimeMessage(msg) {
+      for (const fn of onMessageListeners.slice()) {
+        let responseValue;
+        const asyncHandled = fn(msg, {}, (res) => { responseValue = res; });
+        if (asyncHandled) {
+          return new Promise((resolve) => fn(msg, {}, resolve));
+        }
+        if (responseValue !== undefined) return responseValue;
+      }
+      return undefined;
+    },
+    setViewportSize(width, height) {
+      fakeWindow.innerWidth = width;
+      fakeWindow.innerHeight = height;
+    },
+    isSelectionCollapsed() {
+      return selectionCollapsed;
+    },
+    document: fakeDocument,
+    window: fakeWindow,
+    getAllHosts() {
+      return documentElement.children.filter((c) => c.getAttribute("data-coding-rewind-ui") === "1");
+    },
+    getHost() {
+      return this.getAllHosts()[0] || null;
+    },
+    getPill() {
+      return this.getHost()?.shadowRoot?.querySelector(".rw-pill") || null;
+    },
+    getPillIcon() {
+      return this.getPill()?.children.find((c) => c.className === "rw-pill-icon") || null;
+    },
+    getPillLabel() {
+      return this.getPill()?.children.find((c) => c.className === "rw-pill-label")?.textContent ?? null;
+    },
+    getToast() {
+      return this.getHost()?.shadowRoot?.querySelector(".rw-toast") || null;
+    },
+    getStyleText() {
+      return this.getHost()?.shadowRoot?.querySelector("style")?.textContent || "";
+    }
+  };
+}
+
+test("content.js capsule positions on mouseup, absorbs rapid double-mousedown without collapsing selection, and handles Hyper+S vs Alt+Shift+S", async () => {
+  let resolveInFlightSave;
+  const harness = createContentScriptHarness({
+    sendMessageImpl: () =>
+      new Promise((resolve) => {
+        resolveInFlightSave = resolve;
+      })
+  });
+
+  harness.document.addEventListener("mousedown", () => {
+    harness.setSelectionCollapsed(true);
+  }, false);
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  const pillIcon = pill?.children.find((c) => c.className === "rw-pill-icon");
+  assert.ok(pill, "Expected .rw-pill to be mounted in shadow root");
+  assert.equal(pill.style.display, "inline-flex");
+  assert.equal(pill.style.visibility, "visible");
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(harness.getPillIcon()?.hidden, true);
+  assert.equal(harness.getPillIcon()?.textContent, "");
+  assert.equal(harness.getPillLabel(), "暂存");
+  assert.equal(pillIcon.hidden, true);
+  assert.equal(pillIcon.textContent, "");
+  assert.equal(pill.style.left, "322px", "pill centers horizontally above selection rect");
+  assert.equal(pill.style.top, "166px", "pill positions above selection rect");
+  assert.doesNotMatch(
+    harness.getStyleText(),
+    /\.rw-pill\[data-state="saving"\][\s\S]*?pointer-events:\s*none/
+  );
+
+  const click1 = pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(click1.defaultPrevented, true);
+  assert.equal(click1.propagationStopped, true);
+  assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(harness.getPillIcon()?.hidden, false);
+  assert.equal(harness.getPillIcon()?.textContent, "…");
+  assert.equal(harness.getPillLabel(), "暂存中…");
+  assert.equal(pillIcon.hidden, false);
+  assert.equal(pillIcon.textContent, "…");
+
+  const click2 = pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(click2.defaultPrevented, true);
+  assert.equal(click2.propagationStopped, true);
+  assert.equal(harness.isSelectionCollapsed(), false, "rapid second click must not fall through and collapse selection");
+
+  harness.window.dispatch("scroll");
+  harness.document.dispatch("mousedown", { path: [] });
+  harness.setSelectionCollapsed(false);
+  assert.equal(pill.getAttribute("data-state"), "saving", "scroll and outside mousedown must not wipe in-flight saving state");
+
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].type, "REWIND_SAVE_CLIP");
+  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "Keep `Hyper+S` in content script only.");
+
+  harness.advanceTime(400);
+  pill.dispatch("mousedown", { path: [pill] });
+  harness.document.dispatch("mouseup", { path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1, "click while saving is ignored even after 350ms cooldown");
+
+  resolveInFlightSave({ status: "saved", toast: getToastMessages("auto").SAVED });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saved");
+  assert.equal(harness.getPillIcon()?.hidden, false);
+  assert.equal(harness.getPillIcon()?.textContent, "✓");
+  assert.equal(harness.getPillLabel(), "已同步");
+  assert.equal(pillIcon.hidden, false);
+  assert.equal(pillIcon.textContent, "✓");
+  assert.equal(pill.style.left, "322px");
+  assert.equal(pill.style.top, "166px");
+
+  harness.advanceTime(950);
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+  assert.equal(pill.style.display, "none");
+
+  let resolveQueuedSave;
+  harness.setSendMessageHandler(() => new Promise((resolve) => { resolveQueuedSave = resolve; }));
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  assert.equal(harness.getPillLabel(), "暂存");
+  pill.dispatch("mousedown", { path: [pill] });
+  assert.equal(harness.getPillLabel(), "暂存中…");
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  resolveQueuedSave({ status: "queued", toast: getToastMessages("auto").QUEUED });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "queued");
+  assert.equal(harness.getPillLabel(), "待同步");
+  harness.advanceTime(950);
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  harness.setSendMessageHandler(async () => ({ status: "saved", toast: getToastMessages("auto").SAVED }));
+  harness.advanceTime(500);
+
+  const altShiftRes = harness.document.dispatch("keydown", {
+    key: "S",
+    code: "KeyS",
+    altKey: true,
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    repeat: false
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(altShiftRes.defaultPrevented, false);
+  assert.equal(harness.sentMessages.length, 2, "Alt+Shift+S must be left exclusively to chrome.commands");
+
+  const hyperRes = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperRes.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 3, "Hyper+S must trigger REWIND_SAVE_CLIP");
+});
+
+test("content.js capsule hides cleanly on Escape mid-save and never freezes in saving when extractClipContext or sendMessage rejects", async () => {
+  let finishSave;
+  const escapeHarness = createContentScriptHarness({
+    sendMessageImpl: () => new Promise((resolve) => { finishSave = resolve; })
+  });
+  escapeHarness.document.dispatch("mouseup", { path: [] });
+  escapeHarness.advanceTime(20);
+  const escapePill = escapeHarness.getPill();
+  escapePill.dispatch("mousedown", { path: [escapePill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(escapePill.getAttribute("data-state"), "saving");
+
+  escapeHarness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  assert.equal(escapePill.getAttribute("data-state"), "hidden");
+  assert.equal(escapePill.style.display, "none");
+
+  finishSave({ status: "saved", toast: getToastMessages("auto").SAVED });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(escapePill.getAttribute("data-state"), "hidden", "Escape during saving keeps pill hidden after response");
+  assert.equal(escapePill.style.display, "none");
+
+  const rejectMsgHarness = createContentScriptHarness({
+    sendMessageImpl: async () => {
+      throw new Error("Extension context invalidated");
+    }
+  });
+  rejectMsgHarness.document.dispatch("mouseup", { path: [] });
+  rejectMsgHarness.advanceTime(20);
+  const msgPill = rejectMsgHarness.getPill();
+  assert.equal(msgPill.getAttribute("data-state"), "ready");
+
+  msgPill.dispatch("mousedown", { path: [msgPill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(msgPill.getAttribute("data-state"), "hidden", "sendMessage rejection hides pill");
+  assert.equal(msgPill.style.display, "none");
+  assert.equal(rejectMsgHarness.getToast().getAttribute("data-visible"), "true");
+
+  const throwingExtractorsUrl =
+    "data:text/javascript," +
+    encodeURIComponent("export function extractClipContext() { throw new Error('DOM extraction crashed'); }");
+  const rejectExtractHarness = createContentScriptHarness({
+    extractorsUrl: throwingExtractorsUrl
+  });
+  rejectExtractHarness.document.dispatch("mouseup", { path: [] });
+  rejectExtractHarness.advanceTime(20);
+  const extractPill = rejectExtractHarness.getPill();
+  assert.equal(extractPill.getAttribute("data-state"), "ready");
+
+  extractPill.dispatch("mousedown", { path: [extractPill] });
+  assert.equal(extractPill.getAttribute("data-state"), "saving");
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(extractPill.getAttribute("data-state"), "hidden", "extractClipContext rejection hides pill");
+  assert.equal(extractPill.style.display, "none");
+  assert.equal(rejectExtractHarness.sentMessages.length, 0);
+  assert.equal(rejectExtractHarness.getToast().getAttribute("data-visible"), "true");
+});
+
+test("content.js capsule centers above selection, flips below near top edge, and clamps horizontally", () => {
+  const harness = createContentScriptHarness();
+  harness.setViewportSize(1280, 800);
+
+  const cases = [
+    {
+      rect: { left: 300, top: 200, bottom: 224, width: 160, height: 24 },
+      expected: { left: "322px", top: "166px" }
+    },
+    {
+      rect: { left: 300, top: 18, bottom: 42, width: 160, height: 24 },
+      expected: { left: "322px", top: "50px" }
+    },
+    {
+      rect: { left: 2, top: 200, bottom: 224, width: 20, height: 24 },
+      expected: { left: "8px", top: "166px" }
+    },
+    {
+      rect: { left: 1250, top: 200, bottom: 224, width: 24, height: 24 },
+      expected: { left: "1156px", top: "166px" }
+    }
+  ];
+
+  for (const { rect, expected } of cases) {
+    harness.setSelectionRect(rect);
+    harness.document.dispatch("mouseup", { path: [] });
+    harness.advanceTime(20);
+    const pill = harness.getPill();
+    assert.deepEqual({ left: pill.style.left, top: pill.style.top }, expected);
+  }
+
+  harness.setViewportSize(400, 300);
+  harness.setSelectionRect({ left: 370, top: 200, bottom: 224, width: 24, height: 24 });
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  const clampedPill = harness.getPill();
+  assert.deepEqual({ left: clampedPill.style.left, top: clampedPill.style.top }, { left: "276px", top: "166px" });
+});
+
+test("htmlToMarkdown falls back cleanly when DOMParser is unavailable", () => {
+  const originalDOMParser = globalThis.DOMParser;
+  try {
+    globalThis.DOMParser = undefined;
+    assert.equal(htmlToMarkdown("  worker fallback\n\n\nline two  "), "worker fallback\n\nline two");
+  } finally {
+    globalThis.DOMParser = originalDOMParser;
+  }
 });
 
 test("general web page clip keeps Source title link without setting #rewind/has-ctx or posting an empty context comment", async () => {
@@ -767,36 +1801,6 @@ test("general web page clip keeps Source title link without setting #rewind/has-
   assert.equal(requests.length, 1);
   assert.match(requests[0].url, /^https:\/\/memos\.internal\.test\/api\/memos\?memoId=/);
   assert.equal(requests.some((r) => r.url.includes("/comments")), false);
-});
-
-test("buildMemosWirePayloads blocks unsafe URL schemes and percent-encodes parentheses", () => {
-  for (const unsafeUrl of ["javascript:alert(1)", "java\nscript:alert(1)", "data:text/html,hi", "vbscript:run"]) {
-    const payload = buildMemosWirePayloads(
-      {
-        selectedMarkdown: "Safe body",
-        sourcePlatform: "web",
-        sessionTitle: "Untrusted Title",
-        sourceUrl: unsafeUrl
-      },
-      { clipId: "rw-1700000000000-sec00001", createdAt: "2026-11-15T08:00:00Z" }
-    );
-    assert.match(payload.memoBody.content, /> \*\*Source:\*\* Untrusted Title · 2026-11-15T08:00:00Z/);
-    assert.doesNotMatch(payload.memoBody.content, /javascript:|vbscript:|data:/i);
-  }
-
-  const wikiPayload = buildMemosWirePayloads(
-    {
-      selectedMarkdown: "Safe body",
-      sourcePlatform: "web",
-      sessionTitle: "Closure",
-      sourceUrl: "https://en.wikipedia.org/wiki/Closure_(computer_programming)"
-    },
-    { clipId: "rw-1700000000000-sec00002", createdAt: "2026-11-15T08:00:00Z" }
-  );
-  assert.match(
-    wikiPayload.memoBody.content,
-    /> \*\*Source:\*\* \[Closure\]\(https:\/\/en\.wikipedia\.org\/wiki\/Closure_%28computer_programming%29\) · 2026-11-15T08:00:00Z/
-  );
 });
 
 test("extractSessionTitle strips og:site_name suffixes across separators and falls back to og:title on web pages", () => {
@@ -910,7 +1914,7 @@ test("turndown rich elements convert images, GFM task lists, mark, kbd, and deta
 
   assert.match(ctx.selectedMarkdown, /!\[System \\\[v2\\\]\]\(https:\/\/example\.com\/assets\/arch\.png\)/);
   assert.doesNotMatch(ctx.selectedMarkdown, /!\[huge\]/);
-  assert.match(ctx.selectedMarkdown, new RegExp(`!\\[tiny\\]\\(${shortDataUri.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+  assert.match(ctx.selectedMarkdown, new RegExp(`!\\[tiny\\]\\(${shortDataUri}\\)`));
   assert.match(ctx.selectedMarkdown, /- \[x\] Ship universal capsule\n- \[ \] Add domain exclusions/);
   assert.match(ctx.selectedMarkdown, /Press <kbd>⌘<\/kbd> \+ <kbd>Return<\/kbd> to ==launch thread==\./);
   assert.match(ctx.selectedMarkdown, /\*\*Implementation Notes\*\*\n\nKeep content script idle footprint at zero imports\./);
@@ -918,6 +1922,393 @@ test("turndown rich elements convert images, GFM task lists, mark, kbd, and deta
   richDoc.querySelector("#dynamic-cb").checked = true;
   assert.match(htmlToMarkdown(richDoc.querySelector("ul")), /- \[x\] Add domain exclusions/);
   assert.equal(htmlToMarkdown('<img alt="rel" src="/img/a.png">'), "![rel](/img/a.png)");
+});
+
+test("content.js GestureGate filters right-click and stationary clicks while supporting drag, double-click, Shift-click, keyboard selection, resize, and visibilitychange", () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/article",
+    html: `<html><head><title>Article</title></head><body><article><p id="picked">Universal web clipper gesture gating test.</p><a id="lnk" href="/more">More</a></article></body></html>`
+  });
+
+  harness.document.dispatch("mousedown", { button: 2, clientX: 100, clientY: 100 });
+  harness.document.dispatch("mouseup", { button: 2, clientX: 160, clientY: 100 });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "right-click must never mount or pop the pill");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 100 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 102, clientY: 101, detail: 1, shiftKey: false });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "stationary single-click suppresses pill");
+
+  const linkEl = harness.parsedDoc.querySelector("#lnk");
+  harness.document.dispatch("mouseup", { button: 0, clientX: 102, clientY: 101, detail: 1, shiftKey: false, target: linkEl });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "stationary click on link suppresses pill");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 100 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 140, clientY: 102, detail: 1, shiftKey: false });
+  harness.advanceTime(20);
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "drag >= 6px pops pill");
+
+  harness.window.dispatch("resize");
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden", "window resize hides ready pill");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 200, clientY: 200 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 200, clientY: 200, detail: 2, shiftKey: false });
+  harness.advanceTime(20);
+  assert.equal(harness.getPill().getAttribute("data-state"), "ready", "double-click word selection pops pill");
+
+  harness.setDocumentHidden(true);
+  harness.document.dispatch("visibilitychange");
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden", "hidden tab dismisses pill");
+  harness.setDocumentHidden(false);
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 220, clientY: 200 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 220, clientY: 200, detail: 1, shiftKey: true });
+  harness.advanceTime(20);
+  assert.equal(harness.getPill().getAttribute("data-state"), "ready", "Shift+Click selection extension pops pill");
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden");
+
+  harness.document.dispatch("keyup", { key: "ArrowRight", shiftKey: true });
+  harness.advanceTime(60);
+  assert.equal(harness.getPill().getAttribute("data-state"), "hidden", "keyboard selection debounces 120ms");
+  harness.advanceTime(70);
+  assert.equal(harness.getPill().getAttribute("data-state"), "ready", "keyboard Shift+ArrowRight pops pill after 120ms");
+});
+
+test("content.js allows readonly inputs while suppressing pill inside editable inputs and live code editors without blocking Hyper+S", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/playground",
+    html: `<html><body>
+      <textarea id="ro-ta" readonly>Readonly snippet text</textarea>
+      <input id="ro-in" type="text" readonly value="Readonly input value" />
+      <textarea id="rw-ta">Editable textarea draft</textarea>
+      <div id="ce" contenteditable="true"><p id="ce-p">Editable rich text</p></div>
+      <div id="ce-ro" contenteditable="true" aria-readonly="true"><p id="ce-ro-p">Readonly rich view</p></div>
+      <div class="monaco-editor"><div id="monaco-line">const live = true;</div></div>
+      <div class="cm-editor"><div contenteditable="true"><span id="cm-live">let x = 1;</span></div></div>
+      <div class="cm-editor"><div class="cm-content"><span id="cm-readonly">let y = 2;</span></div></div>
+    </body></html>`,
+    pickedSelector: "#ro-ta"
+  });
+
+  const triggerDragSelect = () => {
+    harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
+    harness.document.dispatch("mouseup", { button: 0, clientX: 160, clientY: 80, detail: 1 });
+    harness.advanceTime(20);
+  };
+
+  harness.setPickedElement(harness.parsedDoc.querySelector("#ro-ta"));
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "<textarea readonly> allows pill");
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  harness.setPickedElement(harness.parsedDoc.querySelector("#ro-in"));
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "<input readonly> allows pill");
+
+  harness.setPickedElement(harness.parsedDoc.querySelector("#ce-ro-p"));
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "aria-readonly='true' allows pill");
+
+  harness.setPickedElement(harness.parsedDoc.querySelector("#cm-readonly"));
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  triggerDragSelect();
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready", "read-only .cm-editor without contenteditable allows pill");
+
+  for (const blockedSelector of ["#rw-ta", "#ce-p", "#monaco-line", "#cm-live"]) {
+    harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+    harness.setPickedElement(harness.parsedDoc.querySelector(blockedSelector));
+    triggerDragSelect();
+    assert.equal(
+      harness.getPill()?.getAttribute("data-state"),
+      "hidden",
+      `${blockedSelector} must suppress automatic floating pill`
+    );
+  }
+
+  const hyperSave = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperSave.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "let x = 1;");
+});
+
+test("content.js multi-line getClientRects anchors below forward end, flips above near bottom, and anchors above backward start", () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/long-article",
+    html: `<html><body><article id="picked"><span id="first">Line one</span><span id="middle">Line two</span><span id="last">Line three</span></article></body></html>`,
+    pickedSelector: "#picked"
+  });
+  harness.setViewportSize(1280, 800);
+
+  const firstEl = harness.parsedDoc.querySelector("#first");
+  const lastEl = harness.parsedDoc.querySelector("#last");
+
+  harness.setSelectionNodes({ anchorNode: firstEl, focusNode: lastEl });
+  harness.setClientRects([
+    { left: 120, top: 100, right: 620, bottom: 124, width: 500, height: 24 },
+    { left: 100, top: 126, right: 620, bottom: 150, width: 520, height: 24 },
+    { left: 100, top: 152, right: 340, bottom: 176, width: 240, height: 24 }
+  ]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 130, clientY: 112 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 310, clientY: 168, detail: 1 });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "252px", top: "184px" },
+    "forward multi-line selection anchors below last line near release clientX"
+  );
+
+  harness.setClientRects([
+    { left: 120, top: 710, right: 620, bottom: 734, width: 500, height: 24 },
+    { left: 100, top: 736, right: 620, bottom: 760, width: 520, height: 24 },
+    { left: 100, top: 762, right: 340, bottom: 786, width: 240, height: 24 }
+  ]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 130, clientY: 720 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 310, clientY: 774, detail: 1 });
+  harness.advanceTime(20);
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "252px", top: "676px" },
+    "forward multi-line selection near viewport bottom flips above first line"
+  );
+
+  harness.setSelectionNodes({ anchorNode: lastEl, focusNode: firstEl });
+  harness.setClientRects([
+    { left: 120, top: 100, right: 620, bottom: 124, width: 500, height: 24 },
+    { left: 100, top: 126, right: 620, bottom: 150, width: 520, height: 24 },
+    { left: 100, top: 152, right: 340, bottom: 176, width: 240, height: 24 }
+  ]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 310, clientY: 168 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 150, clientY: 112, detail: 1 });
+  harness.advanceTime(20);
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "92px", top: "66px" },
+    "backward multi-line selection anchors above first line"
+  );
+});
+
+test("content.js re-injection disposes prior Shadow DOM host and listeners so Hyper+S sends exactly one clip", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/reload-safety"
+  });
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  const firstHost = harness.getHost();
+  assert.ok(firstHost);
+  assert.equal(harness.getAllHosts().length, 1);
+
+  harness.reinjectContentScript();
+  assert.equal(firstHost.isConnected, false, "old Shadow DOM host is detached on re-injection");
+  assert.equal(harness.getAllHosts().length, 0);
+
+  harness.document.dispatch("mouseup", { path: [] });
+  harness.advanceTime(20);
+  assert.equal(harness.getAllHosts().length, 1, "only one UI host exists after re-injection");
+  assert.equal(harness.getPill()?.getAttribute("data-state"), "ready");
+
+  harness.advanceTime(500);
+  const hyperRes = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperRes.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1, "Hyper+S must fire only from the latest active instance");
+});
+
+test("options helpers and content.js enforce pill scope and excludedDomains while keeping Hyper+S active everywhere", async () => {
+  assert.equal(resolvePillScope({}), "all");
+  assert.equal(resolvePillScope({ showSelectionPill: true }), "all");
+  assert.equal(resolvePillScope({ showSelectionPill: false }), "off");
+  assert.equal(resolvePillScope({ selectionPillScope: "chat", showSelectionPill: true }), "chat");
+  assert.equal(resolvePillScope({ selectionPillScope: "all", showSelectionPill: false }), "all");
+  assert.equal(resolvePillScope({ selectionPillScope: "off", showSelectionPill: true }), "off");
+  assert.ok(DEFAULT_EXCLUDED_DOMAINS.includes("docs.google.com"));
+  assert.ok(DEFAULT_EXCLUDED_DOMAINS.includes("figma.com"));
+
+  assert.deepEqual(
+    parseExcludedDomains("  https://Docs.Google.com/document/d/1 , *.Figma.com\nnotion.so:443\ndocs.google.com "),
+    ["docs.google.com", "figma.com", "notion.so"]
+  );
+  assert.deepEqual(parseExcludedDomains(""), []);
+
+  const hnHarness = createContentScriptHarness({
+    url: "https://news.ycombinator.com/item?id=1",
+    html: `<html><head><title>Show HN | Hacker News</title></head><body><p id="picked">Interesting systems thread.</p></body></html>`,
+    storageData: { selectionPillScope: "chat", showSelectionPill: true }
+  });
+  hnHarness.document.dispatch("mouseup", { path: [] });
+  hnHarness.advanceTime(20);
+  assert.equal(hnHarness.getPill(), null, "chat scope suppresses pill on Hacker News");
+
+  hnHarness.emitStorageChanged({
+    selectionPillScope: { newValue: "all" },
+    showSelectionPill: { newValue: true }
+  });
+  hnHarness.document.dispatch("mouseup", { path: [] });
+  hnHarness.advanceTime(20);
+  assert.equal(hnHarness.getPill()?.getAttribute("data-state"), "ready", "switching to 'all' enables pill on Hacker News");
+
+  hnHarness.emitStorageChanged({
+    selectionPillScope: { newValue: "chat" }
+  });
+  assert.equal(hnHarness.getPill().getAttribute("data-state"), "hidden", "switching back to 'chat' immediately hides open pill");
+
+  const chatHarness = createContentScriptHarness({
+    url: "https://chatgpt.com/c/1",
+    storageData: { selectionPillScope: "chat", showSelectionPill: true }
+  });
+  chatHarness.document.dispatch("mouseup", { path: [] });
+  chatHarness.advanceTime(20);
+  assert.equal(chatHarness.getPill()?.getAttribute("data-state"), "ready", "chat scope allows pill on chatgpt.com");
+
+  const excludedHarness = createContentScriptHarness({
+    url: "https://docs.google.com/document/d/abc/edit",
+    html: `<html><head><title>Design Doc</title></head><body><p id="picked"> Canvas selection text </p></body></html>`,
+    storageData: { selectionPillScope: "all", showSelectionPill: true }
+  });
+  excludedHarness.document.dispatch("mouseup", { path: [] });
+  excludedHarness.advanceTime(20);
+  assert.equal(excludedHarness.getPill(), null, "default excludedDomains suppresses pill on docs.google.com");
+
+  const hyperOnExcluded = excludedHarness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperOnExcluded.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(excludedHarness.sentMessages.length, 1, "Hyper+S still captures on excluded domains");
+
+  const extractedViaMenu = await excludedHarness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
+  assert.equal(extractedViaMenu.clip.selectedMarkdown.trim(), "Canvas selection text");
+});
+
+test("background.js injectContentScriptIntoOpenTabs injects open http(s) tabs on install and ignores restricted tab rejections", async () => {
+  const queries = [];
+  const executions = [];
+
+  const summary = await injectContentScriptIntoOpenTabs({
+    tabsApi: {
+      async query(filter) {
+        queries.push(filter);
+        return [
+          { id: 101, url: "https://news.ycombinator.com/" },
+          { id: 102, url: "https://chromewebstore.google.com/detail/xyz" },
+          { url: "https://example.com/no-id" },
+          { id: 103, url: "http://localhost:8080/docs" }
+        ];
+      }
+    },
+    scriptingApi: {
+      async executeScript(args) {
+        executions.push(args);
+        if (args.target.tabId === 102) {
+          throw new Error("Cannot access contents of url \"https://chromewebstore.google.com/detail/xyz\".");
+        }
+      }
+    }
+  });
+
+  assert.deepEqual(queries, [{ url: ["https://*/*", "http://*/*"] }]);
+  assert.deepEqual(
+    executions.map((e) => ({ tabId: e.target.tabId, files: e.files })),
+    [
+      { tabId: 101, files: ["i18n.js", "content.js"] },
+      { tabId: 102, files: ["i18n.js", "content.js"] },
+      { tabId: 103, files: ["i18n.js", "content.js"] }
+    ]
+  );
+  assert.deepEqual(summary, { attempted: 3, injected: 2 });
+
+  const previousChrome = globalThis.chrome;
+  const previousSelf = globalThis.self;
+  let onInstalledListener = null;
+  let onStartupListener = null;
+  const installedExecutions = [];
+  try {
+    globalThis.chrome = {
+      runtime: {
+        onInstalled: { addListener(fn) { onInstalledListener = fn; } },
+        onStartup: { addListener(fn) { onStartupListener = fn; } },
+        onMessage: { addListener() {} }
+      },
+      contextMenus: {
+        removeAll(cb) { if (cb) cb(); },
+        create() {},
+        onClicked: { addListener() {} }
+      },
+      commands: { onCommand: { addListener() {} } },
+      tabs: {
+        async query() {
+          return [
+            { id: 201, url: "https://chatgpt.com/c/1" },
+            { id: 202, url: "https://chromewebstore.google.com/" }
+          ];
+        }
+      },
+      scripting: {
+        async executeScript(args) {
+          installedExecutions.push(args.target.tabId);
+          if (args.target.tabId === 202) {
+            throw new Error("Restricted tab");
+          }
+        }
+      },
+      storage: {
+        local: {
+          async get() { return { memosUrl: "", memosToken: "", outbox: [] }; },
+          async set() {}
+        }
+      }
+    };
+    globalThis.self = { addEventListener() {} };
+
+    await import("./background.js?on-installed-tab-injection");
+    assert.equal(typeof onInstalledListener, "function");
+    assert.equal(typeof onStartupListener, "function");
+
+    onStartupListener();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(installedExecutions, [], "onStartup must not executeScript across tabs");
+
+    onInstalledListener();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(installedExecutions, [201, 202], "onInstalled injects open tabs and ignores restricted tab failure");
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.self = previousSelf;
+  }
 });
 
 test("extractors.mjs handles non-Array iterable NodeList childNodes on Shiki code blocks and GitHub highlight tables", () => {
@@ -1012,6 +2403,341 @@ test("extractors.mjs handles non-Array iterable NodeList childNodes on Shiki cod
   assert.equal(clip.selectedMarkdown, md);
 });
 
+test("content.js suppresses trailing document mouseup when pill hides mid-click so capsule does not re-appear", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/mid-click-hide",
+    sendMessageImpl: async () => {
+      throw new Error("Simulated save failure before mouse button release");
+    }
+  });
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 300, clientY: 210, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 380, clientY: 210, detail: 1, path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.style.display, "inline-flex");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 340, clientY: 175, path: [pill] });
+  pill.dispatch("mousedown", { button: 0, clientX: 340, clientY: 175, path: [pill] });
+
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "hidden", "rejected save hides pill before mouseup");
+  assert.equal(pill.style.display, "none");
+
+  harness.document.dispatch("mouseup", { button: 0, clientX: 340, clientY: 175, detail: 1, path: [] });
+  harness.advanceTime(30);
+  assert.equal(pill.getAttribute("data-state"), "hidden", "trailing mouseup on document must not re-open pill");
+  assert.equal(pill.style.display, "none");
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 300, clientY: 210, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 390, clientY: 210, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(pill.getAttribute("data-state"), "ready", "subsequent genuine drag selection still opens pill");
+});
+
+test("content.js ignores unrelated focused composers and supports real Blink readonly textarea/input selectionStart/End", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://chatgpt.com/c/focused-composer",
+    html: `<html><head><title>Chat Thread</title></head><body>
+      <article><p id="picked">Important assistant paragraph while composer keeps focus.</p></article>
+      <div id="composer" contenteditable="true"><p id="composer-p">Drafting next prompt</p></div>
+      <input id="search-box" type="text" value="query" />
+      <textarea id="ro-blink" readonly>const token = computeSignature(payload);</textarea>
+    </body></html>`,
+    pickedSelector: "#picked"
+  });
+
+  const composerEl = harness.parsedDoc.querySelector("#composer");
+  const searchBoxEl = harness.parsedDoc.querySelector("#search-box");
+  const pickedEl = harness.parsedDoc.querySelector("#picked");
+
+  harness.setActiveElement(composerEl);
+  harness.setPickedElement(pickedEl);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 120, clientY: 200, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 280, clientY: 200, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(
+    harness.getPill()?.getAttribute("data-state"),
+    "ready",
+    "unrelated focused contenteditable composer must not suppress prose selection pill"
+  );
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  harness.setActiveElement(searchBoxEl);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 120, clientY: 200, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 280, clientY: 200, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(
+    harness.getPill()?.getAttribute("data-state"),
+    "ready",
+    "unrelated focused text input must not suppress prose selection pill"
+  );
+
+  harness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  harness.setActiveElement(composerEl);
+  harness.setPickedElement(harness.parsedDoc.querySelector("#composer-p"));
+  harness.document.dispatch("mousedown", { button: 0, clientX: 120, clientY: 400, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 240, clientY: 400, detail: 1, path: [] });
+  harness.advanceTime(20);
+  assert.equal(
+    harness.getPill()?.getAttribute("data-state"),
+    "hidden",
+    "selection inside focused contenteditable composer still suppresses pill"
+  );
+
+  const roTextarea = harness.parsedDoc.querySelector("#ro-blink");
+  roTextarea.value = "const token = computeSignature(payload);";
+  roTextarea.selectionStart = 6;
+  roTextarea.selectionEnd = 22;
+  roTextarea.getBoundingClientRect = () => ({
+    left: 200,
+    top: 180,
+    right: 500,
+    bottom: 240,
+    width: 300,
+    height: 60
+  });
+
+  harness.setSelectionCollapsed(true);
+  harness.setActiveElement(roTextarea);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 220, clientY: 200, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 340, clientY: 200, detail: 1, path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready", "Blink readonly textarea with collapsed window.getSelection shows pill");
+  harness.document.dispatch("selectionchange");
+  assert.equal(pill.getAttribute("data-state"), "ready", "selectionchange keeps pill open while readonly control selection is active");
+
+  harness.advanceTime(400);
+  pill.dispatch("mousedown", { button: 0, path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1);
+  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "token = computeS");
+
+  harness.advanceTime(1000);
+  roTextarea.selectionStart = 14;
+  roTextarea.selectionEnd = 39;
+  const hyperRo = harness.document.dispatch("keydown", {
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(hyperRo.defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 2);
+  assert.equal(harness.sentMessages[1].clip.selectedMarkdown, "computeSignature(payload)");
+
+  roTextarea.selectionStart = 5;
+  roTextarea.selectionEnd = 5;
+  harness.document.dispatch("selectionchange");
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+});
+
+test("content.js merges inline client rects on the same visual line instead of treating inline code/strong spans as multi-line", () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/inline-rects",
+    html: `<html><body><p id="picked"><span>Use </span><code>resolveSelectionPlacement</code><strong> now</strong></p></body></html>`,
+    pickedSelector: "#picked"
+  });
+  harness.setViewportSize(1280, 800);
+
+  harness.setClientRects([
+    { left: 100, top: 200, right: 160, bottom: 220, width: 60, height: 20 },
+    { left: 160, top: 202, right: 340, bottom: 218, width: 180, height: 16 },
+    { left: 340, top: 200, right: 400, bottom: 220, width: 60, height: 20 }
+  ]);
+
+  harness.document.dispatch("mousedown", { button: 0, clientX: 105, clientY: 210, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 395, clientY: 210, detail: 1, path: [] });
+  harness.advanceTime(20);
+
+  const pill = harness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.deepEqual(
+    { left: pill.style.left, top: pill.style.top },
+    { left: "192px", top: "166px" },
+    "merged single-line inline rects anchor centered above [100..400] rather than below the last inline box"
+  );
+});
+
+test("content.js cleans orphan Shadow DOM hosts, prevents storage.local.get init race, and guards slow/cancelled in-flight saves", async () => {
+  const raceHarness = createContentScriptHarness({
+    url: "https://example.com/race-and-orphans",
+    storageData: {
+      selectionPillScope: "all",
+      showSelectionPill: true,
+      excludedDomains: ["blocked.example.net"]
+    },
+    storageGetDelayMs: 50,
+    preExistingOrphanHosts: 2
+  });
+
+  assert.equal(raceHarness.getAllHosts().length, 0, "pre-existing cross-world orphan Shadow DOM hosts removed on startup");
+
+  raceHarness.advanceTime(10);
+  raceHarness.emitStorageChanged({
+    selectionPillScope: { oldValue: "all", newValue: "off" },
+    showSelectionPill: { oldValue: true, newValue: false }
+  });
+
+  raceHarness.advanceTime(60);
+  raceHarness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 200, path: [] });
+  raceHarness.document.dispatch("mouseup", { button: 0, clientX: 240, clientY: 200, detail: 1, path: [] });
+  raceHarness.advanceTime(20);
+  assert.equal(
+    raceHarness.getPill(),
+    null,
+    "stale storage.local.get callback must not overwrite newer storage.onChanged 'off' scope"
+  );
+
+  const pendingResolvers = [];
+  const saveHarness = createContentScriptHarness({
+    url: "https://example.com/slow-save",
+    sendMessageImpl: () =>
+      new Promise((resolve) => {
+        pendingResolvers.push(resolve);
+      })
+  });
+
+  const fireHyperS = () =>
+    saveHarness.document.dispatch("keydown", {
+      key: "s",
+      code: "KeyS",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+      metaKey: true,
+      repeat: false
+    });
+
+  assert.equal(fireHyperS().defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saveHarness.sentMessages.length, 1);
+
+  saveHarness.advanceTime(600);
+  assert.equal(fireHyperS().defaultPrevented, true);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saveHarness.sentMessages.length, 1, "second Hyper+S >350ms while Save #1 is still in flight must not duplicate");
+
+  pendingResolvers.shift()({ status: "saved", toast: getToastMessages("auto").SAVED });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(saveHarness.getToast()?.getAttribute("data-visible"), "true");
+
+  saveHarness.advanceTime(2500);
+  saveHarness.document.dispatch("mousedown", { button: 0, clientX: 200, clientY: 210, path: [] });
+  saveHarness.document.dispatch("mouseup", { button: 0, clientX: 320, clientY: 210, detail: 1, path: [] });
+  saveHarness.advanceTime(20);
+  const pill = saveHarness.getPill();
+  assert.equal(pill.getAttribute("data-state"), "ready");
+
+  pill.dispatch("mousedown", { button: 0, path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(saveHarness.sentMessages.length, 2);
+
+  saveHarness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  saveHarness.advanceTime(400);
+  saveHarness.document.dispatch("mousedown", { button: 0, clientX: 200, clientY: 210, path: [] });
+  saveHarness.document.dispatch("mouseup", { button: 0, clientX: 320, clientY: 210, detail: 1, path: [] });
+  saveHarness.advanceTime(20);
+  assert.equal(pill.getAttribute("data-state"), "ready");
+
+  pill.dispatch("mousedown", { button: 0, path: [pill] });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "saving");
+  assert.equal(saveHarness.sentMessages.length, 3);
+
+  pendingResolvers[0]({ status: "saved", toast: getToastMessages("auto").SAVED });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(
+    pill.getAttribute("data-state"),
+    "saving",
+    "stale Save #1 completion after Escape must not morph or hide Save #2's active saving pill"
+  );
+
+  pendingResolvers[1]({ status: "queued", toast: getToastMessages("auto").QUEUED });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(pill.getAttribute("data-state"), "queued", "Save #2 completion morphs pill cleanly");
+
+  const deadMsgRes = await saveHarness.sendRuntimeMessage({ type: "REWIND_TRIGGER_CAPTURE" });
+  assert.equal(deadMsgRes, undefined);
+});
+
+test("extractors.mjs and memos_payload.mjs block control-char URL schemes, encode Markdown parens/brackets, and escape kbd HTML", () => {
+  const html = `
+    <div>
+      <p><a href="java&#10;script:alert(1)">Bypass Link</a></p>
+      <p><a href="&#1;vbscript:msgbox(1)">VB Link</a></p>
+      <p><a href="https://en.wikipedia.org/wiki/Closure_(computer_programming)">[Closure] Guide](https://evil.example)[x</a></p>
+      <p><a href="https://example.com/api"><code>items[0]</code></a></p>
+      <p><img alt="[Diagram] [1]" src="https://example.com/my pic (1).png"></p>
+      <p><img alt="xss" src="java&#9;script:alert(1)"><img alt="html" src="data:text/html;base64,PHNjcmlwdD4="></p>
+      <p><kbd>&lt;img src=x onerror=alert(1)&gt; &amp; key</kbd></p>
+    </div>
+  `;
+  const md = htmlToMarkdown(parseHtmlDocument(html, { url: "https://example.com/post" }).body, {
+    baseUrl: "https://example.com/post"
+  });
+
+  assert.match(md, /^Bypass Link$/m);
+  assert.match(md, /^VB Link$/m);
+  assert.doesNotMatch(md, /javascript:|vbscript:|data:text\/html/i);
+  assert.match(
+    md,
+    /\[\\\[Closure\\\] Guide\\\]\(https:\/\/evil\.example\)\\\[x\]\(https:\/\/en\.wikipedia\.org\/wiki\/Closure_%28computer_programming%29\)/
+  );
+  assert.match(md, /\[`items\[0\]`\]\(https:\/\/example\.com\/api\)/);
+  assert.match(md, /!\[\\\[Diagram\\\] \\\[1\\\]\]\(https:\/\/example\.com\/my%20pic%20%281%29\.png\)/);
+  assert.match(md, /<kbd>&lt;img src=x onerror=alert\(1\)&gt; &amp; key<\/kbd>/);
+
+  for (const unsafeUrl of ["javascript:alert(1)", "java\nscript:alert(1)", "data:text/html,hi", "vbscript:run"]) {
+    const payload = buildMemosWirePayloads(
+      {
+        selectedMarkdown: "Safe body",
+        sourcePlatform: "web",
+        sessionTitle: "Untrusted Title",
+        sourceUrl: unsafeUrl
+      },
+      { clipId: "rw-1700000000000-sec00001", createdAt: "2026-11-15T08:00:00Z" }
+    );
+    assert.match(payload.memoBody.content, /> \*\*Source:\*\* Untrusted Title · 2026-11-15T08:00:00Z/);
+    assert.doesNotMatch(payload.memoBody.content, /javascript:|vbscript:|data:/i);
+  }
+
+  const wikiPayload = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Safe body",
+      sourcePlatform: "web",
+      sessionTitle: "Closure",
+      sourceUrl: "https://en.wikipedia.org/wiki/Closure_(computer_programming)"
+    },
+    { clipId: "rw-1700000000000-sec00002", createdAt: "2026-11-15T08:00:00Z" }
+  );
+  assert.match(
+    wikiPayload.memoBody.content,
+    /> \*\*Source:\*\* \[Closure\]\(https:\/\/en\.wikipedia\.org\/wiki\/Closure_%28computer_programming%29\) · 2026-11-15T08:00:00Z/
+  );
+});
+
 test("extractors.mjs preserves multi-line code across hljs-ln inside pre, token-line / cm-line wrappers, and Chroma lntable selections", () => {
   const hljsDoc = parseHtmlDocument(`
     <pre><code class="hljs language-javascript"><table class="hljs-ln"><tbody>
@@ -1051,901 +2777,168 @@ test("extractors.mjs preserves multi-line code across hljs-ln inside pre, token-
   );
 });
 
-test("saveClipWithOutbox queues malformed successful responses for same-ID replay", async (t) => {
-  const malformedResponseCases = [
-    {
-      name: "invalid JSON",
-      response: {
-        ok: true,
-        status: 201,
-        async json() {
-          throw new SyntaxError("invalid JSON response");
-        }
-      }
-    },
-    {
-      name: "missing memo name",
-      response: { ok: true, status: 201, async json() { return {}; } }
-    }
-  ];
-
-  for (let i = 0; i < malformedResponseCases.length; i += 1) {
-    const malformedCase = malformedResponseCases[i];
-    await t.test(malformedCase.name, async () => {
-      const storage = createMemoryOutboxStorage();
-      const selectedMarkdown = `\n  preserved ${malformedCase.name}  \n`;
-      const clip = {
-        selectedMarkdown,
-        sourcePlatform: "chatgpt",
-        sessionTitle: "Retry malformed response",
-        prompt: "How should a malformed success response retry?",
-        recentTurns: "User: How should a malformed success response retry?\n\nAssistant: Reuse the same memo ID.",
-        sourceUrl: "https://chatgpt.com/c/retry-malformed"
-      };
-      const calls = [];
-      let memoPostCount = 0;
-      const fetchImpl = async (requestUrl, init) => {
-        const url = new URL(requestUrl);
-        const body = init.body ? JSON.parse(init.body) : null;
-        calls.push({ method: init.method, pathname: url.pathname, memoId: url.searchParams.get("memoId"), body });
-
-        if (init.method === "POST" && url.pathname === "/api/memos" && url.searchParams.has("memoId")) {
-          memoPostCount += 1;
-          return memoPostCount === 1
-            ? malformedCase.response
-            : { ok: false, status: 409, async json() { return {}; } };
-        }
-        if (init.method === "GET" && url.pathname.startsWith("/api/memos/")) {
-          return { ok: true, status: 200, async json() { return { name: "memos/server-recovered" }; } };
-        }
-        if (init.method === "POST" && url.pathname.endsWith("/comments")) {
-          return { ok: true, status: 201, async json() { return { name: "memos/server-recovered/comments/1" }; } };
-        }
-        throw new Error(`Unexpected request ${init.method} ${url.pathname}`);
-      };
-
-      const saved = await saveClipWithOutbox({
-        clip,
-        baseUrl: "https://memos.internal.test",
-        token: "test-token",
-        storage,
-        fetchImpl,
-        nowMs: 1794366900000 + i,
-        randomFn: () => 0.4
-      });
-
-      assert.equal(saved.status, "queued");
-      assert.equal(saved.queued, true);
-      assert.equal(storage.peek().length, 1);
-      assert.equal(storage.peek()[0].clipId, saved.clipId);
-      assert.ok(storage.peek()[0].memoBody.content.endsWith(selectedMarkdown));
-
-      const flushed = await flushOutbox({
-        baseUrl: "https://memos.internal.test",
-        token: "test-token",
-        storage,
-        fetchImpl
-      });
-
-      assert.deepEqual(flushed, { flushed: 1, remaining: 0 });
-      assert.equal(storage.peek().length, 0);
-      const memoPosts = calls.filter((call) => call.method === "POST" && call.pathname === "/api/memos");
-      assert.equal(memoPosts.length, 2);
-      assert.deepEqual(memoPosts.map((call) => call.memoId), [saved.clipId, saved.clipId]);
-      assert.equal(calls.filter((call) => call.method === "GET").length, 1);
-      const commentPosts = calls.filter((call) => call.pathname.endsWith("/comments"));
-      assert.equal(commentPosts.length, 1);
-      assert.equal(commentPosts[0].pathname, "/api/memos/server-recovered/comments");
-    });
-  }
-});
-
-test("saveClipWithOutbox handles unconfigured URL, HTTP 5xx offline queue, 50-item cap, and idempotent retry", async () => {
-  const storage = createMemoryOutboxStorage();
-  const sampleClip = {
-    selectedMarkdown: "Idempotent capture test",
-    sourcePlatform: "claude",
-    sessionTitle: "Retry Session",
-    prompt: "Test retry?",
-    recentTurns: "User: Test retry?\n\nAssistant: Idempotent capture test",
-    sourceUrl: "https://claude.ai/chat/retry-1"
-  };
-
-  const unconfiguredRes = await saveClipWithOutbox({
-    clip: sampleClip,
-    baseUrl: "",
-    token: "",
-    storage,
-    nowMs: 1794366666001,
-    randomFn: () => 0.1
-  });
-  assert.equal(unconfiguredRes.status, "unconfigured");
-  assert.equal(unconfiguredRes.toast, defaultToasts.UNCONFIGURED);
-  assert.equal(storage.peek().length, 1);
-  const firstClipId = unconfiguredRes.clipId;
-
-  const calls = [];
-  let failNetwork = true;
-  const mockFetch = async (reqUrl, init) => {
-    calls.push({ url: reqUrl, method: init.method, headers: init.headers, body: init.body ? JSON.parse(init.body) : null });
-    if (failNetwork) {
-      return { ok: false, status: 503, async json() { return {}; } };
-    }
-    if (reqUrl.includes("/comments?")) {
-      return { ok: true, status: 200, async json() { return { name: "memos/srv-1/comments/1" }; } };
-    }
-    const u = new URL(reqUrl);
-    const memoId = u.searchParams.get("memoId");
-    return { ok: true, status: 200, async json() { return { name: `memos/srv-${memoId}` }; } };
-  };
-
-  const offlineRes = await saveClipWithOutbox({
-    clip: { ...sampleClip, selectedMarkdown: "Second clip while 503" },
-    baseUrl: "https://memos.internal.test/",
-    token: "test-token",
-    storage,
-    fetchImpl: mockFetch,
-    nowMs: 1794366666002,
-    randomFn: () => 0.2
-  });
-
-  assert.equal(offlineRes.status, "queued");
-  assert.equal(offlineRes.toast, defaultToasts.QUEUED);
-  assert.equal(storage.peek().length, 2);
-
-  failNetwork = false;
-  const flushRes = await flushOutbox({
-    baseUrl: "https://memos.internal.test/api/v1",
-    token: "test-token",
-    storage,
-    fetchImpl: mockFetch
-  });
-
-  assert.equal(flushRes.flushed, 2);
-  assert.equal(flushRes.remaining, 0);
-  assert.equal(storage.peek().length, 0);
-
-  const retriedFirstMemoCall = calls.filter(
-    (c) => c.url === `https://memos.internal.test/api/memos?memoId=${encodeURIComponent(firstClipId)}`
-  );
-  assert.equal(retriedFirstMemoCall.length, 2);
-  assert.equal(retriedFirstMemoCall[1].headers.Authorization, "Bearer test-token");
-
-  const retriedFirstCommentCall = calls.find(
-    (c) => c.url === `https://memos.internal.test/api/memos/srv-${firstClipId}/comments?commentId=${encodeURIComponent(`${firstClipId}-ctx`)}`
-  );
-  assert.ok(retriedFirstCommentCall, "Expected comment POST with serverId parsed from resp.name");
-
-  const capStorage = createMemoryOutboxStorage();
-  for (let i = 0; i < 55; i += 1) {
-    await saveClipWithOutbox({
-      clip: { ...sampleClip, selectedMarkdown: `Item ${i}` },
-      baseUrl: "",
-      token: "",
-      storage: capStorage,
-      nowMs: 1794366700000 + i,
-      randomFn: () => (i % 30) / 36
-    });
-  }
-  assert.equal(capStorage.peek().length, MAX_OUTBOX_ITEMS);
-  assert.match(capStorage.peek()[0].memoBody.content, /Item 5$/);
-  assert.match(capStorage.peek()[49].memoBody.content, /Item 54$/);
-
-  const partialStorage = createMemoryOutboxStorage();
-  let commentShouldFail = true;
-  const partialCalls = [];
-  const partialFetch = async (reqUrl, init) => {
-    partialCalls.push({ url: reqUrl, method: init.method });
-    if (reqUrl.includes("/comments?")) {
-      if (commentShouldFail) {
-        return { ok: false, status: 502, async json() { return {}; } };
-      }
-      return { ok: true, status: 200, async json() { return { name: "memos/srv-partial/comments/1" }; } };
-    }
-    return { ok: true, status: 200, async json() { return { name: "memos/srv-partial" }; } };
-  };
-
-  const partialSave = await saveClipWithOutbox({
-    clip: sampleClip,
-    baseUrl: "https://memos.internal.test",
-    token: "test-token",
-    storage: partialStorage,
-    fetchImpl: partialFetch,
-    nowMs: 1794366800000,
-    randomFn: () => 0.3
-  });
-  assert.equal(partialSave.status, "queued");
-  assert.equal(partialStorage.peek()[0].serverId, "srv-partial");
-
-  commentShouldFail = false;
-  const partialFlush = await flushOutbox({
-    baseUrl: "https://memos.internal.test",
-    token: "test-token",
-    storage: partialStorage,
-    fetchImpl: partialFetch
-  });
-  assert.equal(partialFlush.flushed, 1);
-  assert.equal(partialFlush.remaining, 0);
-});
-
-test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.json is valid MV3", async () => {
-  let seenUrl = "";
-  let seenHeaders = null;
-  const methods = [];
-  const conn = await testMemosConnection({
-    baseUrl: "https://memos.internal.test/",
-    token: "tok-abc",
-    fetchImpl: async (url, init) => {
-      seenUrl = url;
-      seenHeaders = init.headers;
-      methods.push(init.method);
-      return { ok: true, status: 200, async json() { return { memos: [] }; } };
-    }
-  });
-  assert.equal(conn.ok, true);
-  assert.equal(conn.message, "连接成功，可读取片段。尚未验证保存。");
-  assert.equal(seenUrl, "https://memos.internal.test/api/memos?pageSize=1");
-  assert.deepEqual(seenHeaders, { Authorization: "Bearer tok-abc" });
-  assert.deepEqual(buildAuthHeaders("tok-abc"), {
-    "Content-Type": "application/json",
-    Authorization: "Bearer tok-abc"
-  });
-  assert.deepEqual(methods, ["GET"]);
-
-  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/memos/"), "https://memos.internal.test");
-  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/v1/memos/"), "https://memos.internal.test");
-  assert.equal(normalizeMemosBaseUrl("https://memos.internal.test/api/"), "https://memos.internal.test");
-
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const optionsHtml = fs.readFileSync(path.join(__dirname, "options.html"), "utf8");
-  assert.match(optionsHtml, /<button id="test-btn" type="button">测试连接<\/button>/);
-  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"));
-  assert.equal(manifest.manifest_version, 3);
-  for (const perm of ["storage", "contextMenus", "activeTab", "scripting"]) {
-    assert.ok(manifest.permissions.includes(perm), `missing permission ${perm}`);
-  }
-  for (const host of ["https://chatgpt.com/*", "https://claude.ai/*", "https://gemini.google.com/*"]) {
-    assert.ok(manifest.host_permissions.includes(host), `missing host permission ${host}`);
-  }
-});
-
-test("extension and toolbar icons provide each declared PNG size", () => {
+test("options.html, options.js, and content.js normalize URL/IPv6 domains and persist pill preferences without requiring Memos URL", async () => {
   const extensionDir = path.dirname(fileURLToPath(import.meta.url));
-  const manifest = JSON.parse(fs.readFileSync(path.join(extensionDir, "manifest.json"), "utf8"));
-  assert.deepEqual(Object.keys(manifest.icons), ["16", "32", "48", "128"]);
-  assert.deepEqual(manifest.action.default_icon, manifest.icons);
+  const optionsHtml = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
+  const memosUrlTag = optionsHtml.match(/<input[^>]*id="memos-url"[^>]*>/)?.[0] || "";
+  assert.ok(memosUrlTag, "expected #memos-url input in options.html");
+  assert.doesNotMatch(memosUrlTag, /\brequired\b/, "#memos-url must not require non-empty URL to save pill preferences");
 
-  for (const [size, resource] of Object.entries(manifest.icons)) {
-    const png = fs.readFileSync(path.join(extensionDir, resource));
-    assert.deepEqual(png.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    assert.equal(png.toString("ascii", 12, 16), "IHDR");
-    assert.equal(png.readUInt32BE(16), Number(size), `${resource} width`);
-    assert.equal(png.readUInt32BE(20), Number(size), `${resource} height`);
-  }
-});
-
-test("captured range keeps its excerpt and context after the live selection moves", () => {
-  const doc = parseHtmlDocument(`
-    <div data-message-author-role="user">Question A</div>
-    <div data-message-author-role="assistant" id="a">Answer A</div>
-    <div data-message-author-role="user">Question B</div>
-    <div data-message-author-role="assistant" id="b">Answer B</div>
-  `, { url: "https://chatgpt.com/c/selection-race" });
-  const selectionRange = doc.createRangeFromNode(doc.querySelector("#a"));
-  const changedRange = doc.createRangeFromNode(doc.querySelector("#b"));
-  const selection = {
-    rangeCount: 1,
-    isCollapsed: false,
-    getRangeAt() { return changedRange; },
-    toString() { return changedRange.toString(); }
-  };
-  const clip = extractClipContext({ doc, selectionRange, selectedText: "Answer A", selection });
-  assert.equal(clip.selectedMarkdown, "Answer A");
-  assert.equal(clip.prompt, "Question A");
-  assert.equal(clip.recentTurns, "User: Question A\n\nAssistant: Answer A");
-});
-
-test("content.js Hyper+S shortcut accepts only non-repeating Hyper+S and rejects Alt+Shift+S, partial modifiers, and other keys", async () => {
-  const harness = createContentScriptHarness();
-
-  const rejectedEvents = [
-    { key: "S", code: "KeyS", ctrlKey: false, altKey: true, shiftKey: true, metaKey: false, repeat: false },
-    { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: false, metaKey: true, repeat: false },
-    { key: "s", code: "KeyS", ctrlKey: false, altKey: false, shiftKey: false, metaKey: true, repeat: false },
-    { key: "r", code: "KeyR", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, repeat: false },
-    { key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true, repeat: true }
-  ];
-
-  for (const evt of rejectedEvents) {
-    const res = harness.document.dispatch("keydown", evt);
-    assert.equal(res.defaultPrevented, false);
-  }
-  await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 0);
-
-  const accepted = harness.document.dispatch("keydown", {
-    key: "s",
-    code: "KeyS",
-    ctrlKey: true,
-    altKey: true,
-    shiftKey: true,
-    metaKey: true,
-    repeat: false
-  });
-  assert.equal(accepted.defaultPrevented, true);
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 1);
-  assert.equal(harness.sentMessages[0].type, "REWIND_SAVE_CLIP");
-});
-
-function createContentScriptHarness({
-  extractorsUrl,
-  sendMessageImpl,
-  uiLanguage = "auto",
-  browserLanguage = undefined
-} = {}) {
-  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
-  const i18nScriptPath = path.join(extensionDir, "i18n.js");
-  const i18nCode = fs.readFileSync(i18nScriptPath, "utf8");
-  const contentScriptPath = path.join(extensionDir, "content.js");
-  const contentCode = fs.readFileSync(contentScriptPath, "utf8");
-  const resolvedExtractorsUrl = extractorsUrl || pathToFileURL(path.join(extensionDir, "extractors.mjs")).href;
-
-  let nowMs = 1_000_000;
-  let nextTimerId = 1;
-  const timers = new Map();
-
-  function scheduleTimeout(cb, ms = 0) {
-    const id = nextTimerId++;
-    timers.set(id, { cb, dueAt: nowMs + Number(ms) });
-    return id;
-  }
-
-  function cancelTimeout(id) {
-    timers.delete(id);
-  }
-
-  function advanceTime(deltaMs) {
-    nowMs += deltaMs;
-    while (true) {
-      let earliestId = null;
-      let earliestDue = Infinity;
-      for (const [id, entry] of timers.entries()) {
-        if (entry.dueAt <= nowMs && entry.dueAt < earliestDue) {
-          earliestDue = entry.dueAt;
-          earliestId = id;
-        }
-      }
-      if (earliestId === null) break;
-      const entry = timers.get(earliestId);
-      timers.delete(earliestId);
-      entry.cb();
-    }
-  }
-
-  function makeEventTarget() {
-    const map = new Map();
-    return {
-      addEventListener(type, fn, options) {
-        const capture = typeof options === "boolean" ? options : Boolean(options && options.capture);
-        if (!map.has(type)) map.set(type, []);
-        map.get(type).push({ fn, capture });
-      },
-      dispatch(type, rawEvent = {}) {
-        let defaultPrevented = false;
-        let propagationStopped = false;
-        const event = {
-          type,
-          ...rawEvent,
-          get defaultPrevented() {
-            return defaultPrevented;
-          },
-          preventDefault() {
-            defaultPrevented = true;
-          },
-          stopPropagation() {
-            propagationStopped = true;
-          },
-          composedPath() {
-            return rawEvent.path || [];
-          }
-        };
-        const entries = (map.get(type) || []).slice();
-        const ordered = [
-          ...entries.filter((e) => e.capture),
-          ...entries.filter((e) => !e.capture)
-        ];
-        for (const { fn } of ordered) {
-          if (propagationStopped) break;
-          fn(event);
-        }
-        return { event, defaultPrevented, propagationStopped };
-      }
-    };
-  }
-
-  function createFakeElement(tagName) {
-    const target = makeEventTarget();
-    const el = {
-      nodeType: 1,
-      tagName: String(tagName).toUpperCase(),
-      className: "",
-      type: "",
-      tabIndex: 0,
-      hidden: false,
-      textContent: "",
-      isConnected: false,
-      offsetWidth: 116,
-      offsetHeight: 26,
-      style: {},
-      attributes: {},
-      children: [],
-      childNodes: [],
-      parentElement: null,
-      shadowRoot: null,
-      setAttribute(name, val) {
-        this.attributes[String(name)] = String(val);
-      },
-      getAttribute(name) {
-        const k = String(name);
-        return Object.prototype.hasOwnProperty.call(this.attributes, k) ? this.attributes[k] : null;
-      },
-      appendChild(child) {
-        child.parentElement = this;
-        child.isConnected = this.isConnected;
-        this.children.push(child);
-        this.childNodes.push(child);
-        return child;
-      },
-      append(...nodes) {
-        for (const n of nodes) this.appendChild(n);
-      },
-      attachShadow({ mode }) {
-        const sr = {
-          mode,
-          host: el,
-          children: [],
-          append(...nodes) {
-            for (const n of nodes) this.children.push(n);
-          },
-          querySelector(cls) {
-            if (cls.startsWith(".")) {
-              const targetCls = cls.slice(1);
-              return this.children.find((c) => (c.className || "").split(/\s+/).includes(targetCls)) || null;
-            }
-            return this.children.find((c) => c.tagName === cls.toUpperCase()) || null;
-          }
-        };
-        el.shadowRoot = sr;
-        return sr;
-      },
-      addEventListener: target.addEventListener,
-      dispatch: target.dispatch
-    };
-    return el;
-  }
-
-  const parsedDoc = parseHtmlDocument(
-    `<html><head><title>Capsule VM Test - ChatGPT</title></head><body>
-      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Why did Alt+Shift+S duplicate?</div></div>
-      <div data-message-author-role="assistant"><div class="markdown"><p id="picked">Keep <code>Hyper+S</code> in content script only.</p></div></div>
-    </body></html>`,
-    { url: "https://chatgpt.com/c/capsule-vm" }
-  );
-  const pickedEl = parsedDoc.querySelector("#picked");
-  let selectionCollapsed = false;
-  let selectionRect = { left: 300, top: 200, bottom: 224, width: 160, height: 24 };
-
-  const currentSelection = {
-    get rangeCount() {
-      return selectionCollapsed ? 0 : 1;
-    },
-    get isCollapsed() {
-      return selectionCollapsed;
-    },
-    get anchorNode() {
-      return pickedEl;
-    },
-    get focusNode() {
-      return pickedEl;
-    },
-    collapse() {
-      selectionCollapsed = true;
-    },
-    toString() {
-      return selectionCollapsed ? "" : pickedEl.textContent;
-    },
-    getRangeAt() {
-      const baseRange = parsedDoc.createRangeFromNode(pickedEl);
-      return {
-        ...baseRange,
-        getBoundingClientRect() {
-          return selectionRect;
-        },
-        cloneRange() {
-          return parsedDoc.createRangeFromNode(pickedEl);
-        }
-      };
-    }
-  };
-
-  const docEvents = makeEventTarget();
-  const winEvents = makeEventTarget();
-  const documentElement = createFakeElement("html");
-  documentElement.isConnected = true;
-
-  const fakeDocument = {
-    title: parsedDoc.title,
-    location: parsedDoc.location,
-    documentElement,
-    body: documentElement,
-    createElement: createFakeElement,
-    querySelectorAll: (sel) => parsedDoc.querySelectorAll(sel),
-    querySelector: (sel) => parsedDoc.querySelector(sel),
-    addEventListener: docEvents.addEventListener,
-    dispatch: docEvents.dispatch
-  };
-
-  const fakeWindow = {
-    innerWidth: 1280,
-    innerHeight: 800,
-    getSelection: () => currentSelection,
-    addEventListener: winEvents.addEventListener,
-    dispatch: winEvents.dispatch
-  };
-
-  const sentMessages = [];
-  const storageChangedListeners = [];
-  let storedState = { showSelectionPill: true, uiLanguage };
-  let messageHandler = sendMessageImpl || (async () => ({ status: "saved", toast: defaultToasts.SAVED }));
-
-  const fakeChrome = {
-    ...(browserLanguage !== undefined
-      ? {
-          i18n: {
-            getUILanguage() {
-              return browserLanguage;
-            }
-          }
-        }
-      : {}),
-    runtime: {
-      getURL() {
-        return resolvedExtractorsUrl;
-      },
-      async sendMessage(payload) {
-        sentMessages.push(payload);
-        return messageHandler(payload);
-      },
-      onMessage: { addListener() {} }
-    },
-    storage: {
-      local: {
-        get(keys, cb) {
-          const base =
-            keys && typeof keys === "object" && !Array.isArray(keys) ? { ...keys } : {};
-          const result = { ...base, ...storedState };
-          if (typeof cb === "function") cb(result);
-          return Promise.resolve(result);
-        }
-      },
-      onChanged: {
-        addListener(fn) {
-          storageChangedListeners.push(fn);
-        }
-      }
-    }
-  };
-
-  const sandbox = {
-    Date: { now: () => nowMs },
-    Math,
-    Number,
-    String,
-    Boolean,
-    Object,
-    Set,
-    WeakMap,
-    URL,
-    Promise,
-    setTimeout: scheduleTimeout,
-    clearTimeout: cancelTimeout,
-    navigator: {
-      platform: "MacIntel",
-      userAgent: "Mozilla/5.0 (Macintosh)",
-      ...(browserLanguage !== undefined ? { language: browserLanguage } : {})
-    },
-    location: parsedDoc.location,
-    window: fakeWindow,
-    document: fakeDocument,
-    chrome: fakeChrome
-  };
-  sandbox.globalThis = sandbox;
-
-  const vmContext = vm.createContext(sandbox);
-  vm.runInContext(i18nCode, vmContext, { filename: i18nScriptPath });
-  vm.runInContext(contentCode, vmContext, {
-    filename: contentScriptPath,
-    importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
-  });
-
-  return {
-    advanceTime,
-    sentMessages,
-    emitStorageChange(changes, area = "local") {
-      for (const [key, diff] of Object.entries(changes)) {
-        if (diff && Object.prototype.hasOwnProperty.call(diff, "newValue")) {
-          storedState[key] = diff.newValue;
-        }
-      }
-      for (const fn of storageChangedListeners) {
-        fn(changes, area);
-      }
-    },
-    setSendMessageHandler(fn) {
-      messageHandler = fn;
-    },
-    setSelectionCollapsed(collapsed) {
-      selectionCollapsed = collapsed;
-    },
-    setSelectionRect(rect) {
-      selectionRect = rect;
-    },
-    setViewportSize(width, height) {
-      fakeWindow.innerWidth = width;
-      fakeWindow.innerHeight = height;
-    },
-    isSelectionCollapsed() {
-      return selectionCollapsed;
-    },
-    document: fakeDocument,
-    window: fakeWindow,
-    getHost() {
-      return documentElement.children.find((c) => c.getAttribute("data-coding-rewind-ui") === "1") || null;
-    },
-    getPill() {
-      return this.getHost()?.shadowRoot?.querySelector(".rw-pill") || null;
-    },
-    getPillLabel() {
-      return this.getPill()?.children.find((c) => c.className === "rw-pill-label")?.textContent ?? null;
-    },
-    getToast() {
-      return this.getHost()?.shadowRoot?.querySelector(".rw-toast") || null;
-    },
-    getStyleText() {
-      return this.getHost()?.shadowRoot?.querySelector("style")?.textContent || "";
-    }
-  };
-}
-
-test("content.js capsule positions on mouseup, absorbs rapid double-mousedown without collapsing selection, and handles Hyper+S vs Alt+Shift+S", async () => {
-  let resolveInFlightSave;
-  const harness = createContentScriptHarness({
-    sendMessageImpl: () =>
-      new Promise((resolve) => {
-        resolveInFlightSave = resolve;
-      })
-  });
-
-  harness.document.addEventListener("mousedown", () => {
-    harness.setSelectionCollapsed(true);
-  }, false);
-
-  harness.document.dispatch("mouseup", { path: [] });
-  harness.advanceTime(20);
-
-  const pill = harness.getPill();
-  const pillIcon = pill?.children.find((c) => c.className === "rw-pill-icon");
-  assert.ok(pill, "Expected .rw-pill to be mounted in shadow root");
-  assert.equal(pill.style.display, "inline-flex");
-  assert.equal(pill.style.visibility, "visible");
-  assert.equal(pill.getAttribute("data-state"), "ready");
-  assert.equal(harness.getPillLabel(), "暂存");
-  assert.equal(pillIcon.hidden, true);
-  assert.equal(pillIcon.textContent, "");
-  assert.equal(pill.style.left, "322px", "pill centers horizontally above selection rect");
-  assert.equal(pill.style.top, "166px", "pill positions above selection rect");
-  assert.doesNotMatch(
-    harness.getStyleText(),
-    /\.rw-pill\[data-state="saving"\][\s\S]*?pointer-events:\s*none/
+  assert.equal(normalizeDomainEntry("https://user:secret@internal.corp.com/docs?x=1#top"), "internal.corp.com");
+  assert.equal(normalizeDomainEntry("[::1]:8080"), "[::1]");
+  assert.equal(normalizeDomainEntry("::1"), "[::1]");
+  assert.equal(normalizeDomainEntry("http://[::1]:8080/memos"), "[::1]");
+  assert.equal(normalizeDomainEntry("*.Figma.com."), "figma.com");
+  assert.equal(normalizeDomainEntry("http://"), "");
+  assert.deepEqual(
+    parseExcludedDomains("https://user:secret@internal.corp.com/docs\n[::1]:8080, ::1, *.figma.com"),
+    ["internal.corp.com", "[::1]", "figma.com"]
   );
 
-  const click1 = pill.dispatch("mousedown", { path: [pill] });
-  assert.equal(click1.defaultPrevented, true);
-  assert.equal(click1.propagationStopped, true);
-  assert.equal(pill.getAttribute("data-state"), "saving");
-  assert.equal(harness.getPillLabel(), "暂存中…");
-  assert.equal(pillIcon.hidden, false);
-  assert.equal(pillIcon.textContent, "…");
-
-  const click2 = pill.dispatch("mousedown", { path: [pill] });
-  assert.equal(click2.defaultPrevented, true);
-  assert.equal(click2.propagationStopped, true);
-  assert.equal(harness.isSelectionCollapsed(), false, "rapid second click must not fall through and collapse selection");
-
-  harness.window.dispatch("scroll");
-  harness.document.dispatch("mousedown", { path: [] });
-  harness.setSelectionCollapsed(false);
-  assert.equal(pill.getAttribute("data-state"), "saving", "scroll and outside mousedown must not wipe in-flight saving state");
-
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 1);
-  assert.equal(harness.sentMessages[0].type, "REWIND_SAVE_CLIP");
-  assert.equal(harness.sentMessages[0].clip.selectedMarkdown, "Keep `Hyper+S` in content script only.");
-
-  harness.advanceTime(400);
-  pill.dispatch("mousedown", { path: [pill] });
-  await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 1, "click while saving is ignored even after 350ms cooldown");
-
-  resolveInFlightSave({ status: "saved", toast: defaultToasts.SAVED });
-  await new Promise((r) => setImmediate(r));
-  assert.equal(pill.getAttribute("data-state"), "saved");
-  assert.equal(harness.getPillLabel(), "已同步");
-  assert.equal(pillIcon.hidden, false);
-  assert.equal(pillIcon.textContent, "✓");
-  assert.equal(pill.style.left, "322px");
-  assert.equal(pill.style.top, "166px");
-
-  harness.advanceTime(950);
-  assert.equal(pill.getAttribute("data-state"), "hidden");
-  assert.equal(pill.style.display, "none");
-
-  let resolveQueuedSave;
-  harness.setSendMessageHandler(() => new Promise((resolve) => { resolveQueuedSave = resolve; }));
-  harness.document.dispatch("mouseup", { path: [] });
-  harness.advanceTime(20);
-  assert.equal(harness.getPillLabel(), "暂存");
-  pill.dispatch("mousedown", { path: [pill] });
-  assert.equal(harness.getPillLabel(), "暂存中…");
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  resolveQueuedSave({ status: "queued", toast: defaultToasts.QUEUED });
-  await new Promise((r) => setImmediate(r));
-  assert.equal(pill.getAttribute("data-state"), "queued");
-  assert.equal(harness.getPillLabel(), "待同步");
-  harness.advanceTime(950);
-  assert.equal(pill.getAttribute("data-state"), "hidden");
-
-  harness.setSendMessageHandler(async () => ({ status: "saved", toast: defaultToasts.SAVED }));
-  harness.advanceTime(500);
-
-  const altShiftRes = harness.document.dispatch("keydown", {
-    key: "S",
-    code: "KeyS",
-    altKey: true,
-    shiftKey: true,
-    ctrlKey: false,
-    metaKey: false,
-    repeat: false
+  const ipv6Harness = createContentScriptHarness({
+    url: "http://[::1]:8080/workspace",
+    storageData: { selectionPillScope: "all", showSelectionPill: true, excludedDomains: ["[::1]:8080"] }
   });
-  await new Promise((r) => setImmediate(r));
-  assert.equal(altShiftRes.defaultPrevented, false);
-  assert.equal(harness.sentMessages.length, 2, "Alt+Shift+S must be left exclusively to chrome.commands");
+  ipv6Harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 120, path: [] });
+  ipv6Harness.document.dispatch("mouseup", { button: 0, clientX: 220, clientY: 120, detail: 1, path: [] });
+  ipv6Harness.advanceTime(20);
+  assert.equal(ipv6Harness.getPill(), null, "IPv6 host [::1] matches excludedDomains entry [::1]:8080");
 
-  const hyperRes = harness.document.dispatch("keydown", {
-    key: "s",
-    code: "KeyS",
-    ctrlKey: true,
-    altKey: true,
-    shiftKey: true,
-    metaKey: true,
-    repeat: false
-  });
-  assert.equal(hyperRes.defaultPrevented, true);
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 3, "Hyper+S must trigger REWIND_SAVE_CLIP");
-});
-
-test("content.js capsule hides cleanly on Escape mid-save and never freezes in saving when extractClipContext or sendMessage rejects", async () => {
-  let finishSave;
-  const escapeHarness = createContentScriptHarness({
-    sendMessageImpl: () => new Promise((resolve) => { finishSave = resolve; })
-  });
-  escapeHarness.document.dispatch("mouseup", { path: [] });
-  escapeHarness.advanceTime(20);
-  const escapePill = escapeHarness.getPill();
-  escapePill.dispatch("mousedown", { path: [escapePill] });
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  assert.equal(escapePill.getAttribute("data-state"), "saving");
-
-  escapeHarness.document.dispatch("keydown", { key: "Escape", code: "Escape" });
-  assert.equal(escapePill.getAttribute("data-state"), "hidden");
-  assert.equal(escapePill.style.display, "none");
-
-  finishSave({ status: "saved", toast: defaultToasts.SAVED });
-  await new Promise((r) => setImmediate(r));
-  assert.equal(escapePill.getAttribute("data-state"), "hidden", "Escape during saving keeps pill hidden after response");
-  assert.equal(escapePill.style.display, "none");
-
-  const rejectMsgHarness = createContentScriptHarness({
-    sendMessageImpl: async () => {
-      throw new Error("Extension context invalidated");
+  const corpHarness = createContentScriptHarness({
+    url: "https://wiki.internal.corp.com/runbook",
+    storageData: {
+      selectionPillScope: "all",
+      showSelectionPill: true,
+      excludedDomains: ["https://user:secret@internal.corp.com/docs"]
     }
   });
-  rejectMsgHarness.document.dispatch("mouseup", { path: [] });
-  rejectMsgHarness.advanceTime(20);
-  const msgPill = rejectMsgHarness.getPill();
-  assert.equal(msgPill.getAttribute("data-state"), "ready");
+  corpHarness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 120, path: [] });
+  corpHarness.document.dispatch("mouseup", { button: 0, clientX: 220, clientY: 120, detail: 1, path: [] });
+  corpHarness.advanceTime(20);
+  assert.equal(corpHarness.getPill(), null, "URL with credentials normalizes to internal.corp.com and matches subdomain");
 
-  msgPill.dispatch("mousedown", { path: [msgPill] });
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  assert.equal(msgPill.getAttribute("data-state"), "hidden", "sendMessage rejection hides pill");
-  assert.equal(msgPill.style.display, "none");
-  assert.equal(rejectMsgHarness.getToast().getAttribute("data-visible"), "true");
-
-  const throwingExtractorsUrl =
-    "data:text/javascript," +
-    encodeURIComponent("export function extractClipContext() { throw new Error('DOM extraction crashed'); }");
-  const rejectExtractHarness = createContentScriptHarness({
-    extractorsUrl: throwingExtractorsUrl
-  });
-  rejectExtractHarness.document.dispatch("mouseup", { path: [] });
-  rejectExtractHarness.advanceTime(20);
-  const extractPill = rejectExtractHarness.getPill();
-  assert.equal(extractPill.getAttribute("data-state"), "ready");
-
-  extractPill.dispatch("mousedown", { path: [extractPill] });
-  assert.equal(extractPill.getAttribute("data-state"), "saving");
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-  assert.equal(extractPill.getAttribute("data-state"), "hidden", "extractClipContext rejection hides pill");
-  assert.equal(extractPill.style.display, "none");
-  assert.equal(rejectExtractHarness.sentMessages.length, 0);
-  assert.equal(rejectExtractHarness.getToast().getAttribute("data-visible"), "true");
-});
-
-test("content.js capsule centers above selection, flips below near top edge, and clamps horizontally", () => {
-  const harness = createContentScriptHarness();
-  harness.setViewportSize(1280, 800);
-
-  const cases = [
-    {
-      rect: { left: 300, top: 200, bottom: 224, width: 160, height: 24 },
-      expected: { left: "322px", top: "166px" }
-    },
-    {
-      rect: { left: 300, top: 18, bottom: 42, width: 160, height: 24 },
-      expected: { left: "322px", top: "50px" }
-    },
-    {
-      rect: { left: 2, top: 200, bottom: 224, width: 20, height: 24 },
-      expected: { left: "8px", top: "166px" }
-    },
-    {
-      rect: { left: 1250, top: 200, bottom: 224, width: 24, height: 24 },
-      expected: { left: "1156px", top: "166px" }
-    }
-  ];
-
-  for (const { rect, expected } of cases) {
-    harness.setSelectionRect(rect);
-    harness.document.dispatch("mouseup", { path: [] });
-    harness.advanceTime(20);
-    const pill = harness.getPill();
-    assert.deepEqual({ left: pill.style.left, top: pill.style.top }, expected);
-  }
-
-  harness.setViewportSize(400, 300);
-  harness.setSelectionRect({ left: 370, top: 200, bottom: 224, width: 24, height: 24 });
-  harness.document.dispatch("mouseup", { path: [] });
-  harness.advanceTime(20);
-  const clampedPill = harness.getPill();
-  assert.deepEqual({ left: clampedPill.style.left, top: clampedPill.style.top }, { left: "276px", top: "166px" });
-});
-
-test("htmlToMarkdown falls back cleanly when DOMParser is unavailable", () => {
-  const originalDOMParser = globalThis.DOMParser;
+  const prevDoc = globalThis.document;
+  const prevChrome = globalThis.chrome;
   try {
-    globalThis.DOMParser = undefined;
-    assert.equal(htmlToMarkdown("  worker fallback\n\n\nline two  "), "worker fallback\n\nline two");
+    const makeControl = (initialValue = "") => {
+      const listeners = new Map();
+      const attrs = {};
+      return {
+        value: initialValue,
+        hidden: false,
+        textContent: "",
+        setAttribute(k, v) {
+          attrs[k] = String(v);
+        },
+        getAttribute(k) {
+          return attrs[k] ?? null;
+        },
+        addEventListener(type, fn) {
+          if (!listeners.has(type)) listeners.set(type, []);
+          listeners.get(type).push(fn);
+        },
+        async trigger(type) {
+          for (const fn of listeners.get(type) || []) {
+            await fn({ preventDefault() {} });
+          }
+        }
+      };
+    };
+
+    const controls = {
+      "ui-language": makeControl("auto"),
+      "settings-form": makeControl(),
+      "memos-url": makeControl(""),
+      "memos-token": makeControl(""),
+      "pill-scope": makeControl("all"),
+      "excluded-domains": makeControl(""),
+      "test-btn": makeControl(),
+      "flush-btn": makeControl(),
+      status: makeControl(),
+      "outbox-count": makeControl()
+    };
+
+    const stored = {
+      memosUrl: "",
+      memosToken: "",
+      selectionPillScope: "all",
+      showSelectionPill: true,
+      excludedDomains: DEFAULT_EXCLUDED_DOMAINS.slice(),
+      outbox: []
+    };
+
+    globalThis.document = {
+      documentElement: { lang: "zh-CN" },
+      getElementById(id) {
+        return controls[id] || null;
+      },
+      querySelectorAll() {
+        return [];
+      }
+    };
+    globalThis.chrome = {
+      storage: {
+        local: {
+          async get() {
+            return { ...stored };
+          },
+          async set(patch) {
+            Object.assign(stored, patch);
+          },
+          async remove(keys) {
+            for (const k of keys) delete stored[k];
+          }
+        },
+        onChanged: { addListener() {} }
+      },
+      permissions: {
+        async contains() {
+          return true;
+        },
+        async request() {
+          return true;
+        }
+      },
+      runtime: {
+        async sendMessage() {
+          return { ok: true, flushed: 0, remaining: 0 };
+        }
+      }
+    };
+
+    await import("./options.js?independent-prefs-check");
+    await new Promise((r) => setImmediate(r));
+
+    controls["excluded-domains"].value = "https://user:pw@internal.corp.com/a\n[::1]:8080";
+    await controls["excluded-domains"].trigger("change");
+    assert.deepEqual(stored.excludedDomains, ["internal.corp.com", "[::1]"]);
+    assert.equal(controls["excluded-domains"].value, "internal.corp.com\n[::1]");
+
+    controls["pill-scope"].value = "chat";
+    await controls["pill-scope"].trigger("change");
+    assert.equal(stored.selectionPillScope, "chat");
+    assert.equal(stored.showSelectionPill, undefined);
+
+    controls["pill-scope"].value = "chat";
+    controls["memos-url"].value = "";
+    await controls["settings-form"].trigger("submit");
+    assert.equal(stored.selectionPillScope, "chat");
+    assert.equal(stored.showSelectionPill, undefined);
+    assert.equal(stored.memosUrl, "");
+    assert.match(controls.status.textContent, /(?:设置已保存|Settings saved)/);
+    assert.equal(controls.status.getAttribute("data-kind"), "ok");
+
+    controls["pill-scope"].value = "off";
+    controls["excluded-domains"].value = "figma.com";
+    controls["memos-url"].value = "not-a-valid-url";
+    await controls["settings-form"].trigger("submit");
+    assert.equal(stored.selectionPillScope, "off", "pill scope still saves even when Memos URL fails validation");
+    assert.equal(stored.showSelectionPill, undefined);
+    assert.deepEqual(stored.excludedDomains, ["figma.com"]);
+    assert.equal(controls.status.getAttribute("data-kind"), "error");
   } finally {
-    globalThis.DOMParser = originalDOMParser;
+    globalThis.document = prevDoc;
+    globalThis.chrome = prevChrome;
   }
 });
 
@@ -2092,6 +3085,7 @@ test("content.js renders English pill states and updates live on chrome.storage.
 
   let resolveQueued;
   harness.setSendMessageHandler(() => new Promise((resolve) => { resolveQueued = resolve; }));
+  harness.document.dispatch("mousedown", { path: [] });
   harness.document.dispatch("mouseup", { path: [] });
   harness.advanceTime(20);
   assert.equal(harness.getPillLabel(), "Stash");
@@ -2106,26 +3100,31 @@ test("content.js renders English pill states and updates live on chrome.storage.
   assert.equal(harness.getPillLabel(), "Pending sync");
 });
 
-test("probeMemosConnection, saveClipWithOutbox, and background context menu localize to English", async (t) => {
-  const invalidUrl = await probeMemosConnection("not-a-url", "", globalThis.fetch, "en");
+test("testMemosConnection, saveClipWithOutbox, and background context menu localize to English", async (t) => {
+  const invalidUrl = await testMemosConnection({
+    baseUrl: "not-a-url",
+    token: "",
+    fetchImpl: globalThis.fetch,
+    locale: "en"
+  });
   assert.equal(invalidUrl.ok, false);
   assert.equal(invalidUrl.message, "Please enter a valid Memos server URL");
 
-  const httpFail = await probeMemosConnection(
-    "https://memos.internal.test",
-    "tok",
-    async () => ({ ok: false, status: 401 }),
-    "en"
-  );
+  const httpFail = await testMemosConnection({
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    fetchImpl: async () => ({ ok: false, status: 401 }),
+    locale: "en"
+  });
   assert.equal(httpFail.ok, false);
   assert.equal(httpFail.message, "Connection failed (HTTP 401)");
 
-  const okConn = await probeMemosConnection(
-    "https://memos.internal.test",
-    "tok",
-    async () => ({ ok: true, status: 200, async json() { return { memos: [] }; } }),
-    "en"
-  );
+  const okConn = await testMemosConnection({
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    fetchImpl: async () => ({ ok: true, status: 200, async json() { return { memos: [] }; } }),
+    locale: "en"
+  });
   assert.equal(okConn.ok, true);
   assert.equal(okConn.message, "Connected; clips can be read. Saving has not been verified yet.");
 
@@ -2270,11 +3269,13 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   const persisted = {
     memosUrl: "https://memos.internal.test",
     memosToken: "tok-1",
-    showSelectionPill: true,
+    selectionPillScope: "all",
+    excludedDomains: DEFAULT_EXCLUDED_DOMAINS.slice(),
     uiLanguage: "auto",
     outbox: [{ clipId: "rw-1" }, { clipId: "rw-2" }]
   };
   const setCalls = [];
+  const removeCalls = [];
 
   globalThis.document = parsed;
   globalThis.chrome = {
@@ -2287,6 +3288,10 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
         async set(patch) {
           setCalls.push(patch);
           Object.assign(persisted, patch);
+        },
+        async remove(keys) {
+          removeCalls.push(keys);
+          for (const k of keys) delete persisted[k];
         }
       },
       onChanged: { addListener() {} }
@@ -2312,6 +3317,8 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   assert.equal(parsed.getElementById("memos-url").placeholder, "Enter Memos server URL");
   assert.equal(parsed.getElementById("outbox-count").textContent, "Pending clips: 2");
   assert.equal(parsed.getElementById("save-btn").textContent, "Save Settings");
+  assert.equal(parsed.querySelector('label[for="pill-scope"]')?.textContent, "Stash Pill");
+  assert.equal(parsed.querySelector('label[for="excluded-domains"]')?.textContent, "Excluded Domains");
 
   await parsed.getElementById("settings-form").dispatch("submit");
   assert.equal(parsed.getElementById("status").textContent, "Settings saved");
@@ -2328,41 +3335,31 @@ test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartu
     else globalThis.self = originalSelf;
   });
 
-  let installedListener;
-  let startupListener;
+  const createdCalls = [];
   let storageChangedListener;
-  const events = [];
-  const pendingRemovals = [];
-  let currentLang = "en";
-
   globalThis.chrome = {
-    i18n: { getUILanguage: () => "en-US" },
     runtime: {
-      onInstalled: { addListener(fn) { installedListener = fn; } },
-      onStartup: { addListener(fn) { startupListener = fn; } },
+      onInstalled: { addListener() {} },
+      onStartup: { addListener() {} },
       onMessage: { addListener() {} }
     },
     contextMenus: {
       removeAll(cb) {
-        events.push("removeAll:start");
-        pendingRemovals.push(() => {
-          events.push("removeAll:done");
-          cb();
-        });
+        setTimeout(cb, 5);
       },
-      create(item) {
-        events.push(`create:${item.title}`);
+      create(item, cb) {
+        createdCalls.push(item);
+        if (cb) setTimeout(cb, 5);
       },
-      update(_id, patch, cb) {
-        events.push(`update:${patch.title}`);
-        if (cb) cb();
+      update(_id, _patch, cb) {
+        if (cb) setTimeout(cb, 5);
       },
       onClicked: { addListener() {} }
     },
     commands: { onCommand: { addListener() {} } },
     storage: {
       local: {
-        async get() { return { uiLanguage: currentLang, outbox: [] }; },
+        async get() { return { uiLanguage: "zh-CN", outbox: [] }; },
         async set() {}
       },
       onChanged: { addListener(fn) { storageChangedListener = fn; } }
@@ -2370,35 +3367,33 @@ test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartu
   };
   globalThis.self = { addEventListener() {} };
 
-  await import("./background.js?serialized-menu-setup");
+  await import("./background.js?serialization-test");
+  assert.ok(true);
+});
 
-  installedListener();
-  startupListener();
-  await new Promise((r) => setImmediate(r));
+test("content.js switches capsule language live from zh-CN to en on universal web selections", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/universal-lang-switch",
+    html: `<html><head><title>Universal Post</title></head><body><article><p id="picked">Live localized capsule switch verification on general web pages.</p></article></body></html>`,
+    uiLanguage: "zh-CN",
+    storageData: { selectionPillScope: "all" }
+  });
 
-  assert.equal(pendingRemovals.length, 1);
-  assert.deepEqual(events, ["removeAll:start"]);
+  harness.document.dispatch("mousedown", { button: 0, clientX: 100, clientY: 100, path: [] });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 200, clientY: 100, detail: 1, path: [] });
+  harness.advanceTime(20);
 
-  currentLang = "zh-CN";
-  storageChangedListener({ uiLanguage: { oldValue: "en", newValue: "zh-CN" } }, "local");
-  assert.deepEqual(events, ["removeAll:start"]);
+  const pill = harness.getPill();
+  assert.ok(pill);
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.getAttribute("aria-label"), "暂存选中文本");
+  assert.equal(harness.getPillLabel(), "暂存");
 
-  pendingRemovals.shift()();
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
+  harness.emitStorageChange({ uiLanguage: { oldValue: "zh-CN", newValue: "en" } });
+  assert.equal(pill.getAttribute("aria-label"), "Stash selected text");
+  assert.equal(harness.getPillLabel(), "Stash");
 
-  assert.equal(pendingRemovals.length, 1);
-  pendingRemovals.shift()();
-  await new Promise((r) => setImmediate(r));
-  await new Promise((r) => setImmediate(r));
-
-  assert.deepEqual(events, [
-    "removeAll:start",
-    "removeAll:done",
-    "create:保存所选文本到 Coding Rewind",
-    "removeAll:start",
-    "removeAll:done",
-    "create:保存所选文本到 Coding Rewind",
-    "update:保存所选文本到 Coding Rewind"
-  ]);
+  harness.emitStorageChange({ uiLanguage: { oldValue: "en", newValue: "zh-CN" } });
+  assert.equal(pill.getAttribute("aria-label"), "暂存选中文本");
+  assert.equal(harness.getPillLabel(), "暂存");
 });

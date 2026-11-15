@@ -110,6 +110,37 @@ async function ensureContentScriptAndExtract(tabId) {
   return null;
 }
 
+export async function injectContentScriptIntoOpenTabs({
+  tabsApi = typeof chrome !== "undefined" ? chrome?.tabs : undefined,
+  scriptingApi = typeof chrome !== "undefined" ? chrome?.scripting : undefined
+} = {}) {
+  if (typeof tabsApi?.query !== "function" || typeof scriptingApi?.executeScript !== "function") {
+    return { attempted: 0, injected: 0 };
+  }
+  let tabs = [];
+  try {
+    const queried = await tabsApi.query({ url: ["https://*/*", "http://*/*"] });
+    if (Array.isArray(queried)) tabs = queried;
+  } catch {
+    return { attempted: 0, injected: 0 };
+  }
+  let attempted = 0;
+  let injected = 0;
+  await Promise.all(
+    tabs.map(async (tab) => {
+      if (!tab || typeof tab.id !== "number") return;
+      attempted += 1;
+      await scriptingApi
+        .executeScript({ target: { tabId: tab.id }, files: ["i18n.js", "content.js"] })
+        .then(() => {
+          injected += 1;
+        })
+        .catch(() => {});
+    })
+  );
+  return { attempted, injected };
+}
+
 async function notifyTabToast(tabId, result) {
   if (!tabId || !result || !result.toast) return;
   try {
@@ -179,6 +210,7 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
 if (typeof chrome !== "undefined" && chrome.runtime) {
   chrome.runtime.onInstalled.addListener(() => {
     void setupMenusAndAlarms();
+    void injectContentScriptIntoOpenTabs();
     void triggerFlushOutbox();
   });
 
