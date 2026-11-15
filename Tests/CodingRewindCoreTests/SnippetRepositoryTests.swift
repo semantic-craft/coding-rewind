@@ -387,12 +387,7 @@ struct SnippetRepositoryTests {
         #expect(SnippetQuery(limit: 0).limit == 1)
         #expect(SnippetQuery(limit: 999).limit == 500)
 
-        let cachedHotCards = HotCache(fileURL: paths.hotCacheFileURL).loadCards(now: now)
-        #expect(Set(cachedHotCards.map(\.id)) == ["rw-recent-ready", "rw-outbox-1", "rw-recent-pending"])
-        let rawCacheJSON = try String(contentsOf: paths.hotCacheFileURL, encoding: .utf8)
-        #expect(!rawCacheJSON.contains("rw-old-ready"))
-        #expect(!rawCacheJSON.contains("rw-recent-synth"))
-        #expect(!rawCacheJSON.contains("rw-old-synth"))
+        #expect(!FileManager.default.fileExists(atPath: paths.hotCacheFileURL.path))
     }
 
     @Test("listSnippets fails closed to offlineFallback when a later page fails and serves localOnly when unconfigured")
@@ -564,7 +559,7 @@ struct SnippetRepositoryTests {
         #expect(offlineCached.dataOrigin == .localCache)
         #expect(offlineCached.verbatimText == "Cached fallback snippet")
 
-        await #expect(throws: RewindError.invalidClipID("plain-memo")) {
+        await #expect(throws: RewindError.snippetNotFound("plain-memo")) {
             _ = try await repo.getSnippet(id: "plain-memo", includeContext: true, now: now)
         }
         await #expect(throws: (any Error).self) {
@@ -635,7 +630,7 @@ struct SnippetRepositoryTests {
         let remainingCached = HotCache(fileURL: paths.hotCacheFileURL).loadCards(now: now)
         #expect(remainingCached.map(\.id) == ["rw-keep-2"])
 
-        await #expect(throws: RewindError.invalidClipID("non-rewind")) {
+        await #expect(throws: RewindError.snippetNotFound("non-rewind")) {
             _ = try await repo.archiveSnippet(id: "non-rewind")
         }
         let patchToNonRewind = SnippetMockURLProtocol.recordedRequests(suiteID: suiteID)

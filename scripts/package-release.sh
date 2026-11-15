@@ -51,11 +51,32 @@ if [[ ! -d "${STAGED_APP}" ]]; then
     exit 1
 fi
 
-RAW_VERSION="${CODING_REWIND_RELEASE_VERSION:-$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${STAGED_APP}/Contents/Info.plist")}"
-VERSION="${RAW_VERSION#v}"
-VERSION="${VERSION#V}"
-if [[ -z "${VERSION}" ]]; then
-    echo "Error: release version could not be determined" >&2
+PLIST_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "${STAGED_APP}/Contents/Info.plist")"
+if [[ -z "${PLIST_VERSION}" ]]; then
+    echo "Error: CFBundleShortVersionString could not be read from ${STAGED_APP}/Contents/Info.plist" >&2
+    exit 1
+fi
+
+if [[ -n "${CODING_REWIND_RELEASE_VERSION:-}" ]]; then
+    VERSION="${CODING_REWIND_RELEASE_VERSION#v}"
+    VERSION="${VERSION#V}"
+    if [[ -z "${VERSION}" || "${VERSION}" != "${PLIST_VERSION}" ]]; then
+        echo "Error: CODING_REWIND_RELEASE_VERSION (${CODING_REWIND_RELEASE_VERSION}) does not match Info.plist CFBundleShortVersionString (${PLIST_VERSION})" >&2
+        exit 1
+    fi
+else
+    VERSION="${PLIST_VERSION}"
+fi
+
+CLI_VERSION_OUTPUT="$("${STAGED_APP}/Contents/Helpers/coding-rewind" --version)"
+if [[ "${CLI_VERSION_OUTPUT}" != "coding-rewind ${PLIST_VERSION}" ]]; then
+    echo "Error: coding-rewind --version (${CLI_VERSION_OUTPUT}) does not match Info.plist CFBundleShortVersionString (${PLIST_VERSION})" >&2
+    exit 1
+fi
+
+CLIPPER_VERSION_NAME="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("version_name", ""))' "${REPO_ROOT}/extensions/web-clipper/manifest.json")"
+if [[ "${CLIPPER_VERSION_NAME}" != "${PLIST_VERSION}" ]]; then
+    echo "Error: extensions/web-clipper/manifest.json version_name (${CLIPPER_VERSION_NAME}) does not match Info.plist CFBundleShortVersionString (${PLIST_VERSION})" >&2
     exit 1
 fi
 

@@ -4,6 +4,23 @@ import CodingRewindCore
 import Darwin
 import Foundation
 
+private final class MCPSessionTokenBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cachedToken: String?
+
+    func get() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return cachedToken
+    }
+
+    func set(_ token: String) {
+        lock.lock()
+        cachedToken = token
+        lock.unlock()
+    }
+}
+
 public enum CLIRunner {
     private struct VersionPayload: Codable, Equatable, Sendable {
         let name: String
@@ -15,8 +32,8 @@ public enum CLIRunner {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         now: @escaping @Sendable () -> Date = Date.init,
         inputFD: Int32 = STDIN_FILENO,
-        writeStdout: (String) -> Void = { writeUTF8($0, to: STDOUT_FILENO) },
-        writeStderr: (String) -> Void = { writeUTF8($0, to: STDERR_FILENO) },
+        writeStdout: (String) -> Void = { _ = writeUTF8($0, to: STDOUT_FILENO) },
+        writeStderr: (String) -> Void = { _ = writeUTF8($0, to: STDERR_FILENO) },
         mcpOutputFD: Int32 = STDOUT_FILENO,
         repositoryFactory: (@Sendable (StoragePaths, [String: String], URL?) -> any SnippetQuerying)? = nil
     ) async -> Int32 {
@@ -117,13 +134,47 @@ public enum CLIRunner {
             }
 
         case .mcp(let dataDir):
+            let sessionTokenBox = MCPSessionTokenBox()
             let server = MCPServer(
                 repositoryProvider: {
-                    try makeRepository(
+                    if let repositoryFactory {
+                        return try makeRepository(
+                            dataDirOverride: dataDir,
+                            environment: environment,
+                            executablePath: executablePath,
+                            factory: repositoryFactory
+                        )
+                    }
+                    let context = try resolveRepositoryContext(
                         dataDirOverride: dataDir,
                         environment: environment,
-                        executablePath: executablePath,
-                        factory: factory
+                        executablePath: executablePath
+                    )
+                    var sessionEnv = context.environment
+                    let envToken = sessionEnv[StoragePaths.memosTokenEnvironmentKey]?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    var preResolvedToken: DeveloperCredentialsResolver.TokenResolution?
+                    if envToken.isEmpty {
+                        if let cached = sessionTokenBox.get() {
+                            sessionEnv[StoragePaths.memosTokenEnvironmentKey] = cached
+                        } else if context.paths.resolveMemosBaseURL(environment: sessionEnv) != nil {
+                            let resolution = DeveloperCredentialsResolver.resolveToken(
+                                paths: context.paths,
+                                environment: sessionEnv,
+                                bundledDeveloperCredentialsURL: context.bundledCredentialsURL
+                            )
+                            if case .resolved(let resolvedToken) = resolution {
+                                sessionTokenBox.set(resolvedToken)
+                                sessionEnv[StoragePaths.memosTokenEnvironmentKey] = resolvedToken
+                            }
+                            preResolvedToken = resolution
+                        }
+                    }
+                    return SnippetRepository(
+                        paths: context.paths,
+                        environment: sessionEnv,
+                        bundledDeveloperCredentialsURL: context.bundledCredentialsURL,
+                        preResolvedToken: preResolvedToken
                     )
                 },
                 now: now
@@ -132,12 +183,11 @@ public enum CLIRunner {
         }
     }
 
-    private static func makeRepository(
+    private static func resolveRepositoryContext(
         dataDirOverride: String?,
         environment: [String: String],
-        executablePath: String?,
-        factory: @Sendable (StoragePaths, [String: String], URL?) -> any SnippetQuerying
-    ) throws -> any SnippetQuerying {
+        executablePath: String?
+    ) throws -> (paths: StoragePaths, environment: [String: String], bundledCredentialsURL: URL?) {
         var resolvedEnv = environment
         let hasCustomDataDir: Bool
         if let dataDirOverride {
@@ -152,26 +202,55 @@ public enum CLIRunner {
         }
 
         let paths = try StoragePaths.resolve(environment: resolvedEnv)
-        let bundledCredentialsURL: URL?
-        if !hasCustomDataDir,
-           resolvedEnv[StoragePaths.qaEnvironmentKey] != "1",
-           let executablePath, !executablePath.isEmpty {
-            let execURL = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath()
-            let helpersDir = execURL.deletingLastPathComponent()
-            let contentsDir = helpersDir.deletingLastPathComponent()
-            if helpersDir.lastPathComponent == "Helpers", contentsDir.lastPathComponent == "Contents" {
-                let candidate = contentsDir
-                    .appendingPathComponent("Resources", isDirectory: true)
-                    .appendingPathComponent("DeveloperCredentials.plist", isDirectory: false)
-                bundledCredentialsURL = FileManager.default.isReadableFile(atPath: candidate.path) ? candidate : nil
-            } else {
-                bundledCredentialsURL = nil
-            }
-        } else {
-            bundledCredentialsURL = nil
-        }
+        let bundledCredentialsURL = resolveBundledCredentialsURL(
+            executablePath: executablePath,
+            hasCustomDataDir: hasCustomDataDir,
+            environment: resolvedEnv
+        )
+        return (paths, resolvedEnv, bundledCredentialsURL)
+    }
 
-        return factory(paths, resolvedEnv, bundledCredentialsURL)
+    package static func resolveBundledCredentialsURL(
+        executablePath: String?,
+        hasCustomDataDir: Bool,
+        environment: [String: String],
+        fallbackExecutableURL: URL? = Bundle.main.executableURL
+    ) -> URL? {
+        guard !hasCustomDataDir,
+              environment[StoragePaths.qaEnvironmentKey] != "1" else {
+            return nil
+        }
+        let execURL: URL?
+        if let executablePath, !executablePath.isEmpty, executablePath.contains("/") {
+            execURL = URL(fileURLWithPath: executablePath).resolvingSymlinksInPath()
+        } else {
+            execURL = fallbackExecutableURL?.resolvingSymlinksInPath()
+        }
+        guard let execURL else { return nil }
+        let helpersDir = execURL.deletingLastPathComponent()
+        let contentsDir = helpersDir.deletingLastPathComponent()
+        guard helpersDir.lastPathComponent == "Helpers",
+              contentsDir.lastPathComponent == "Contents" else {
+            return nil
+        }
+        let candidate = contentsDir
+            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("DeveloperCredentials.plist", isDirectory: false)
+        return FileManager.default.isReadableFile(atPath: candidate.path) ? candidate : nil
+    }
+
+    private static func makeRepository(
+        dataDirOverride: String?,
+        environment: [String: String],
+        executablePath: String?,
+        factory: @Sendable (StoragePaths, [String: String], URL?) -> any SnippetQuerying
+    ) throws -> any SnippetQuerying {
+        let context = try resolveRepositoryContext(
+            dataDirOverride: dataDirOverride,
+            environment: environment,
+            executablePath: executablePath
+        )
+        return factory(context.paths, context.environment, context.bundledCredentialsURL)
     }
 
     private static func describeError(_ error: Error) -> String {
@@ -181,21 +260,31 @@ public enum CLIRunner {
         return String(describing: error)
     }
 
-    public static func writeUTF8(_ string: String, to fd: Int32) {
-        let data = Data(string.utf8)
-        data.withUnsafeBytes { rawBuffer in
-            guard let base = rawBuffer.baseAddress else { return }
+    @discardableResult
+    public static func writeAll(_ data: Data, to fd: Int32) -> Bool {
+        guard !data.isEmpty else { return true }
+        return data.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.baseAddress else { return true }
             var remaining = rawBuffer.count
             var offset = 0
             while remaining > 0 {
                 let written = Darwin.write(fd, base.advanced(by: offset), remaining)
                 if written < 0 {
                     if errno == EINTR { continue }
-                    return
+                    return false
+                }
+                if written == 0 {
+                    return false
                 }
                 remaining -= written
                 offset += written
             }
+            return true
         }
+    }
+
+    @discardableResult
+    public static func writeUTF8(_ string: String, to fd: Int32) -> Bool {
+        writeAll(Data(string.utf8), to: fd)
     }
 }

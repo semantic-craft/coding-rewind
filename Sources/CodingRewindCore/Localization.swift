@@ -137,6 +137,8 @@ public enum L10n {
                 return "未找到当前应用的窗口。"
             case .invalidClipID(let id):
                 return "片段编号无效：\(id)"
+            case .snippetNotFound(let id):
+                return "未找到片段：\(id)"
             case .invalidMemosURL(let raw):
                 return "Memos 服务地址无效：\(raw)"
             case .missingCredentials:
@@ -162,6 +164,8 @@ public enum L10n {
                 return "Could not find an active window in the frontmost app."
             case .invalidClipID(let id):
                 return "Invalid clip ID: \(id)"
+            case .snippetNotFound(let id):
+                return "Snippet not found: \(id)"
             case .invalidMemosURL(let raw):
                 return "Invalid Memos server URL: \(raw)"
             case .missingCredentials:

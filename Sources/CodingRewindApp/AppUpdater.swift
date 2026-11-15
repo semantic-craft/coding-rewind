@@ -130,8 +130,8 @@ public final class AppUpdater {
         defaults: UserDefaults,
         language: AppLanguage = .zhHans
     ) -> AppUpdater {
-        let rawVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.3.2"
-        let version = SemanticVersion(parsing: rawVersion) ?? SemanticVersion(major: 0, minor: 3, patch: 2)
+        let rawVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.4.0"
+        let version = SemanticVersion(parsing: rawVersion) ?? SemanticVersion(major: 0, minor: 4, patch: 0)
         return AppUpdater(
             paths: paths,
             environment: environment,
@@ -451,9 +451,10 @@ public final class AppUpdater {
             }
         }
 
-        let helpersDir = sameVolumeStagedApp.appendingPathComponent("Contents/Helpers", isDirectory: true)
-        guard Self.isAbsentOrRegularExecutableFile(at: helpersDir.appendingPathComponent("coding-rewind-sidecar")),
-              Self.isAbsentOrRegularExecutableFile(at: helpersDir.appendingPathComponent("coding-rewind")) else {
+        guard Self.hasValidCandidatePayload(
+            at: sameVolumeStagedApp,
+            expectedVersion: staged.candidate.version
+        ) else {
             Self.cleanupDirectory(swapWorkDir)
             Self.cleanupDirectory(staged.stagingDirectoryURL)
             setFailure(.tamperedSignature)
@@ -544,6 +545,15 @@ public final class AppUpdater {
             return nil
         }
 
+        guard Self.hasValidCandidatePayload(
+            at: candidateBundleURL,
+            expectedVersion: candidate.version
+        ) else {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            setFailure(.tamperedSignature)
+            return nil
+        }
+
         return (installedSig, expectedBundleID)
     }
 
@@ -620,11 +630,33 @@ public final class AppUpdater {
         return (st.st_mode & S_IFMT) == S_IFDIR
     }
 
-    private static nonisolated func isAbsentOrRegularExecutableFile(at url: URL) -> Bool {
-        var st = stat()
-        if lstat(url.path, &st) != 0 {
-            return errno == ENOENT
+    private static nonisolated func hasValidCandidatePayload(
+        at bundleURL: URL,
+        expectedVersion: SemanticVersion
+    ) -> Bool {
+        let infoPlistURL = bundleURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
+        guard isRegularFile(at: infoPlistURL),
+              let plistData = try? Data(contentsOf: infoPlistURL),
+              let plist = (try? PropertyListSerialization.propertyList(from: plistData, format: nil)) as? [String: Any],
+              let rawShortVersion = plist["CFBundleShortVersionString"] as? String,
+              let bundleVersion = SemanticVersion(parsing: rawShortVersion),
+              bundleVersion == expectedVersion else {
+            return false
         }
+        let helpersDir = bundleURL.appendingPathComponent("Contents/Helpers", isDirectory: true)
+        return isRegularExecutableFile(at: helpersDir.appendingPathComponent("coding-rewind-sidecar", isDirectory: false))
+            && isRegularExecutableFile(at: helpersDir.appendingPathComponent("coding-rewind", isDirectory: false))
+    }
+
+    private static nonisolated func isRegularFile(at url: URL) -> Bool {
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return false }
+        return (st.st_mode & S_IFMT) == S_IFREG
+    }
+
+    private static nonisolated func isRegularExecutableFile(at url: URL) -> Bool {
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return false }
         let isRegular = (st.st_mode & S_IFMT) == S_IFREG
         let isExecutable = (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0
         return isRegular && isExecutable
