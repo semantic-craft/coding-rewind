@@ -3219,16 +3219,7 @@ test("testMemosConnection, saveClipWithOutbox, and background context menu local
   assert.equal(updatedMenus.at(-1)?.patch.title, "Save selection to Coding Rewind");
 });
 
-test("options.html and initOptionsPage switch UI language live and persist uiLanguage immediately", async (t) => {
-  const originalDocument = globalThis.document;
-  const originalChrome = globalThis.chrome;
-  t.after(() => {
-    if (originalDocument === undefined) delete globalThis.document;
-    else globalThis.document = originalDocument;
-    if (originalChrome === undefined) delete globalThis.chrome;
-    else globalThis.chrome = originalChrome;
-  });
-
+function createOptionsPageTestHarness({ persistedInit = {}, uiLanguage = "zh-CN", fetchImpl, tabsCreate, openImpl } = {}) {
   const extensionDir = path.dirname(fileURLToPath(import.meta.url));
   const optionsHtml = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
   const parsed = parseHtmlDocument(optionsHtml);
@@ -3247,6 +3238,9 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
     });
     node.setAttribute = (name, val) => {
       node.attributes[String(name).toLowerCase()] = String(val);
+    };
+    node.removeAttribute = (name) => {
+      delete node.attributes[String(name).toLowerCase()];
     };
     node.addEventListener = (type, fn) => {
       if (!listeners.has(type)) listeners.set(type, []);
@@ -3267,21 +3261,36 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   parsed.getElementById = (id) => parsed.querySelector(`#${id}`);
 
   const persisted = {
-    memosUrl: "https://memos.internal.test",
-    memosToken: "tok-1",
+    memosUrl: "",
+    memosToken: "",
     selectionPillScope: "all",
     excludedDomains: DEFAULT_EXCLUDED_DOMAINS.slice(),
     uiLanguage: "auto",
-    outbox: [{ clipId: "rw-1" }, { clipId: "rw-2" }]
+    outbox: [],
+    ...persistedInit
   };
   const setCalls = [];
   const removeCalls = [];
+  const sentRuntimeMessages = [];
+  let storageChangedListener = null;
 
   globalThis.document = parsed;
+  if (fetchImpl) {
+    globalThis.fetch = fetchImpl;
+  }
+  if (openImpl !== undefined) {
+    globalThis.open = openImpl;
+  }
   globalThis.chrome = {
-    i18n: { getUILanguage: () => "zh-CN" },
+    i18n: { getUILanguage: () => uiLanguage },
     permissions: { async request() { return true; } },
-    runtime: { async sendMessage() { return { ok: true, flushed: 2, remaining: 0 }; } },
+    tabs: tabsCreate ? { create: tabsCreate } : undefined,
+    runtime: {
+      async sendMessage(msg) {
+        sentRuntimeMessages.push(msg);
+        return { ok: true, flushed: persisted.outbox.length, remaining: 0 };
+      }
+    },
     storage: {
       local: {
         async get() { return { ...persisted }; },
@@ -3294,14 +3303,67 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
           for (const k of keys) delete persisted[k];
         }
       },
-      onChanged: { addListener() {} }
+      onChanged: {
+        addListener(fn) {
+          storageChangedListener = fn;
+        }
+      }
     }
   };
+
+  return {
+    parsed,
+    optionsHtml,
+    persisted,
+    setCalls,
+    removeCalls,
+    sentRuntimeMessages,
+    emitStorageChange(changes) {
+      storageChangedListener?.(changes, "local");
+    }
+  };
+}
+
+test("options.html and initOptionsPage switch UI language live and persist uiLanguage immediately", async (t) => {
+  const originalDocument = globalThis.document;
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  t.after(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+  });
+
+  const fetchCalls = [];
+  const { parsed, persisted, setCalls } = createOptionsPageTestHarness({
+    persistedInit: {
+      memosUrl: "https://memos.internal.test",
+      memosToken: "tok-1",
+      outbox: [{ clipId: "rw-1" }, { clipId: "rw-2" }]
+    },
+    fetchImpl: async (url, init) => {
+      fetchCalls.push({ url, init });
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => "application/json; charset=utf-8" },
+        async json() { return { memos: [] }; }
+      };
+    }
+  });
 
   initOptionsPage();
   await new Promise((r) => setImmediate(r));
 
   assert.equal(parsed.title, "Coding Rewind 网页扩展设置");
+  assert.equal(parsed.getElementById("connection-heading").textContent, "云端同步");
+  assert.equal(parsed.getElementById("open-console-btn").textContent, "打开后台拿令牌 ↗");
+  assert.equal(parsed.getElementById("open-console-btn").disabled, false);
+  assert.equal(parsed.getElementById("memos-token").value, "");
+  assert.equal(parsed.getElementById("memos-token").placeholder, "已保存，留空则保留现有令牌");
   assert.equal(parsed.getElementById("test-btn").textContent, "测试连接");
   assert.equal(parsed.getElementById("outbox-count").textContent, "待同步片段：2 条");
 
@@ -3312,7 +3374,9 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   assert.deepEqual(setCalls.at(-1), { uiLanguage: "en" });
   assert.equal(parsed.documentElement.lang, "en");
   assert.equal(parsed.title, "Coding Rewind Web Clipper Settings");
-  assert.equal(parsed.getElementById("connection-heading").textContent, "Memos Connection");
+  assert.equal(parsed.getElementById("connection-heading").textContent, "Cloud Sync");
+  assert.equal(parsed.getElementById("open-console-btn").textContent, "Get Token ↗");
+  assert.equal(parsed.getElementById("memos-token").placeholder, "Saved; leave blank to keep existing token");
   assert.equal(parsed.getElementById("test-btn").textContent, "Test Connection");
   assert.equal(parsed.getElementById("memos-url").placeholder, "Enter Memos server URL");
   assert.equal(parsed.getElementById("outbox-count").textContent, "Pending clips: 2");
@@ -3321,8 +3385,14 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   assert.equal(parsed.querySelector('label[for="excluded-domains"]')?.textContent, "Excluded Domains");
 
   await parsed.getElementById("settings-form").dispatch("submit");
-  assert.equal(parsed.getElementById("status").textContent, "Settings saved");
+  assert.equal(parsed.getElementById("status").textContent, "Settings saved. Connected; clips can be read.");
+  assert.equal(parsed.getElementById("status").getAttribute("data-kind"), "ok");
   assert.equal(persisted.uiLanguage, "en");
+  assert.equal(persisted.memosToken, "tok-1");
+  assert.equal(parsed.getElementById("memos-token").value, "");
+  assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].url, "https://memos.internal.test/api/memos?pageSize=1");
+  assert.equal(fetchCalls[0].init.headers.Authorization, "Bearer tok-1");
 });
 
 test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartup, and storage.onChanged calls", async (t) => {
@@ -3396,4 +3466,235 @@ test("content.js switches capsule language live from zh-CN to en on universal we
   harness.emitStorageChange({ uiLanguage: { oldValue: "en", newValue: "zh-CN" } });
   assert.equal(pill.getAttribute("aria-label"), "暂存选中文本");
   assert.equal(harness.getPillLabel(), "暂存");
+});
+
+test("Cloud Sync onboarding copy, deploy guide link, and i18n messages avoid em dashes and expose required attributes", () => {
+  const extensionDir = path.dirname(fileURLToPath(import.meta.url));
+  const optionsHtml = fs.readFileSync(path.join(extensionDir, "options.html"), "utf8");
+  const parsed = parseHtmlDocument(optionsHtml);
+
+  assert.equal(parsed.querySelector("#connection-heading")?.textContent.trim(), "云端同步");
+  const introLine1 = parsed.querySelector('[data-i18n="cloudSyncIntroLine1"]')?.textContent.trim();
+  const introLine2 = parsed.querySelector('[data-i18n="cloudSyncIntroLine2"]')?.textContent.trim();
+  assert.ok(introLine1 && introLine1.length > 0);
+  assert.ok(introLine2 && introLine2.length > 0);
+
+  const guideLink = parsed.querySelector("#deploy-guide-link");
+  assert.ok(guideLink, "expected #deploy-guide-link");
+  assert.equal(
+    guideLink.getAttribute("href"),
+    "https://github.com/semantic-craft/coding-rewind/tree/main/deploy/vps"
+  );
+  assert.equal(guideLink.getAttribute("target"), "_blank");
+  assert.equal(guideLink.getAttribute("rel"), "noopener noreferrer");
+
+  const consoleBtn = parsed.querySelector("#open-console-btn");
+  assert.ok(consoleBtn, "expected #open-console-btn");
+  assert.equal(consoleBtn.disabled, true);
+  assert.equal(parsed.querySelector("#memos-token")?.getAttribute("placeholder"), "请输入访问令牌");
+
+  const i18n = globalThis.CodingRewindI18n;
+  for (const locale of ["zh-CN", "en"]) {
+    for (const [key, val] of Object.entries(i18n.MESSAGES[locale])) {
+      assert.doesNotMatch(val, /\u2014/, `${locale}.${key} must not contain em dashes`);
+    }
+  }
+});
+
+test("testMemosConnection rejects HTML 200 pages, invalid JSON, and objects missing memos array", async () => {
+  const htmlWithHeader = await testMemosConnection({
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    locale: "zh-CN",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => (name.toLowerCase() === "content-type" ? "text/html; charset=utf-8" : null) },
+      async text() { return "<!doctype html><html><body>Login</body></html>"; },
+      async json() { return { memos: [] }; }
+    })
+  });
+  assert.equal(htmlWithHeader.ok, false);
+  assert.equal(htmlWithHeader.message, "服务返回的不是有效的 Memos 接口响应，请确认服务地址");
+
+  const htmlWithoutHeader = await testMemosConnection({
+    baseUrl: "https://memos.internal.test",
+    token: "tok",
+    locale: "en",
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() { throw new SyntaxError("Unexpected token '<'"); }
+    })
+  });
+  assert.equal(htmlWithoutHeader.ok, false);
+  assert.equal(
+    htmlWithoutHeader.message,
+    "Server did not return a valid Memos API response; verify the server URL"
+  );
+
+  for (const invalidPayload of [{ error: "unauthorized" }, { ok: true }, {}, [], "memos", null]) {
+    const res = await testMemosConnection({
+      baseUrl: "https://memos.internal.test",
+      token: "tok",
+      locale: "en",
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => "application/json" },
+        async json() { return invalidPayload; }
+      })
+    });
+    assert.equal(res.ok, false, `expected rejection for payload ${JSON.stringify(invalidPayload)}`);
+  }
+});
+
+test("initOptionsPage handles dynamic token placeholders, blank save preservation, console button, and save-time auto-verify", async (t) => {
+  const originalDocument = globalThis.document;
+  const originalChrome = globalThis.chrome;
+  const originalFetch = globalThis.fetch;
+  const originalOpen = globalThis.open;
+  t.after(() => {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+    if (originalOpen === undefined) delete globalThis.open;
+    else globalThis.open = originalOpen;
+  });
+
+  const openedTabs = [];
+  const fetchRequests = [];
+  let nextFetchMode = "ok";
+
+  const { parsed, persisted, sentRuntimeMessages } = createOptionsPageTestHarness({
+    persistedInit: {
+      memosUrl: "",
+      memosToken: "",
+      uiLanguage: "zh-CN",
+      outbox: [{ clipId: "rw-pending-1" }]
+    },
+    uiLanguage: "zh-CN",
+    tabsCreate: async (opts) => {
+      openedTabs.push(opts);
+    },
+    fetchImpl: async (url, init) => {
+      fetchRequests.push({ url, init });
+      if (nextFetchMode === "html200") {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => "text/html" },
+          async text() { return "<html><body>Portal</body></html>"; }
+        };
+      }
+      if (nextFetchMode === "http401") {
+        return { ok: false, status: 401 };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => "application/json" },
+        async json() { return { memos: [] }; }
+      };
+    }
+  });
+
+  initOptionsPage();
+  await new Promise((r) => setImmediate(r));
+
+  const form = parsed.getElementById("settings-form");
+  const urlInput = parsed.getElementById("memos-url");
+  const tokenInput = parsed.getElementById("memos-token");
+  const consoleBtn = parsed.getElementById("open-console-btn");
+  const testBtn = parsed.getElementById("test-btn");
+  const status = parsed.getElementById("status");
+
+  assert.equal(tokenInput.value, "");
+  assert.equal(tokenInput.placeholder, "请输入访问令牌");
+  assert.equal(consoleBtn.disabled, true);
+
+  urlInput.value = "ftp://memos.example.com";
+  await urlInput.dispatch("input");
+  assert.equal(consoleBtn.disabled, true);
+
+  // Also check stripping via normalizeMemosBaseUrl for /api/v1/memos/ suffix
+  urlInput.value = "https://memos.example.com/api/v1/memos/"; // checked via normalizeMemosBaseUrl
+  await urlInput.dispatch("input");
+  assert.equal(consoleBtn.disabled, false);
+
+  await consoleBtn.dispatch("click");
+  assert.deepEqual(openedTabs.at(-1), { url: "https://memos.example.com" });
+
+  // Submit with valid URL and missing token skips network probe, sends flush, and does not claim connected
+  urlInput.value = "https://memos.example.com/api/memos/";
+  await urlInput.dispatch("input");
+  await form.dispatch("submit");
+  assert.equal(persisted.memosUrl, "https://memos.example.com");
+  assert.equal(persisted.memosToken, "");
+  assert.equal(fetchRequests.length, 0);
+  assert.equal(sentRuntimeMessages.length, 1);
+  assert.deepEqual(sentRuntimeMessages.at(-1), { type: "REWIND_FLUSH_OUTBOX" });
+  assert.equal(status.textContent, "设置已保存。缺少访问令牌，尚未验证连接。");
+  assert.equal(status.getAttribute("data-kind"), "info");
+  assert.doesNotMatch(status.textContent, /已连接/);
+
+  // Submit with new token saves, clears input, updates placeholder, flushes, and verifies connection
+  tokenInput.value = "secret-tok-1";
+  await form.dispatch("submit");
+  assert.equal(persisted.memosToken, "secret-tok-1");
+  assert.equal(tokenInput.value, "");
+  assert.equal(tokenInput.placeholder, "已保存，留空则保留现有令牌");
+  assert.equal(fetchRequests.length, 1);
+  assert.equal(fetchRequests[0].url, "https://memos.example.com/api/memos?pageSize=1");
+  assert.equal(fetchRequests[0].init.headers.Authorization, "Bearer secret-tok-1");
+  assert.equal(status.textContent, "设置已保存，连接成功，可读取片段。");
+  assert.equal(status.getAttribute("data-kind"), "ok");
+  assert.equal(sentRuntimeMessages.length, 2);
+
+  // Blank submit preserves existing token, flushes, and re-verifies with preserved token
+  assert.equal(tokenInput.value, "");
+  await form.dispatch("submit");
+  assert.equal(persisted.memosToken, "secret-tok-1");
+  assert.equal(fetchRequests.length, 2);
+  assert.equal(fetchRequests[1].init.headers.Authorization, "Bearer secret-tok-1");
+  assert.equal(sentRuntimeMessages.length, 3);
+
+  // Manual Test Connection click with blank token uses savedToken
+  await testBtn.dispatch("click");
+  assert.equal(fetchRequests.length, 3);
+  assert.equal(fetchRequests[2].init.headers.Authorization, "Bearer secret-tok-1");
+  assert.equal(status.getAttribute("data-kind"), "ok");
+
+  // HTML 200 failure on Save still dispatches idempotent outbox flush and reports inline error
+  nextFetchMode = "html200";
+  await form.dispatch("submit");
+  assert.equal(fetchRequests.length, 4);
+  assert.equal(status.getAttribute("data-kind"), "error");
+  assert.match(status.textContent, /设置已保存，但连接验证失败/);
+  assert.equal(sentRuntimeMessages.length, 4);
+
+  // Clearing URL preserves savedToken, disables console button, and skips network probe and flush
+  urlInput.value = "";
+  await form.dispatch("submit");
+  assert.equal(persisted.memosUrl, "");
+  assert.equal(persisted.memosToken, "secret-tok-1");
+  assert.equal(consoleBtn.disabled, true);
+  assert.equal(fetchRequests.length, 4);
+  assert.equal(sentRuntimeMessages.length, 4);
+  assert.equal(status.textContent, "设置已保存。未填写服务地址，云端同步未启用。");
+  assert.equal(status.getAttribute("data-kind"), "ok");
+
+  // Fallback to globalThis.open when chrome.tabs is unavailable
+  const fallbackOpened = [];
+  globalThis.chrome.tabs = undefined;
+  globalThis.open = (u, target, rel) => fallbackOpened.push({ u, target, rel });
+  urlInput.value = "https://memos.example.com/notes/api/memos";
+  await urlInput.dispatch("input");
+  await consoleBtn.dispatch("click");
+  assert.deepEqual(fallbackOpened, [
+    { u: "https://memos.example.com/notes", target: "_blank", rel: "noopener,noreferrer" }
+  ]);
 });
