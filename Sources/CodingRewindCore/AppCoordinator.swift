@@ -792,12 +792,12 @@ public final class AppCoordinator {
         onOpenURL?(url)
     }
 
-    public func installOrRepairPlugin(sourceBridgeURL: URL?, sourceSidecarURL: URL? = nil) {
+    public func installOrRepairPlugin(sourceCLIBinaryURL: URL? = nil, sourceSidecarURL: URL? = nil) {
         do {
             try AntigravityIntegration.installOrRepair(
                 dataDirectoryURL: paths.dataDirectoryURL,
                 configDirectoryURL: paths.antigravityConfigDirectoryURL,
-                sourceMCPBridgeURL: sourceBridgeURL,
+                sourceCLIBinaryURL: sourceCLIBinaryURL,
                 sourceSidecarBinaryURL: sourceSidecarURL,
                 language: language
             )

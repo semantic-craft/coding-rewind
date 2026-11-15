@@ -85,6 +85,7 @@
 | 开源协议 | 决定 | 2026-11-11 | 全仓采用 MIT License 公开维护，严禁混入 GPL、AGPL、Commons Clause 或无许可源码 |
 | 统一后端与反胶水收敛 | 决定 | 2026-11-11 | 以阿里云轻量服务器自托管原版 `usememos/memos` 为唯一事实源，配合轻量幂等 AI 语境增强器与原生 `/mcp`，砍掉冗余本地 SQLite 业务库、重复自建编辑器与手写 MCP 服务 |
 | 极薄客户端与宿主协同 | 决定 | 2026-11-11 | macOS 端保持约三百五十行非激活毛玻璃菜单栏 HUD，网页端采用直连 Memos REST API 的 MV3 薄扩展，勾选卡片后经 `agentapi new-conversation` 与 `/rewind` 交回 Antigravity 完成场景 A 追问与场景 C 写稿 |
+| 单二进制 CLI 与领域 MCP 收敛 | 决定 | 2026-11-15 | 淘汰远端 41 个通用 Memos MCP 工具与 `memos-mcp-bridge.sh`，提供共用 `CodingRewindCore` 的单二进制 `coding-rewind`（CLI + 暴露 4 个领域工具的 `mcp` 子命令），支持按参数读取超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并替换 `servers.json` 接线 |
 
 ## 已记录的产品方向
 
@@ -108,7 +109,7 @@ MVP 闭环围绕四步主链路构建：
 1. **桌面与网页双端无感暂存**，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文弹出非激活“暂存”胶囊，或在任意 macOS 应用中按 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区并关联当前会话提问与近 4 轮记录；在 ChatGPT、Claude、Gemini 网页中通过选区上方“暂存”胶囊、右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 提取选区 Markdown 与近 4 轮对话直连写入 `Memos`，全程不抢焦点、不弹自定义协议确认框。
 2. **异步幂等 AI 脉络定锚**，VPS 端 `rewind-enricher` 读取片段及上下文评论，生成精炼标题、原会话主题、上下文摘要与关键词引用头，100% 保留用户选中原文一字不改。
 3. **72 小时毛玻璃热流速览与离线兜底**，按 `⌃⌥R` 呼出非激活毛玻璃面板查看近 72 小时热流卡片，断网时依赖 `hot_cache.json` 与 `outbox.jsonl` 实现毫秒级打开和后续幂等重放。
-4. **无缝接入 Antigravity 开展 A 与 C**，在 HUD 多选卡片按 `⌘Return` 调用 `agentapi new-conversation` 带完整上下文拉起新对话，或在 Antigravity `Knowledge Work` 界面通过 `/rewind` 与钥匙串保护的 `Memos` 原生 `/mcp` 检索引用片段辅助成文。
+4. **无缝接入主力宿主开展 A 与 C**，在 HUD 多选卡片按 `⌘Return` 带完整上下文拉起 Antigravity 或 Codex 新对话，或通过 `coding-rewind`（CLI 与 `coding-rewind mcp` 四个领域工具）检索引用片段辅助成文。
 5. **数据自主可控**，依托自托管 `usememos/memos` 支持随时查看、导出、归档和彻底删除单条或全部记录。
 
 ## 当前非目标
@@ -145,3 +146,11 @@ MVP 闭环围绕四步主链路构建：
 > 我觉得就只需要暂存。 然后快捷键用hyper+S
 
 已拍板：在 Gemini 网页端（及扩展支持的网页对话）、Gemini 桌面端与 Antigravity 桌面端统一提供 PopClip 风格的单动作非激活“暂存”悬浮胶囊，桌面端在设置通用页提供“选中文本时显示暂存胶囊”开关；默认捕获快捷键迁移为 `⌃⌥⇧⌘S`（`Hyper+S`），未自定义的旧版 `⌃⌥S` 配置自动一次性升级，用户显式自定义或清空的快捷键保持不变。
+
+## 2026-11-15 单二进制 CLI 与领域 MCP 收敛
+
+用户在当前聊天确认 Agent 接口收敛与历史片段查询边界：
+
+> 1 .淘汰远端 41 个通用 Memos 工具。2. 允许 Agent 传入参数读取超过 72 小时或已标记 #rewind/synthesized 的历史片段。 3. 倾向于一步到位做出同二进制的 coding-rewind（同时包含 CLI 与 mcp 子命令并替换 servers.json 中的 memos-mcp-bridge.sh）
+
+已拍板：退役 `scripts/memos-mcp-bridge.sh`、`npx mcp-remote` 及远端 41 个通用 Memos MCP 工具，由共用 `CodingRewindCore` 的原生单二进制 `coding-rewind`（固定安装路径 `~/Library/Application Support/CodingRewind/bin/coding-rewind`）同时提供 CLI（`list`、`search`、`get`、`archive`）与内嵌 `coding-rewind mcp` stdio 服务（仅暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 四个领域工具），默认聚焦近 72 小时活跃片段，同时支持按参数查询超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并在断网时回退读取本机 `hot_cache.json` 与 `outbox.jsonl`。

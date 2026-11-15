@@ -9,10 +9,7 @@ import hashlib
 import hmac
 import json
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 import unittest
@@ -21,10 +18,6 @@ import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import enricher  # noqa: E402
-
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-BRIDGE_SCRIPT = REPO_ROOT / "scripts" / "memos-mcp-bridge.sh"
 
 
 def _sign_standard_webhook(key_bytes: bytes, msg_id: str, ts: str, body: bytes) -> str:
@@ -732,101 +725,6 @@ class EnricherUnitTests(unittest.TestCase):
         finally:
             srv.shutdown()
             srv.server_close()
-
-
-class MemosMcpBridgeTests(unittest.TestCase):
-    def setUp(self) -> None:
-        scratch_parent = REPO_ROOT / ".build"
-        scratch_parent.mkdir(parents=True, exist_ok=True)
-        self.temp_dir = Path(tempfile.mkdtemp(prefix="bridge-test-", dir=str(scratch_parent)))
-        self.bin_dir = self.temp_dir / "bin"
-        self.bin_dir.mkdir()
-
-        # Mock npx records argv as JSON instead of hitting npm/network
-        npx_stub = self.bin_dir / "npx"
-        npx_stub.write_text(
-            "#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps(sys.argv[1:]))\n",
-            encoding="utf-8",
-        )
-        npx_stub.chmod(0o755)
-
-        # Mock macOS `security` binary containing ONLY personal com.codingrewind.memos token
-        sec_stub = self.bin_dir / "security"
-        sec_stub.write_text(
-            "#!/usr/bin/env python3\n"
-            "import os, sys\n"
-            "args = sys.argv[1:]\n"
-            "svc = args[args.index('-s') + 1] if '-s' in args else ''\n"
-            "log_path = os.environ.get('MOCK_SECURITY_LOG')\n"
-            "if log_path:\n"
-            "    open(log_path, 'a', encoding='utf-8').write(svc + '\\n')\n"
-            "if svc == 'com.codingrewind.memos' and os.environ.get('MOCK_PERSONAL_TOKEN'):\n"
-            "    print(os.environ['MOCK_PERSONAL_TOKEN'])\n"
-            "    sys.exit(0)\n"
-            "sys.exit(44)\n",
-            encoding="utf-8",
-        )
-        sec_stub.chmod(0o755)
-
-    def tearDown(self) -> None:
-        shutil.rmtree(self.temp_dir, ignore_errors=True)
-
-    def _base_env(self) -> dict[str, str]:
-        env = {k: v for k, v in os.environ.items() if not k.startswith("CODING_REWIND_")}
-        env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '')}"
-        env["CODING_REWIND_DATA_DIR"] = str(self.temp_dir / "data")
-        return env
-
-    def test_env_resolution_and_trailing_slash_normalization(self) -> None:
-        env = self._base_env()
-        env["CODING_REWIND_MEMOS_URL"] = "https://memos.example.com/"
-        env["CODING_REWIND_MEMOS_TOKEN"] = "env-secret-token"
-        proc = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True, check=True)
-        self.assertEqual(
-            json.loads(proc.stdout.strip()),
-            ["-y", "mcp-remote", "https://memos.example.com/mcp", "--header", "Authorization: Bearer env-secret-token"],
-        )
-
-        legacy_suffix = "/api" + "/v1/memos/"
-        env["CODING_REWIND_MEMOS_URL"] = f"https://memos.example.com{legacy_suffix}"
-        legacy_proc = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True, check=True)
-        self.assertEqual(
-            json.loads(legacy_proc.stdout.strip()),
-            ["-y", "mcp-remote", "https://memos.example.com/mcp", "--header", "Authorization: Bearer env-secret-token"],
-        )
-
-    def test_config_json_and_keychain_resolution(self) -> None:
-        env = self._base_env()
-        data_dir = Path(env["CODING_REWIND_DATA_DIR"])
-        data_dir.mkdir(parents=True, exist_ok=True)
-        (data_dir / "config.json").write_text('{"memos_url": "https://notes.example.org"}', encoding="utf-8")
-        env["MOCK_PERSONAL_TOKEN"] = "kc-token-123"
-        proc = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True, check=True)
-        self.assertEqual(
-            json.loads(proc.stdout.strip()),
-            ["-y", "mcp-remote", "https://notes.example.org/mcp", "--header", "Authorization: Bearer kc-token-123"],
-        )
-
-    def test_missing_url_and_qa_keychain_isolation(self) -> None:
-        # Missing URL fails cleanly
-        env = self._base_env()
-        missing_url = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True)
-        self.assertNotEqual(missing_url.returncode, 0)
-        self.assertIn("missing Memos URL", missing_url.stderr)
-
-        # CODING_REWIND_QA=1 MUST query com.codingrewind.memos.qa and NEVER fall back to personal Keychain
-        env["CODING_REWIND_MEMOS_URL"] = "https://qa.example.org"
-        env["CODING_REWIND_QA"] = "1"
-        env["CODING_REWIND_KEYCHAIN_SERVICE"] = "com.codingrewind.memos"
-        env["MOCK_PERSONAL_TOKEN"] = "personal-token-must-not-leak"
-        sec_log = self.temp_dir / "security_calls.log"
-        env["MOCK_SECURITY_LOG"] = str(sec_log)
-
-        qa_res = subprocess.run([str(BRIDGE_SCRIPT)], env=env, capture_output=True, text=True)
-        self.assertNotEqual(qa_res.returncode, 0)
-        self.assertIn("com.codingrewind.memos.qa", qa_res.stderr)
-        self.assertNotIn("personal-token-must-not-leak", qa_res.stdout)
-        self.assertEqual(sec_log.read_text(encoding="utf-8").splitlines(), ["com.codingrewind.memos.qa"])
 
 
 if __name__ == "__main__":

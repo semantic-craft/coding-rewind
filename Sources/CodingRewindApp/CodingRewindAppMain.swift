@@ -177,6 +177,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
             let installer = AntigravityPluginInstaller(paths: paths)
             self.antigravityInstaller = installer
+            Self.stageBundledCLIBinaryIfAvailable(paths: paths)
             try? installer.refreshLocalizedMetadataIfInstalled(language: initialLanguage)
 
             let loginItem = LoginItemController.live(
@@ -463,6 +464,19 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         hudPanel?.presentNonActivating(anchorFrame: statusItemController?.anchorFrame)
     }
 
+    public static func stageBundledCLIBinaryIfAvailable(
+        paths: StoragePaths,
+        bundleURL: URL = Bundle.main.bundleURL
+    ) {
+        guard bundleURL.pathExtension.lowercased() == "app" else { return }
+        let bundledCLI = bundleURL.appendingPathComponent("Contents/Helpers/coding-rewind", isDirectory: false)
+        guard FileManager.default.isExecutableFile(atPath: bundledCLI.path) else { return }
+        try? AntigravityIntegration.stageCLIBinary(
+            sourceCLIBinaryURL: bundledCLI,
+            in: paths.dataDirectoryURL
+        )
+    }
+
     public func installPlugin() {
         guard let coord = coordinator else { return }
         let fm = FileManager.default
@@ -471,7 +485,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
         ]
         coord.installOrRepairPlugin(
-            sourceBridgeURL: dirs.map { $0.appendingPathComponent("memos-mcp-bridge.sh") }.first { fm.fileExists(atPath: $0.path) },
+            sourceCLIBinaryURL: dirs.map { $0.appendingPathComponent("coding-rewind") }.first { fm.isExecutableFile(atPath: $0.path) },
             sourceSidecarURL: dirs.map { $0.appendingPathComponent("coding-rewind-sidecar") }.first { fm.isExecutableFile(atPath: $0.path) }
         )
     }

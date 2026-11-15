@@ -17,10 +17,36 @@ public enum AntigravityIntegration {
         dataDirectoryURL.standardizedFileURL.appendingPathComponent("bin/coding-rewind-sidecar")
     }
 
-    public static func stableMCPBridgeURL(in dataDirectoryURL: URL) -> URL {
+    public static func stableCLIBinaryURL(in dataDirectoryURL: URL) -> URL {
         dataDirectoryURL.standardizedFileURL
             .appendingPathComponent("bin", isDirectory: true)
-            .appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
+            .appendingPathComponent("coding-rewind", isDirectory: false)
+    }
+
+    public static func stageCLIBinary(
+        sourceCLIBinaryURL: URL?,
+        in dataDirectoryURL: URL
+    ) throws {
+        let fm = FileManager.default
+        let resolvedData = dataDirectoryURL.standardizedFileURL
+        let destCLI = stableCLIBinaryURL(in: resolvedData)
+        guard !destCLI.path.contains("/.build/") else {
+            throw RewindError.ioError("Refusing to install coding-rewind inside transient .build/ path")
+        }
+        let binDir = destCLI.deletingLastPathComponent()
+        try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
+
+        let retiredBridge = binDir.appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
+        if fm.fileExists(atPath: retiredBridge.path) {
+            try? fm.removeItem(at: retiredBridge)
+        }
+
+        if let sourceCLI = sourceCLIBinaryURL?.standardizedFileURL,
+           sourceCLI != destCLI,
+           fm.isExecutableFile(atPath: sourceCLI.path) {
+            try AtomicFile.writeData(Data(contentsOf: sourceCLI), to: destCLI, permissions: 0o755)
+            _ = chmod(destCLI.path, 0o755)
+        }
     }
 
     public static func suggestedPrompts(in language: AppLanguage = .zhHans) -> [String] {
@@ -31,15 +57,21 @@ public enum AntigravityIntegration {
     public static func installOrRepair(
         dataDirectoryURL: URL,
         configDirectoryURL: URL,
-        sourceMCPBridgeURL: URL? = nil,
+        sourceCLIBinaryURL: URL? = nil,
         sourceSidecarBinaryURL: URL? = nil,
         language: AppLanguage = .zhHans
     ) throws -> URL {
         let fm = FileManager.default
         let resolvedData = dataDirectoryURL.standardizedFileURL
         let resolvedConfig = configDirectoryURL.standardizedFileURL
+        try stageCLIBinary(sourceCLIBinaryURL: sourceCLIBinaryURL, in: resolvedData)
+        guard fm.isExecutableFile(atPath: stableCLIBinaryURL(in: resolvedData).path) else {
+            let detail = language == .en
+                ? "Missing coding-rewind; install the plugin from a packaged app bundle"
+                : "缺少 coding-rewind，请用完整应用包安装插件"
+            throw RewindError.ioError(detail)
+        }
         let binDir = resolvedData.appendingPathComponent("bin", isDirectory: true)
-        try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
 
         let retiredActiveTurn = resolvedData.appendingPathComponent("active_turn.json")
         if fm.fileExists(atPath: retiredActiveTurn.path) {
@@ -48,16 +80,6 @@ public enum AntigravityIntegration {
         let retiredHook = binDir.appendingPathComponent("coding-rewind-hook")
         if fm.fileExists(atPath: retiredHook.path) {
             try? fm.removeItem(at: retiredHook)
-        }
-
-        if let srcBridge = sourceMCPBridgeURL?.standardizedFileURL,
-           fm.fileExists(atPath: srcBridge.path) {
-            let destBridge = stableMCPBridgeURL(in: resolvedData)
-            if srcBridge != destBridge {
-                let bridgeData = try Data(contentsOf: srcBridge)
-                try AtomicFile.writeData(bridgeData, to: destBridge, permissions: 0o755)
-                _ = chmod(destBridge.path, 0o755)
-            }
         }
 
         let destSidecar = stableSidecarBinaryURL(in: resolvedData)
@@ -96,17 +118,17 @@ public enum AntigravityIntegration {
         let skillMarkdown = """
         ---
         name: rewind
-        description: Query and synthesize recent 72-hour Coding Rewind highlights stored in Memos with full conversation provenance.
+        description: Query, search, and synthesize Coding Rewind highlights with full conversation provenance via coding-rewind MCP tools or CLI.
         ---
 
         # Coding Rewind (/rewind)
 
-        Use the configured Memos MCP tools to inspect, synthesize, and update `#rewind/` cards:
+        Use the `coding-rewind` MCP tools (or `~/Library/Application Support/CodingRewind/bin/coding-rewind` CLI when MCP is not wired) to inspect, search, synthesize, and archive `#rewind/` snippets:
 
-        1. Call `memo_list_memos` to list recent memos and filter to entries tagged `#rewind/ready` or `#rewind/pending` within the 72-hour hot window (skip `#rewind/synthesized` unless requested).
-        2. Call `memo_get_memo` and `memo_list_memo_comments` when inspecting a specific `memos/<id>` card; preserve verbatim body text unmodified and read the `> **Title:**`, `> **Session:**`, `> **Context:**`, and `> **Source:**` blockquote headers.
-        3. Always cite original provenance links (`[出处](conversation://<id>)` or web chat URLs) when referencing or quoting a highlight.
-        4. Use `memo_create_memo` to store new synthesized notes when requested, or `memo_update_memo` (`updateMask: content`) to replace `#rewind/ready` / `#rewind/pending` with `#rewind/synthesized` once cards are incorporated.
+        1. Call `list_snippets` (defaults: `window: "72h"`, `status: "active"`) or `search_snippets` (`query`) to inspect recent highlights. Pass `window: "all"` (CLI `--window all` or `--window <N>h`) to read snippets older than 72 hours, and `status: "synthesized"` or `"all"` (CLI `--status synthesized|all`) to include archived snippets.
+        2. Call `get_snippet` (`id`, `include_context: true`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind get <id> --json`) to inspect a specific snippet, reading its `title`, `sessionTopic`, `contextSummary`, `keywords`, `sourceTitle`, `sourceURL`, `conversationContext`, and unmodified `verbatimText`.
+        3. Preserve `verbatimText` word-for-word without alteration, keep AI summary fields distinct from the original quote, and always cite provenance links (`[出处](conversation://<id>)` or web chat/page URLs).
+        4. Call `archive_snippet` (`id`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind archive <id>`) when asked to mark incorporated snippets as `#rewind/synthesized`.
         """
         try AtomicFile.writeUTF8(
             skillMarkdown + "\n",
@@ -236,11 +258,21 @@ public enum AntigravityIntegration {
         }
 
         if let skillText = try? String(contentsOf: skillURL, encoding: .utf8) {
-            if !skillText.contains("memo_list_memos") || !skillText.contains("conversation://") {
+            if !skillText.contains("list_snippets")
+                || !skillText.contains("search_snippets")
+                || !skillText.contains("get_snippet")
+                || !skillText.contains("archive_snippet")
+                || !skillText.contains("conversation://")
+                || skillText.contains("memo_list_memos") {
                 reasons.append(.skillMissingMemosGuidance)
             }
         } else {
             reasons.append(.missingSkillFile)
+        }
+
+        let expectedCLI = stableCLIBinaryURL(in: resolvedData)
+        if !FileManager.default.isExecutableFile(atPath: expectedCLI.path) {
+            reasons.append(.missingCLIBinary)
         }
 
         let expectedSidecar = stableSidecarBinaryURL(in: resolvedData)

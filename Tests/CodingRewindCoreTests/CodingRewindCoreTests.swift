@@ -1232,18 +1232,20 @@ struct CodingRewindCoreTests {
         let fakeBuildDir = dir.appendingPathComponent(".build/debug", isDirectory: true)
         try FileManager.default.createDirectory(at: fakeBuildDir, withIntermediateDirectories: true)
         let fakeSidecarSrc = fakeBuildDir.appendingPathComponent("coding-rewind-sidecar")
-        let fakeBridgeSrc = dir.appendingPathComponent("memos-mcp-bridge.sh")
+        let fakeCLISrc = fakeBuildDir.appendingPathComponent("coding-rewind")
         try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeSidecarSrc, permissions: 0o755)
-        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: fakeBridgeSrc, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: fakeCLISrc, permissions: 0o755)
 
         let dataDir = dir.appendingPathComponent(commandStyle == "bare" ? "CodingRewind" : "Application Support/CodingRewind", isDirectory: true)
         let configDir = dir.appendingPathComponent("gemini-config", isDirectory: true)
 
         let hooksURL = configDir.appendingPathComponent("plugins/coding-rewind/hooks.json")
         let installedLegacyHook = dataDir.appendingPathComponent("bin/coding-rewind-hook")
+        let installedLegacyBridge = dataDir.appendingPathComponent("bin/memos-mcp-bridge.sh")
         let oldSnapshot = dataDir.appendingPathComponent("active_turn.json")
         try AtomicFile.writeUTF8("old user snapshot", to: oldSnapshot)
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: installedLegacyHook, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: installedLegacyBridge, permissions: 0o755)
         let command: String
         switch commandStyle {
         case "bare": command = installedLegacyHook.path
@@ -1264,7 +1266,7 @@ struct CodingRewindCoreTests {
         let pluginDir = try AntigravityIntegration.installOrRepair(
             dataDirectoryURL: dataDir,
             configDirectoryURL: configDir,
-            sourceMCPBridgeURL: fakeBridgeSrc,
+            sourceCLIBinaryURL: fakeCLISrc,
             sourceSidecarBinaryURL: fakeSidecarSrc
         )
 
@@ -1274,11 +1276,48 @@ struct CodingRewindCoreTests {
             return
         }
         let installedSidecar = AntigravityIntegration.stableSidecarBinaryURL(in: dataDir)
+        let installedCLI = AntigravityIntegration.stableCLIBinaryURL(in: dataDir)
         #expect(!installedSidecar.path.contains("/.build/"))
+        #expect(!installedCLI.path.contains("/.build/"))
         #expect(FileManager.default.isExecutableFile(atPath: installedSidecar.path))
+        #expect(FileManager.default.isExecutableFile(atPath: installedCLI.path))
         #expect(!FileManager.default.fileExists(atPath: installedLegacyHook.path))
+        #expect(!FileManager.default.fileExists(atPath: installedLegacyBridge.path))
         #expect(!FileManager.default.fileExists(atPath: oldSnapshot.path))
-        #expect(FileManager.default.isExecutableFile(atPath: AntigravityIntegration.stableMCPBridgeURL(in: dataDir).path))
+
+        let skillText = try String(contentsOf: pluginDir.appendingPathComponent("skills/rewind/SKILL.md"), encoding: .utf8)
+        #expect(skillText.contains("list_snippets"))
+        #expect(skillText.contains("search_snippets"))
+        #expect(skillText.contains("get_snippet"))
+        #expect(skillText.contains("archive_snippet"))
+        #expect(skillText.contains("window: \"all\""))
+        #expect(skillText.contains("status: \"synthesized\""))
+        #expect(skillText.contains("conversation://"))
+        #expect(!skillText.contains("memo_list_memos"))
+
+        try FileManager.default.removeItem(at: installedCLI)
+        #expect(AntigravityIntegration.repairReasons(dataDirectoryURL: dataDir, configDirectoryURL: configDir) == [.missingCLIBinary])
+        #expect(throws: RewindError.ioError("缺少 coding-rewind，请用完整应用包安装插件")) {
+            _ = try AntigravityIntegration.installOrRepair(
+                dataDirectoryURL: dataDir,
+                configDirectoryURL: configDir,
+                language: .zhHans
+            )
+        }
+        #expect(throws: RewindError.ioError("Missing coding-rewind; install the plugin from a packaged app bundle")) {
+            _ = try AntigravityIntegration.installOrRepair(
+                dataDirectoryURL: dataDir,
+                configDirectoryURL: configDir,
+                language: .en
+            )
+        }
+        _ = try AntigravityIntegration.installOrRepair(
+            dataDirectoryURL: dataDir,
+            configDirectoryURL: configDir,
+            sourceCLIBinaryURL: fakeCLISrc,
+            sourceSidecarBinaryURL: fakeSidecarSrc
+        )
+        #expect(AntigravityIntegration.repairReasons(dataDirectoryURL: dataDir, configDirectoryURL: configDir).isEmpty)
 
         let pluginJSON = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: pluginDir.appendingPathComponent("plugin.json"))) as? [String: Any]
@@ -1358,8 +1397,10 @@ struct CodingRewindCoreTests {
 
         try paths.saveMemosURLString("http://localhost:5230")
         let fakeSidecar = dir.appendingPathComponent("coding-rewind-sidecar")
+        let fakeCLI = dir.appendingPathComponent("coding-rewind")
         try AtomicFile.writeUTF8("#!/bin/sh\necho '{}'\n", to: fakeSidecar, permissions: 0o755)
-        coord.installOrRepairPlugin(sourceBridgeURL: nil, sourceSidecarURL: fakeSidecar)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: fakeCLI, permissions: 0o755)
+        coord.installOrRepairPlugin(sourceCLIBinaryURL: fakeCLI, sourceSidecarURL: fakeSidecar)
 
         let now = Date()
         coord.checkedCardIDs.removeAll()
@@ -1408,7 +1449,7 @@ struct CodingRewindCoreTests {
         try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: source, permissions: 0o755)
         let data = dir.appendingPathComponent("Data", isDirectory: true)
         let config = dir.appendingPathComponent("Config", isDirectory: true)
-        let plugin = try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config, sourceSidecarBinaryURL: source)
+        let plugin = try AntigravityIntegration.installOrRepair(dataDirectoryURL: data, configDirectoryURL: config, sourceCLIBinaryURL: source, sourceSidecarBinaryURL: source)
         let configURL = config.appendingPathComponent("config.json")
         var root = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any])
         let sidecars = try #require(root["sidecars"] as? [String: Any])

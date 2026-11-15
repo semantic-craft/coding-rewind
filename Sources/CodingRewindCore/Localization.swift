@@ -53,6 +53,7 @@ public enum PluginRepairReason: Equatable, Hashable, Sendable {
     case legacyCaptureHooksPresent
     case skillMissingMemosGuidance
     case missingSkillFile
+    case missingCLIBinary
     case missingSidecarBinary
     case invalidSidecarConfig
     case sidecarLauncherDisabled
@@ -280,8 +281,9 @@ public enum L10n {
             case .invalidSuggestedPrompts: return "插件的三条建议提示词缺失或格式不正确"
             case .missingOrInvalidManifest: return "插件配置缺失或格式不正确"
             case .legacyCaptureHooksPresent: return "仍保留旧版对话记录配置，需要修复"
-            case .skillMissingMemosGuidance: return "插件说明缺少 Memos 连接指引"
+            case .skillMissingMemosGuidance: return "插件说明缺少片段检索工具指引"
             case .missingSkillFile: return "未找到插件说明文件"
+            case .missingCLIBinary: return "命令行与 MCP 组件尚未安装"
             case .missingSidecarBinary: return "对话发送组件尚未安装"
             case .invalidSidecarConfig: return "对话发送组件的配置缺失或不匹配"
             case .sidecarLauncherDisabled: return "对话发送组件尚未启用"
@@ -295,8 +297,9 @@ public enum L10n {
             case .invalidSuggestedPrompts: return "missing or invalid suggestedPrompts"
             case .missingOrInvalidManifest: return "missing or invalid plugin.json"
             case .legacyCaptureHooksPresent: return "legacy capture hooks need cleanup"
-            case .skillMissingMemosGuidance: return "SKILL.md missing Memos guidance"
+            case .skillMissingMemosGuidance: return "SKILL.md missing snippet tool guidance"
             case .missingSkillFile: return "SKILL.md not found"
+            case .missingCLIBinary: return "coding-rewind CLI not installed"
             case .missingSidecarBinary: return "launcher sidecar not installed"
             case .invalidSidecarConfig: return "missing or mismatched sidecar.json"
             case .sidecarLauncherDisabled: return "launcher sidecar not enabled"

@@ -90,10 +90,7 @@ if [[ "${SKIP_DEV_CREDENTIALS}" != "1" && -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     chmod 0600 "${LAUNCHER_CONFIG}"
 fi
 install -m 0755 "${BIN_DIR}/coding-rewind-sidecar" "${HELPERS_DIR}/coding-rewind-sidecar"
-
-if [[ -f "${REPO_ROOT}/scripts/memos-mcp-bridge.sh" ]]; then
-    install -m 0755 "${REPO_ROOT}/scripts/memos-mcp-bridge.sh" "${HELPERS_DIR}/memos-mcp-bridge.sh"
-fi
+install -m 0755 "${BIN_DIR}/coding-rewind" "${HELPERS_DIR}/coding-rewind"
 
 cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -172,6 +169,12 @@ if [[ "$(/usr/bin/file -b "${MACOS_DIR}/CodingRewindApp")" != Mach-O* ]]; then
     echo "Error: the app bundle executable must be the native Mach-O application" >&2
     exit 1
 fi
+for required_helper in coding-rewind-sidecar coding-rewind; do
+    if [[ "$(/usr/bin/file -b "${HELPERS_DIR}/${required_helper}")" != Mach-O* ]]; then
+        echo "Error: helper ${required_helper} must be a native Mach-O binary" >&2
+        exit 1
+    fi
+done
 
 if [[ "${APP_BUNDLE}" != "/Applications/CodingRewind.app" ]]; then
     /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "${APP_BUNDLE}" >/dev/null 2>&1 || true

@@ -1,6 +1,6 @@
 # 统一架构与线级数据契约
 
-本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储、Webhook 事件与原生 `/mcp` 服务，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览以及拉起 **Google Antigravity App 2.x 或 Codex** 对话的极薄界面。
+本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储与 Webhook 事件，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览、拉起 **Google Antigravity App 2.x 或 Codex** 对话的极薄界面，以及供各 Coding Agent 跨宿主共用的单二进制 `coding-rewind`（CLI + 内嵌 4 工具 `stdio` MCP）。
 
 需求依据见 [requirements.md](requirements.md)，开源底座与许可核查见 [sources.md](sources.md)，凭据与数据保护规则见 [privacy.md](privacy.md)。
 
@@ -12,7 +12,7 @@
 - **采集零打断**，在当前主线编码或阅读进行中一键暂存选中文本，不弹出协议确认窗，不抢夺原应用输入焦点，不向当前会话插入保存指令，也不强迫填写标题或标签。
 - **双端统一汇聚**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面应用与浏览器中的任意 `http(s)` 网页及 ChatGPT、Claude、Gemini，采集结果进入同一个 `Memos` 实例。
 - **原文锁死与脉络定锚**，用户选中的原文必须逐字完整保留，不得被摘要替代；前序提问与周围对话轮次作为上下文交由后台增强器提炼结构化抬头，AI 补充信息与原文严格分区展示。
-- **回归主力宿主成文**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x 及其 `Knowledge Work` 界面完成，通过 `agentapi new-conversation` 与原生 `/mcp` 贯通，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
+- **回归主力宿主成文**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x、Codex 等主力宿主完成，通过 `agentapi new-conversation`、Codex app-server 队列以及单二进制 `coding-rewind`（CLI 与 `coding-rewind mcp` 四个领域工具）贯通，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
 
 ## 端到端拓扑
 
@@ -28,17 +28,17 @@
                                            │
                                            ▼
              [单一事实源后端  deploy/vps  阿里云容器栈]
-              • neosmemo/memos:26.11.0 原版存储 + 原生 Streamable HTTP /mcp
+              • neosmemo/memos:26.11.0 原版 /api/memos 存储与评论挂载
               • rewind-enricher 验签 Webhook + 5 秒容器内网自愈轮询
               • 等待上下文评论到达后调用兼容接口生成 Title / Session / Context
               • 保留 100% 选中原文并将标签翻转为 #rewind/ready
                                            │
                   ┌────────────────────────┴─────────────────────────┐
                   ▼                                                  ▼
-[出口 1  CodingRewindApp 毛玻璃速览浮窗]           [出口 2  Antigravity 2.x 原生插件与 /mcp]
- • ⌃⌥R 非激活 NSPanel 速览 72 小时热流卡片          • memos-mcp-bridge.sh 从钥匙串读取令牌
- • hot_cache.json 与 outbox.jsonl 保障断网可用     • 经 mcp-remote 对接远端原生 /mcp
- • 勾选卡片按 ⌘Return 调 agentapi 开新对话          • /rewind 技能在会话与写作界面检索引用
+[出口 1  CodingRewindApp 毛玻璃速览浮窗]           [出口 2  单二进制 coding-rewind (CLI + MCP)]
+ • ⌃⌥R 非激活 NSPanel 速览 72 小时热流卡片          • ~/Library/Application Support/CodingRewind/bin/coding-rewind
+ • hot_cache.json 与 outbox.jsonl 保障断网可用     • list / search / get / archive 子命令与 coding-rewind mcp
+ • 勾选卡片按 ⌘Return 在 Antigravity/Codex 开聊   • 仅暴露 4 个领域工具，支持 >72h、已归档与本机离线回退
 ```
 
 ## 四大组成部分职责
@@ -47,7 +47,7 @@
 
 位于 `deploy/vps/`，由 `docker-compose.yml` 编排两个轻量容器：
 
-- **原版 `neosmemo/memos:26.11.0`**，零源码修改提供 `/api/memos` REST 接口、评论挂载以及进程内原生 `/mcp` 服务，暴露 `memo_list_memos`、`memo_get_memo`、`memo_list_memo_comments`、`memo_create_memo`、`memo_update_memo` 等标准工具。
+- **原版 `neosmemo/memos:26.11.0`**，零源码修改提供 `/api/memos` REST 接口与评论挂载，作为跨设备唯一事实源。
 - **幂等增强器 `deploy/vps/enricher/enricher.py`**，使用 `python:3.12-slim` 纯标准库实现并固定非特权用户运行，零第三方 pip 依赖。由于 `Memos` 内置 Webhook 客户端对私网地址启用 SSRF 拦截，增强器同时提供两条触发通道：
   1. `POST /webhook` 接口按 Standard Webhooks 规范校验 `webhook-id`、`webhook-timestamp` 与 `webhook-signature` 的 HMAC-SHA256 签名，适用于经反代接入实时通知。
   2. 默认每 5 秒从 `http://memos:5230/api/memos?pageSize=50` 开始，沿 `nextPageToken` 枚举完整候选后再逐条增强。页大小不限制候选总数，漏通知或重启后仍为 pending 的记录会在后续扫描中恢复处理。
@@ -66,7 +66,7 @@
 - **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 收起以及区分 `待整理` 与 `AI 已整理` 状态徽标。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获（默认 `⌃⌥⇧⌘S`）与浮窗（默认 `⌃⌥R`）两个动作；启动时通过 `CodingRewind.captureSelectionShortcutSchemaVersion` 执行一次性 v2 迁移，仅将未自定义的旧版默认 `⌃⌥S` 平滑升级至 `⌃⌥⇧⌘S`，保留用户显式清空或自定义组合。`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单、划词胶囊及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
 - **一键创建宿主对话**，勾选卡片按下 `⌘Return`，由 `ConversationPrompt` 组装包含脉络抬头、原始选段及出处链接的共享 Markdown 提示词。`AppCoordinator` 唯一持有目标与归档意图，HUD、菜单与快捷键调用同一个 `launchChecked(in:)`。目标偏好保存到 `conversation-host.json`，默认 Antigravity。已有任一宿主请求时始终先恢复它，不能切换目标覆盖已保存的意图。只有确认宿主实际收件后才允许归档。Antigravity 继续由官方 sidecar 调用 `agentapi new-conversation`，Codex 走下述官方队列与 App 唤醒链路。
-- **开机自启动、校验自动更新与双语界面 `LoginItemController.swift`、`AppUpdater.swift`、`Localization.swift` 与 `AppStrings.swift`**，`applicationDidFinishLaunching` 首行同步采样 `NSAppleEventManager.shared().currentAppleEvent`（识别 `keyAELaunchedAsLogInItem`）与 `--restarted-after-update`/`--background` 参数，使系统登录启动与更新重启保持静默驻留，而常规打开与 Dock 重开正常聚焦浮窗。`AppUpdater` 在私有 `<dataDir>/updates/` 目录暂存 GitHub Releases 资产，依次执行 `SHA256SUMS.txt` 摘要比对、`ditto` 解压与 `lsregister -u` 注销、`SecStaticCodeCheckValidityWithErrors`（含 `kSecCSStrictValidate`）及 `BundleSignatureAuthority.canReplace`（阻止 `Developer ID` 被 ad-hoc 或不同 `TeamIdentifier` 覆盖以保护 TCC 辅助功能授权），就绪后同步刷新 `bin/coding-rewind-sidecar` 并通过等待原 PID 退出的原子交换脚本完成回滚安全升级。桌面端采用纯枚举 `switch` 双语词表以兼容独立无 bundle 的 `coding-rewind-sidecar` 进程，网页扩展采用 `_locales/` 与 `i18n.js` 实时重渲染，云端 `enricher.py` 支持 `REWIND_SUMMARY_LANGUAGE=auto|zh-Hans|en`，三端共享不变的 Memos 标签与引用头契约。
+- **开机自启动、校验自动更新与双语界面 `LoginItemController.swift`、`AppUpdater.swift`、`Localization.swift` 与 `AppStrings.swift`**，`applicationDidFinishLaunching` 首行同步采样 `NSAppleEventManager.shared().currentAppleEvent`（识别 `keyAELaunchedAsLogInItem`）与 `--restarted-after-update`/`--background` 参数，使系统登录启动与更新重启保持静默驻留，而常规打开与 Dock 重开正常聚焦浮窗。`AppUpdater` 在私有 `<dataDir>/updates/` 目录暂存 GitHub Releases 资产，依次执行 `SHA256SUMS.txt` 摘要比对、`ditto` 解压与 `lsregister -u` 注销、`SecStaticCodeCheckValidityWithErrors`（含 `kSecCSStrictValidate`）及 `BundleSignatureAuthority.canReplace`（阻止 `Developer ID` 被 ad-hoc 或不同 `TeamIdentifier` 覆盖以保护 TCC 辅助功能授权），就绪后同步刷新 `bin/coding-rewind-sidecar` 与 `bin/coding-rewind`，并通过等待原 PID 退出的原子交换脚本完成回滚安全升级。桌面端采用纯枚举 `switch` 双语词表以兼容独立无 bundle 的辅助进程，网页扩展采用 `_locales/` 与 `i18n.js` 实时重渲染，云端 `enricher.py` 支持 `REWIND_SUMMARY_LANGUAGE=auto|zh-Hans|en`，三端共享不变的 Memos 标签与引用头契约。
 - **本地离线韧性**，未配置地址或网络异常时，采集请求追加写入 `<dataDir>/outbox.jsonl` 并镜像更新 `<dataDir>/hot_cache.json`，断网时从本地缓存显示热卡，网络恢复后凭 `?memoId=<clientClipId>` 幂等冲刷队列。
 
 刷新请求在网络等待前记录请求编号和本地卡片版本，提交时核对仍为最新、卡片未变化且捕获已结束。过期成功或失败响应都不覆盖当前卡片、缓存或提示。有效提交重读当前 outbox，并把同一合并结果交给 UI 与热缓存。捕获不会等待刷新网络请求；交错时放弃旧刷新，后续刷新再读取远端更新。
@@ -78,13 +78,13 @@
 - **纯函数提取层 `extractors.mjs`**，仅在实际保存选区时按需懒加载。参照 MIT 项目 `revivalstack/ai-chat-exporter`、`pionxzh/chatgpt-exporter`、`kepano/defuddle` 与 `mixmark-io/turndown`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、Shiki / Expressive Code 逐行换行、GitHub `table.highlight` 代码表格、图片相对链接、GFM 任务列表、`<mark>`、`<kbd>` 与 `<details>/<summary>` 的 Markdown，自动剥离语法高亮器行号列并清洗普通网页 `og:site_name` 标题后缀；在 AI 聊天站点通过声明式 `TURN_ADAPTERS` 提取紧邻前序用户提问与截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
 - **页面内单动作暂存胶囊、范围控制与后台直连投递 `content.js`、`background.js`、`memos_payload.mjs` 与 `options.js`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`、`obsidianmd/obsidian-clipper`、`crimx/ext-saladict`、`floating-ui/floating-ui` 与 `ChatGPTBox-dev/chatGPTBox`，通过 `GestureGate` 仅对主按键拖拽、双击、Shift 扩展选区及键盘选区展示 Shadow DOM 隔离的“暂存”胶囊，避让可编辑输入框与在线代码编辑器（放行 `readonly` 与 `aria-readonly="true"`），按 `Range.getClientRects()` 单行上方居中、多行正向尾行下方或反向首行上方就近锚定，并在脚本重注入时调用 `__CODING_REWIND_HOOK__.dispose()` 清理旧宿主与监听器。选项页支持切换胶囊生效范围（全部网页 / 仅 AI 聊天网站 / 关闭）与排除域名列表（默认排除 Google Docs/Sheets/Slides、Figma、Canva），右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）与 `Alt+Shift+S` 在任意页面始终可用。后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` REST 接口，断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试；只有队列写入成功才反馈待同步，本地存储拒绝会显示保存失败。
 
-### 4. Antigravity 2.x 官方插件与钥匙串桥接
+### 4. Antigravity 2.x 官方插件与单二进制 CLI / MCP
 
-位于 `Sources/ConversationSidecar/`、`Sources/CodingRewindCore/AntigravityIntegration.swift` 与 `scripts/memos-mcp-bridge.sh`：
+位于 `Sources/ConversationSidecar/`、`Sources/CodingRewindCLI/`、`Sources/CodingRewindCore/AntigravityIntegration.swift`、`Sources/CodingRewindCore/SnippetRepository.swift` 与 `Sources/CodingRewindCore/DeveloperCredentialsResolver.swift`：
 
 - **按选区定位上下文 `AntigravityCaptureContext.swift`**，只读取已确认编号对应的 `~/.gemini/antigravity/brain/<conversationId>/.system_generated/logs/transcript.jsonl`，在完整记录中查找唯一匹配消息。上下文截止所选消息，最多含该用户轮及前三轮。重复或无法匹配时保留原文与已确认会话链接，省略提问和上下文，不读取其他会话。旧的全局最新 Hook 快照不再参与捕获。
-- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，安装器将 `coding-rewind-sidecar` 与 `memos-mcp-bridge.sh` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`，向 `~/.gemini/config/plugins/coding-rewind/` 写入 `plugin.json`、sidecar 配置和引导调用 `memo_*` 工具的 `skills/rewind/SKILL.md`。升级只撤下本插件生成的旧 Hook 处理器，保留其他处理器与已有用户数据。
-- **零明文令牌 MCP 桥接**，`scripts/memos-mcp-bridge.sh` 运行时从环境变量或 macOS Keychain 读取令牌，执行 `npx -y mcp-remote "${MEMOS_URL%/}/mcp"`，兼容 `~/.config/agent-mcp/servers.json` 与 `mcp-sync`，避免任何 JSON 配置文件落盘明文凭据。
+- **固定二进制落点与插件布局**，参照 MIT 项目 `wxtsky/CodeIsland`，应用启动、插件安装与自动更新将 `coding-rewind-sidecar` 与 `coding-rewind` 拷入固定路径 `~/Library/Application Support/CodingRewind/bin/`（同时清理历史遗留旧脚本），向 `~/.gemini/config/plugins/coding-rewind/` 写入 `plugin.json`、sidecar 配置和引导调用 4 个领域工具或 `coding-rewind` CLI 的 `skills/rewind/SKILL.md`。升级只撤下本插件生成的旧 Hook 处理器，保留其他处理器与已有用户数据。
+- **单二进制 CLI 与内嵌领域 MCP**，`coding-rewind` 直接链接 `CodingRewindCore` 的 `SnippetRepository` 与 `DeveloperCredentialsResolver`，零外部第三方依赖同时提供终端子命令（`list`、`search`、`get`、`archive`，支持 `--json`）与 `coding-rewind mcp` 标准 `stdio` JSON-RPC 2.0 服务（仅暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 四个领域工具，替代远端通用 41 个 Memos 工具与外部 Node 桥接进程）。默认返回近 72 小时未归档片段，支持传入 `window: "all"`（或 `--window all` / `--window <N>h`）查询超过 72 小时的历史片段，传入 `status: "synthesized"` 或 `"all"` 查询已成文归档片段，并在未配置云端或断网时自动回退服务本机 `hot_cache.json` 与 `outbox.jsonl`（`localOnly` / `offlineFallback`）。通过 `~/.config/agent-mcp/servers.json` 配置 `command: "${HOME}/Library/Application Support/CodingRewind/bin/coding-rewind"` 与 `args: ["mcp"]` 即可经 `mcp-sync` 跨宿主同步，任何 JSON 配置文件均不落盘明文令牌。
 
 ### 接聊请求与回执
 
@@ -160,7 +160,7 @@ Prompt: <prompt>
 
 ### 4. 热流读取与成文归档
 
-客户端从 `GET /api/memos?pageSize=100` 开始，沿 `nextPageToken` 读完所有页后按记录编号合并；任一页失败都不发布部分结果。随后筛选含 `#rewind/`、不含 `#rewind/synthesized` 且 `createTime` 位于最近 72 小时内的条目按时间倒序渲染；当片段已送入 Antigravity 完成成文消费后，可通过 `PATCH /api/memos/<serverId>?updateMask=content` 将状态标签翻转为 `#rewind/synthesized` 退出热流池。
+客户端从 `GET /api/memos?pageSize=100` 开始，沿 `nextPageToken` 读完所有页后按记录编号合并；任一页失败都不发布部分结果。桌面浮窗默认筛选含 `#rewind/`、不含 `#rewind/synthesized` 且 `createTime` 位于最近 72 小时内的条目按时间倒序渲染；`coding-rewind` CLI 与 `coding-rewind mcp` 在保持同一 72 小时活跃默认值的同时，支持显式查询全量历史窗口（`window: "all"`）与 `#rewind/synthesized` 归档片段；当片段已完成成文消费后，可通过 `PATCH /api/memos/<serverId>?updateMask=content`（或 `archive_snippet` / `coding-rewind archive`）将状态标签翻转为 `#rewind/synthesized` 退出热流池并保留 100% 原文不变。
 
 ## 凭据解析与环境隔离优先级
 
@@ -170,7 +170,7 @@ Prompt: <prompt>
 | --- | --- | --- |
 | 数据目录 | `CODING_REWIND_DATA_DIR` > `~/Library/Application Support/CodingRewind` | 禁止指向 `/tmp` 或 `/private/tmp` |
 | Memos 地址 | `CODING_REWIND_MEMOS_URL` > `<dataDir>/config.json` 中 `memos_url` | `config.json` 严禁包含任何令牌字段 |
-| Memos 令牌 | `CODING_REWIND_MEMOS_TOKEN` > macOS Keychain `com.codingrewind.memos` | `CODING_REWIND_QA=1` 时强制切换至 `com.codingrewind.memos.qa`，缺失即报错，绝不回退个人钥匙串 |
+| Memos 令牌 | `CODING_REWIND_MEMOS_TOKEN` > 非 QA 下 `DeveloperCredentials.plist`（`op read`） > macOS Keychain `com.codingrewind.memos` | `CODING_REWIND_QA=1` 时忽略开发凭据并强制切换至 `com.codingrewind.memos.qa`；`DeveloperCredentials.plist` 存在但无效或 `op` 失败时严禁暗中回退个人钥匙串 |
 | 宿主 CLI | Antigravity sidecar 提供的 `PATH` | 仅由 sidecar 调用 `agentapi`，返回会话编号后确认成功 |
 
 快捷键偏好使用库的 UserDefaults 存储，应用不维护第二份快捷键 JSON。普通运行使用 `.standard`；`CODING_REWIND_QA=1` 时在创建任何 Name 前注入按 `CODING_REWIND_DATA_DIR` 派生的独立域，重启稳定。QA 可通过 `CODING_REWIND_SHORTCUTS_SUITE` 指定 `dev.codingrewind.qa.` 前缀的域；非 QA 忽略该变量。构建脚本在 QA 模式使用 `dev.codingrewind.app.qa` bundle ID，签名策略不变。
