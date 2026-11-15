@@ -10,16 +10,16 @@
 
 - **定位与时间窗口**，聚焦未来 1 至 3 天内确定要用到的高质量 AI 对话段落、提示词或思路，默认展示近 72 小时未归档热流卡片，不做全量聊天自动备份。
 - **采集零打断**，在当前主线编码或阅读进行中一键暂存选中文本，不弹出协议确认窗，不抢夺原应用输入焦点，不向当前会话插入保存指令，也不强迫填写标题或标签。
-- **双端统一汇聚**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面应用与浏览器中的 ChatGPT、Claude、Gemini，采集结果进入同一个 `Memos` 实例。
+- **双端统一汇聚**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面应用与浏览器中的任意 `http(s)` 网页及 ChatGPT、Claude、Gemini，采集结果进入同一个 `Memos` 实例。
 - **原文锁死与脉络定锚**，用户选中的原文必须逐字完整保留，不得被摘要替代；前序提问与周围对话轮次作为上下文交由后台增强器提炼结构化抬头，AI 补充信息与原文严格分区展示。
 - **回归主力宿主成文**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x 及其 `Knowledge Work` 界面完成，通过 `agentapi new-conversation` 与原生 `/mcp` 贯通，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
 
 ## 端到端拓扑
 
 ```text
-[桌面端 Antigravity App 2.x / macOS 应用]          [网页端 ChatGPT / Claude / Gemini]
+[桌面端 Antigravity App 2.x / macOS 应用]          [网页端 任意 http(s) 网页 / ChatGPT / Claude / Gemini]
   划选弹出非激活暂存胶囊或按 ⌃⌥⇧⌘S 捕获选区          Manifest V3 扩展弹出暂存胶囊或按快捷键提取选中 Markdown
-  + 按选区会话编号读取对应 transcript         + 提取会话标题、前序提问与最近 4 轮对话
+  + 按选区会话编号读取对应 transcript         + 聊天页提取前序提问与最近 4 轮对话，普通网页仅存选段与出处
                   │                                                  │
                   └────────────────────────┬─────────────────────────┘
                                            ▼
@@ -73,10 +73,10 @@
 
 ### 3. 浏览器 Manifest V3 薄剪藏扩展
 
-位于 `extensions/web-clipper/`，零外部 npm 依赖，首批适配 `https://chatgpt.com/*`、`https://claude.ai/*` 与 `https://gemini.google.com/*`：
+位于 `extensions/web-clipper/`，零外部 npm 依赖且空闲态零额外模块加载，覆盖任意 `http://*/*`、`https://*/*` 网页并对 `chatgpt.com`、`chat.openai.com`、`claude.ai` 与 `gemini.google.com` 提供对话脉络提取：
 
-- **纯函数提取层 `extractors.mjs`**，参照 MIT 项目 `revivalstack/ai-chat-exporter` 与 `pionxzh/chatgpt-exporter`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、行内代码、列表与链接的 Markdown，同时提取清洗后的会话标题、紧邻前序用户提问以及截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
-- **页面内单动作暂存胶囊与后台直连投递 `content.js`、`background.js` 与 `memos_payload.mjs`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`，在选区上方居中展示与桌面端一致的单动作“暂存”胶囊（靠近视口顶部时自动下翻），并支持右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）与 `Alt+Shift+S` 快捷键触发，由后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` REST 接口；点击胶囊时原位切换“暂存中…”与“✓ 已同步 / ✓ 待同步”，断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试，配置缺失或保存报错时在页面右上角以 Shadow DOM 展示 2.2 秒轻提示。只有队列写入成功才反馈已暂存；本地存储拒绝会显示保存失败。
+- **纯函数提取层 `extractors.mjs`**，仅在实际保存选区时按需懒加载。参照 MIT 项目 `revivalstack/ai-chat-exporter`、`pionxzh/chatgpt-exporter`、`kepano/defuddle` 与 `mixmark-io/turndown`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、Shiki / Expressive Code 逐行换行、GitHub `table.highlight` 代码表格、图片相对链接、GFM 任务列表、`<mark>`、`<kbd>` 与 `<details>/<summary>` 的 Markdown，自动剥离语法高亮器行号列并清洗普通网页 `og:site_name` 标题后缀；在 AI 聊天站点通过声明式 `TURN_ADAPTERS` 提取紧邻前序用户提问与截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
+- **页面内单动作暂存胶囊、范围控制与后台直连投递 `content.js`、`background.js`、`memos_payload.mjs` 与 `options.js`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`、`obsidianmd/obsidian-clipper`、`crimx/ext-saladict`、`floating-ui/floating-ui` 与 `ChatGPTBox-dev/chatGPTBox`，通过 `GestureGate` 仅对主按键拖拽、双击、Shift 扩展选区及键盘选区展示 Shadow DOM 隔离的“暂存”胶囊，避让可编辑输入框与在线代码编辑器（放行 `readonly` 与 `aria-readonly="true"`），按 `Range.getClientRects()` 单行上方居中、多行正向尾行下方或反向首行上方就近锚定，并在脚本重注入时调用 `__CODING_REWIND_HOOK__.dispose()` 清理旧宿主与监听器。选项页支持切换胶囊生效范围（全部网页 / 仅 AI 聊天网站 / 关闭）与排除域名列表（默认排除 Google Docs/Sheets/Slides、Figma、Canva），右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）与 `Alt+Shift+S` 在任意页面始终可用。后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` REST 接口，断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试；只有队列写入成功才反馈待同步，本地存储拒绝会显示保存失败。
 
 ### 4. Antigravity 2.x 官方插件与钥匙串桥接
 
@@ -122,11 +122,11 @@ Antigravity 成功只认结构化回执中的会话编号。Codex 成功必须�
 <verbatim_selected_markdown>
 ```
 
-当桌面普通应用划选等场景不含会话上下文时，省略 `#rewind/has-ctx` 标签，仅保留 `#rewind/pending` 与 `#source/macos`。
+当桌面普通应用或普通网页划选不含前序提问与近期对话轮次时，主记录仍保留 `> **Source:** [<title_or_app>](<url_or_conversation_deeplink>) · <ISO8601_UTC>`，但省略 `#rewind/has-ctx` 标签，仅保留 `#rewind/pending` 与 `#source/<macos|web>`，且不发送空白上下文评论，避免触发增强器等待窗口。
 
 ### 2. 挂载会话上下文评论
 
-若存在会话标题、前序提问或近期轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入私密评论：
+若存在非空的前序提问或近期对话轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入私密评论：
 
 ```markdown
 <!-- rewind-context-v1 -->

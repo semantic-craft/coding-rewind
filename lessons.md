@@ -254,3 +254,14 @@
 - 正确做法 `Done right`：新接入桌面宿主先核查其辅助功能懒加载属性、菜单项真实启用语义与原生选区浮层几何方位，将方位建模进 `SelectionPopupHost.preferredVerticalPlacement`；升级 `/Applications` 应用包走 `build-app-bundle.sh /Applications` 或先移除旧目录再复制，禁止对签名包做增量目录合并。
 - 验证点：运行 `./scripts/check` 通过 `SelectionPopupTests` 全部用例；运行 `codesign --verify --deep --strict /Applications/CodingRewind.app` 通过；在 `ChatGPT.app` 实机划选对话并经 WindowServer 截图确认顶部 `Add to chat | Side chat` 与底部 `暂存` 胶囊互不遮挡。
 - 复发记录：`Seen 1x (2026-11-15)`，`ChatGPT.app` 实机接入与 WindowServer 截图验收检出。
+
+### 合成 DOM 桩不能替代真实 NodeList 原型链与物理点击释放序列
+
+**网页扩展单测使用轻量 DOM 桩时，类数组节点集合不得直接假定具备 `Array.prototype` 方法，且 `mousedown` 隐藏悬浮控件后必须吸收配对的物理 `mouseup`。**
+
+- 标签：#浏览器扩展 #DOM桩 #选区捕获 #验收
+- 起因与后果：2026-11-15 扩展全网页划词与代码块提取时，[test_dom_shim.mjs](extensions/web-clipper/test_dom_shim.mjs) 将 `childNodes` 实现为普通 JS 数组，掩盖了真实 Chromium `NodeList` 不具备 `.some()` 方法的差异，导致加载真实解包扩展点击代码块暂存时抛出 `TypeError: children.some is not a function`；同时 `mousedown` 同步隐藏胶囊后，同坐标紧随到达的物理 `mouseup` 落回 `document`，15 毫秒后将胶囊二次弹出。
+- 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 统一通过 `Array.from(node.childNodes || [])` 迭代子节点；[content.js](extensions/web-clipper/content.js) 在胶囊 `mousedown` 时置位 `suppressNextMouseUp` 拦截配对 `mouseup`；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 补入无 `Array.prototype` 的 `NodeList` 用例与同坐标按下释放回归，真实 Chromium CDP 解包扩展实测代码块去行号入库与胶囊收敛通过。
+- 正确做法 `Done right`：遍历 DOM `childNodes`、`children` 或 `getClientRects()` 一律先用 `Array.from()` 归一化并在单测中注入无数组原型的 `NodeList` 夹具；在 `mousedown` 改变浮层可见性时同步处理后续 `mouseup` 穿透，改动后在真实浏览器加载解包扩展走通完整点击链路。
+- 验证点：运行 `./scripts/check` 通过 `extensions/web-clipper/test_extractors.mjs` 全部用例，并在真实 Chromium 解包扩展中完成网页正文与行号代码块的拖拽点击暂存验证。
+- 复发记录：`Seen 1x (2026-11-15)`，真实 Chromium CDP 解包扩展联调检出。
