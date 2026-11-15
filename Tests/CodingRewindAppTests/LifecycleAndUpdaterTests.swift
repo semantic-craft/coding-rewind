@@ -88,10 +88,14 @@ extension AppShortcutsTests {
         }
 
         let zhAppSubmenu = try #require(NSApplication.shared.mainMenu?.items.first?.submenu)
+        #expect(zhAppSubmenu.items.contains { $0.title == "关于 Coding Rewind" })
         #expect(zhAppSubmenu.items.contains { $0.title == "检查更新…" })
         #expect(NSApplication.shared.mainMenu?.items.contains { $0.title == "操作" } == true)
         statusController.menuNeedsUpdate(statusController.menu)
-        #expect(statusController.menu.items.contains { $0.title == "检查更新…" })
+        #expect(!statusController.menu.items.contains { $0.title == "检查更新…" })
+        #expect(!statusController.menu.items.contains { $0.title == "关于 Coding Rewind" })
+        #expect(statusController.menu.items.contains { $0.title == "设置…" })
+        #expect(statusController.menu.items.contains { $0.title == "退出 Coding Rewind" })
         #expect(statusController.menu.items.contains { $0.title == "显示片段浮窗" })
         #expect(popup.phase.labelText(in: popup.language) == "暂存")
         #expect(KeyboardShortcuts.localizationLanguageCode == "zh-Hans")
@@ -99,15 +103,22 @@ extension AppShortcutsTests {
         appearance.setLanguagePreference(.en)
 
         let enAppSubmenu = try #require(NSApplication.shared.mainMenu?.items.first?.submenu)
+        #expect(enAppSubmenu.items.contains { $0.title == "About Coding Rewind" })
         #expect(enAppSubmenu.items.contains { $0.title == "Check for Updates…" })
         #expect(NSApplication.shared.mainMenu?.items.contains { $0.title == "Actions" } == true)
         statusController.menuNeedsUpdate(statusController.menu)
-        #expect(statusController.menu.items.contains { $0.title == "Check for Updates…" })
+        #expect(!statusController.menu.items.contains { $0.title == "Check for Updates…" })
+        #expect(!statusController.menu.items.contains { $0.title == "About Coding Rewind" })
+        #expect(statusController.menu.items.contains { $0.title == "Settings…" })
+        #expect(statusController.menu.items.contains { $0.title == "Quit Coding Rewind" })
         #expect(statusController.menu.items.contains { $0.title == "Show Clips HUD" })
         #expect(statusController.statusItem.button?.toolTip == AppStrings.statusItemTooltip(in: .en))
         #expect(popup.phase.labelText(in: popup.language) == "Stash")
         #expect(popup.isVisible)
         #expect(KeyboardShortcuts.localizationLanguageCode == "en")
+        #expect(SettingsPage.allCases.last == .about)
+        #expect(SettingsPage.about.title(in: .zhHans) == "关于")
+        #expect(SettingsPage.about.title(in: .en) == "About")
     }
 
     @Suite(.serialized)
@@ -124,6 +135,7 @@ extension AppShortcutsTests {
     }
 
     init() {
+        _ = AppShortcutsTests.defaults
         Self.cleanUpdaterSuite()
     }
 
@@ -852,6 +864,187 @@ extension AppShortcutsTests {
         #expect(coord.connectionSettings.memosURL == "http://127.0.0.1:1")
         draft.updateLanguage(.en)
         #expect(draft.saveMessage?.hasPrefix("Settings saved, but the connection failed.") == true)
+    }
+
+    @Test func aboutSettingsPageOwnsUpdateCheckAndMenuRouting() async throws {
+        let root = makeTestRoot()
+        let defaults = try #require(UserDefaults(suiteName: Self.updaterSuite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            Self.cleanUpdaterSuite()
+        }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true)
+        )
+        struct NoopCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection {
+                throw RewindError.emptySelection
+            }
+        }
+        let qaEnv = [
+            StoragePaths.qaEnvironmentKey: "1",
+            StoragePaths.dataDirEnvironmentKey: paths.dataDirectoryURL.path,
+            StoragePaths.antigravityConfigEnvironmentKey: paths.antigravityConfigDirectoryURL.path
+        ]
+        let coord = try AppCoordinator(paths: paths, environment: qaEnv, capturer: NoopCapturer(), language: .zhHans)
+        let appearance = AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in true },
+            preferredLanguagesProvider: { ["zh-Hans-CN"] }
+        )
+        let delegate = CodingRewindAppDelegate()
+        let shortcuts = AppShortcuts(language: appearance.effectiveLanguage) { delegate.perform($0) }
+        defer { shortcuts.stop() }
+        let updater = AppUpdater(
+            paths: paths,
+            environment: qaEnv,
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 3, patch: 2),
+            installedBundleURL: root.appendingPathComponent("CodingRewind.app", isDirectory: true),
+            installedBundleIdentifier: AppBundleID.selfQAApp,
+            language: .zhHans,
+            transport: MockReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.3.2"),
+                checksumsText: "",
+                archiveSourceURL: nil
+            )
+        )
+        let settings = SettingsWindowController(
+            coordinator: coord,
+            appearance: appearance,
+            shortcuts: shortcuts,
+            updater: updater,
+            onCommand: { delegate.perform($0) }
+        )
+        defer { settings.window?.close() }
+        let statusController = StatusItemController(
+            shortcuts: shortcuts,
+            language: .zhHans,
+            snapshotProvider: {
+                coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
+            },
+            onCommand: { delegate.perform($0) }
+        )
+        defer { NSStatusBar.system.removeStatusItem(statusController.statusItem) }
+
+        delegate.coordinator = coord
+        delegate.appearance = appearance
+        delegate.shortcuts = shortcuts
+        delegate.updater = updater
+        delegate.settingsWindowController = settings
+        delegate.statusItemController = statusController
+
+        delegate.perform(.showAbout)
+        #expect(settings.window?.isVisible == true)
+        #expect(settings.navigationModel.selectedPage == .about)
+
+        settings.navigationModel.selectedPage = .general
+        settings.window?.close()
+        #expect(settings.window?.isVisible != true)
+
+        delegate.perform(.checkForUpdates)
+        #expect(settings.window?.isVisible == true)
+        #expect(settings.navigationModel.selectedPage == .about)
+
+        let expectedVersion = SemanticVersion(major: 0, minor: 3, patch: 2)
+        let deadline = ContinuousClock.now + .milliseconds(500)
+        while updater.state != .upToDate(expectedVersion) && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(updater.state == .upToDate(expectedVersion))
+
+        statusController.menuNeedsUpdate(statusController.menu)
+        let items = statusController.menu.items
+        #expect(!items.contains { $0.title == AppStrings.checkForUpdatesMenu(in: .zhHans) })
+        #expect(!items.contains { $0.title == AppStrings.aboutApp(in: .zhHans) })
+        let settingsIndex = try #require(items.firstIndex { $0.title == AppStrings.settingsEllipsis(in: .zhHans) })
+        let quitIndex = try #require(items.firstIndex { $0.title == AppStrings.quitApp(in: .zhHans) })
+        #expect(quitIndex == settingsIndex + 2)
+        #expect(items[settingsIndex + 1].isSeparatorItem)
+        #expect(items.first?.isSeparatorItem == false)
+        #expect(items.last?.isSeparatorItem == false)
+        #expect(!zip(items, items.dropFirst()).contains { $0.isSeparatorItem && $1.isSeparatorItem })
+
+        let mainMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts, language: .zhHans) {
+            delegate.perform($0)
+        }
+        let appSubmenu = try #require(mainMenu.items.first?.submenu)
+        let aboutMenuItem = try #require(appSubmenu.items.first { $0.title == AppStrings.aboutApp(in: .zhHans) })
+        #expect(appSubmenu.items.contains { $0.title == AppStrings.checkForUpdatesMenu(in: .zhHans) })
+
+        settings.navigationModel.selectedPage = .general
+        settings.window?.close()
+        #expect(settings.window?.isVisible != true)
+
+        let aboutAction = try #require(aboutMenuItem.action)
+        _ = aboutMenuItem.target?.perform(aboutAction, with: aboutMenuItem)
+        #expect(settings.window?.isVisible == true)
+        #expect(settings.navigationModel.selectedPage == .about)
+
+        #expect(AppAboutMetadata.appIcon === AppAboutMetadata.appIcon)
+        #expect(AppAboutMetadata.appBundleInfoDictionary == nil)
+        #expect(AppAboutMetadata.buildNumber() == nil)
+        #expect(
+            AppAboutMetadata.versionString(
+                updater: updater,
+                infoDictionary: ["CFBundleShortVersionString": " 1.2.3 "]
+            ) == "1.2.3"
+        )
+        #expect(AppAboutMetadata.buildNumber(infoDictionary: ["CFBundleVersion": " 42 "]) == "42")
+        #expect(AppAboutMetadata.buildNumber(infoDictionary: ["CFBundleVersion": "   "]) == nil)
+        #expect(AppAboutMetadata.versionString(updater: updater, infoDictionary: nil) == "0.3.2")
+        #expect(AppAboutMetadata.versionString(updater: nil, infoDictionary: nil) == nil)
+
+        var openedURLs: [URL] = []
+        coord.onOpenURL = { url in
+            openedURLs.append(url)
+        }
+        AppAboutMetadata.openGitHubRepo(using: coord)
+        AppAboutMetadata.openReleaseNotes(using: coord)
+        #expect(openedURLs == [AppAboutMetadata.gitHubRepoURL, AppAboutMetadata.releasesURL])
+
+        #expect(
+            AppStrings.aboutVersionLine(version: "0.3.2", build: "42", in: .zhHans)
+                == "版本 0.3.2（Build 42） · MIT 许可证"
+        )
+        #expect(
+            AppStrings.aboutVersionLine(version: "0.3.2", build: "42", in: .en)
+                == "Version 0.3.2 (Build 42) · MIT License"
+        )
+        #expect(
+            AppStrings.aboutVersionLine(version: " 0.3.2 ", build: "   ", in: .zhHans)
+                == "版本 0.3.2 · MIT 许可证"
+        )
+        #expect(
+            AppStrings.aboutVersionLine(version: "0.3.2", build: nil, in: .en)
+                == "Version 0.3.2 · MIT License"
+        )
+        #expect(AppStrings.aboutVersionLine(version: nil, build: "42", in: .zhHans) == "MIT 许可证")
+        #expect(AppStrings.aboutVersionLine(version: "   ", build: nil, in: .en) == "MIT License")
+
+        #expect(AppStrings.checkForUpdatesButton(isBusy: false, in: .zhHans) == "检查更新")
+        #expect(AppStrings.checkForUpdatesButton(isBusy: true, in: .zhHans) == "检查中…")
+        #expect(AppStrings.checkForUpdatesButton(isBusy: false, in: .en) == "Check for Updates")
+        #expect(AppStrings.checkForUpdatesButton(isBusy: true, in: .en) == "Checking…")
+
+        #expect(
+            AppStrings.aboutSummary(in: .zhHans)
+                == "跨 AI 对话与网页顺手暂存灵感片段，保留提问脉络并一键接聊。"
+        )
+        #expect(
+            AppStrings.aboutSummary(in: .en)
+                == "Stash highlights across AI chats and the web with conversation context intact."
+        )
+        #expect(AppStrings.aboutGitHubRepoButton(in: .zhHans) == "GitHub 仓库 ↗")
+        #expect(AppStrings.aboutGitHubRepoButton(in: .en) == "GitHub Repository ↗")
+        #expect(AppStrings.aboutReleaseNotesButton(in: .zhHans) == "发布版本与更新日志 ↗")
+        #expect(AppStrings.aboutReleaseNotesButton(in: .en) == "Releases & Changelog ↗")
+        #expect(AppStrings.aboutGitHubRepoAccessibilityLabel(in: .zhHans) == "GitHub 仓库")
+        #expect(AppStrings.aboutGitHubRepoAccessibilityLabel(in: .en) == "GitHub Repository")
+        #expect(AppStrings.aboutReleaseNotesAccessibilityLabel(in: .zhHans) == "发布版本与更新日志")
+        #expect(AppStrings.aboutReleaseNotesAccessibilityLabel(in: .en) == "Releases & Changelog")
     }
 
     private func makeTestRoot() -> URL {

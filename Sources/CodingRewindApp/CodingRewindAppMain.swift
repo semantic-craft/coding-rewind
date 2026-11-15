@@ -419,7 +419,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .openSettings:
             settingsWindowController?.show()
         case .checkForUpdates:
-            settingsWindowController?.show(page: .general)
+            settingsWindowController?.show(page: .about)
             Task { @MainActor [weak self] in
                 await self?.updater?.checkForUpdates(userInitiated: true)
             }
@@ -427,12 +427,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             coordinator?.focusAndCheckCard(id: cardID)
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
         case .showAbout:
-            let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0.3.2"
-            NSApplication.shared.activate(ignoringOtherApps: true)
-            NSApplication.shared.orderFrontStandardAboutPanel(options: [
-                .applicationName: "Coding Rewind",
-                .applicationVersion: version
-            ])
+            settingsWindowController?.show(page: .about)
         case .quit:
             NSApplication.shared.terminate(nil)
         }
