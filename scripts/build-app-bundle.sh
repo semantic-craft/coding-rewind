@@ -6,8 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RAW_DIST_DIR="${DIST_DIR:-${1:-${REPO_ROOT}/.build}}"
 MEMOS_TOKEN_REFERENCE="${CODING_REWIND_MEMOS_TOKEN_REFERENCE:-}"
+SKIP_DEV_CREDENTIALS="${SKIP_DEVELOPER_CREDENTIALS:-0}"
 
-if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
+if [[ "${SKIP_DEV_CREDENTIALS}" != "1" && -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     case "${MEMOS_TOKEN_REFERENCE}" in
         op://?*/?*/?*) ;;
         *)
@@ -60,6 +61,16 @@ rm -rf "${ICONSET_DIR}"
 install -m 0644 "${REPO_ROOT}/Resources/MenuBarIcon.png" "${RESOURCES_DIR}/MenuBarIcon.png"
 install -m 0644 "${REPO_ROOT}/Resources/MenuBarIcon@2x.png" "${RESOURCES_DIR}/MenuBarIcon@2x.png"
 
+for lproj_dir in "${REPO_ROOT}"/Resources/*.lproj; do
+    [[ -d "${lproj_dir}" ]] || continue
+    dest_lproj="${RESOURCES_DIR}/$(basename "${lproj_dir}")"
+    mkdir -p "${dest_lproj}"
+    chmod 0755 "${dest_lproj}"
+    if [[ -f "${lproj_dir}/InfoPlist.strings" ]]; then
+        install -m 0644 "${lproj_dir}/InfoPlist.strings" "${dest_lproj}/InfoPlist.strings"
+    fi
+done
+
 for resource_bundle in "${BIN_DIR}"/*.bundle; do
     [[ -d "${resource_bundle}" ]] || continue
     cp -R "${resource_bundle}" "${RESOURCES_DIR}/"
@@ -71,7 +82,7 @@ fi
 install -m 0644 "${REPO_ROOT}/Vendor/KeyboardShortcuts/license" "${RESOURCES_DIR}/KeyboardShortcuts-LICENSE.txt"
 
 install -m 0755 "${BIN_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp"
-if [[ -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
+if [[ "${SKIP_DEV_CREDENTIALS}" != "1" && -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     LAUNCHER_CONFIG="${RESOURCES_DIR}/DeveloperCredentials.plist"
     /usr/bin/plutil -create xml1 "${LAUNCHER_CONFIG}"
     /usr/bin/plutil -insert token_reference -string "${MEMOS_TOKEN_REFERENCE}" "${LAUNCHER_CONFIG}"
@@ -91,6 +102,11 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>zh-Hans</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>zh-Hans</string>
+        <string>en</string>
+    </array>
     <key>CFBundleExecutable</key>
     <string>CodingRewindApp</string>
     <key>CFBundleIconFile</key>
