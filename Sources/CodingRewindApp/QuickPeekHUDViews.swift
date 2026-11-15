@@ -8,13 +8,25 @@ import SwiftUI
 
 @MainActor
 public final class QuickPeekHUDPanel: NSPanel {
+    private let coordinator: AppCoordinator
+    private let shortcuts: AppShortcuts
+    private let updater: AppUpdater?
+    private let onCommand: @MainActor (AppCommand) -> Void
+    private let frosted: NSVisualEffectView
+    private var hostingView: NSHostingView<QuickPeekHUDRootView>?
+
     public init(
         coordinator: AppCoordinator,
         shortcuts: AppShortcuts,
         updater: AppUpdater? = nil,
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
+        self.coordinator = coordinator
+        self.shortcuts = shortcuts
+        self.updater = updater
+        self.onCommand = onCommand
         let rect = NSRect(x: 0, y: 0, width: 480, height: 560)
+        self.frosted = NSVisualEffectView(frame: rect)
         super.init(
             contentRect: rect,
             styleMask: [.nonactivatingPanel, .titled, .closable, .resizable, .fullSizeContentView],
@@ -31,8 +43,8 @@ public final class QuickPeekHUDPanel: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        contentMinSize = NSSize(width: 440, height: 480)
 
-        let frosted = NSVisualEffectView(frame: rect)
         frosted.material = .hudWindow
         frosted.blendingMode = .withinWindow
         frosted.state = .active
@@ -40,6 +52,42 @@ public final class QuickPeekHUDPanel: NSPanel {
         frosted.layer?.cornerRadius = 14
         frosted.layer?.masksToBounds = true
 
+        contentView = frosted
+        position(relativeTo: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApplicationDidHide(_:)),
+            name: NSApplication.didHideNotification,
+            object: nil
+        )
+    }
+
+    public override var canBecomeKey: Bool { true }
+    public override var canBecomeMain: Bool { false }
+    public override func cancelOperation(_ sender: Any?) { orderOut(sender) }
+
+    public override func orderFrontRegardless() {
+        mountContentIfNeeded()
+        super.orderFrontRegardless()
+    }
+
+    public override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+        if place == .out {
+            resignHostedFirstResponderIfNeeded()
+            super.order(place, relativeTo: otherWin)
+            unmountContentIfNeeded()
+        } else {
+            mountContentIfNeeded()
+            super.order(place, relativeTo: otherWin)
+        }
+    }
+
+    @objc private func handleApplicationDidHide(_ notification: Notification) {
+        unmountContentIfNeeded()
+    }
+
+    private func mountContentIfNeeded() {
+        guard hostingView == nil else { return }
         let hosting = NSHostingView(
             rootView: QuickPeekHUDRootView(
                 coordinator: coordinator,
@@ -57,13 +105,33 @@ public final class QuickPeekHUDPanel: NSPanel {
             hosting.topAnchor.constraint(equalTo: frosted.topAnchor),
             hosting.bottomAnchor.constraint(equalTo: frosted.bottomAnchor)
         ])
-        contentView = frosted
-        position(relativeTo: nil)
+        hostingView = hosting
+        frosted.layoutSubtreeIfNeeded()
+        recalculateKeyViewLoop()
+        if firstResponder === self,
+           let keyView = frosted.nextValidKeyView,
+           !(keyView is NSTextField) {
+            _ = makeFirstResponder(keyView)
+        }
     }
 
-    public override var canBecomeKey: Bool { true }
-    public override var canBecomeMain: Bool { false }
-    public override func cancelOperation(_ sender: Any?) { orderOut(sender) }
+    private func resignHostedFirstResponderIfNeeded() {
+        guard let hosting = hostingView,
+              let responder = firstResponder as? NSView,
+              responder.isDescendant(of: hosting) else {
+            return
+        }
+        if !makeFirstResponder(nil) {
+            endEditing(for: nil)
+        }
+    }
+
+    private func unmountContentIfNeeded() {
+        guard let hosting = hostingView else { return }
+        resignHostedFirstResponderIfNeeded()
+        hostingView = nil
+        hosting.removeFromSuperview()
+    }
 
     public func position(relativeTo anchorFrame: NSRect?) {
         let panelWidth: CGFloat = 480
@@ -100,14 +168,14 @@ public final class QuickPeekHUDPanel: NSPanel {
                 let maxY = max(bounds.minY, bounds.maxY - panelHeight)
                 let x = min(max(anchor.midX - panelWidth / 2, minX), maxX)
                 let y = min(max(anchor.minY - 8 - panelHeight, minY), maxY)
-                setFrame(NSRect(x: round(x), y: round(y), width: panelWidth, height: panelHeight), display: true)
+                setFrame(NSRect(x: round(x), y: round(y), width: panelWidth, height: panelHeight), display: isVisible)
                 return
             }
         }
 
         setFrame(
             NSRect(x: visible.maxX - 496, y: visible.maxY - 572, width: panelWidth, height: panelHeight),
-            display: true
+            display: isVisible
         )
     }
 
