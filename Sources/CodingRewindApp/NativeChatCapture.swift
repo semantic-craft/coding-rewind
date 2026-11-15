@@ -143,7 +143,7 @@ enum NativeChatAXCapture {
     }
 
     private static func isChatGPTShell(_ node: AXUIElement) -> Bool {
-        AXSupport.role(node) == "AXWebArea" && AXSupport.url(node)?.absoluteString == "app://-/index.html"
+        AXSupport.role(node) == "AXWebArea" && ChatGPTWebAreaClassification.classify(webArea: node) == .shell
     }
 
     private struct RenderedMessage {

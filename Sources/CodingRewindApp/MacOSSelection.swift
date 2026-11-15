@@ -32,6 +32,16 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         let appElement = AXUIElementCreateApplication(targetPID)
         if bundleID == AppBundleID.antigravity {
             _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        } else if bundleID == AppBundleID.codex {
+            _ = AXSupport.value(appElement, "AXEnhancedUserInterface")
+            for _ in 0..<3 {
+                if let window = AXSupport.focusedWindow(appElement),
+                   ChatGPTWebAreaClassification.findShellWebArea(in: window) != nil {
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { break }
+            }
         }
         let initialWindow = AXSupport.focusedWindow(appElement)
         var windowTitle = initialWindow.flatMap(AXSupport.title)

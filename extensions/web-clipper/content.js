@@ -89,6 +89,10 @@
         --rw-success: #16713b;
         --rw-warning: #9b5c06;
         --rw-error: #b52632;
+        --rw-pill-bg: #ffffff;
+        --rw-pill-hover: #f6f6f7;
+        --rw-pill-border: rgba(0, 0, 0, 0.075);
+        --rw-pill-shortcut: rgba(0, 0, 0, 0.42);
       }
       @media (prefers-color-scheme: dark) {
         :host {
@@ -99,6 +103,10 @@
           --rw-success: #7ddc9d;
           --rw-warning: #f4bd6d;
           --rw-error: #ff9199;
+          --rw-pill-bg: #242428;
+          --rw-pill-hover: #2f2f35;
+          --rw-pill-border: rgba(255, 255, 255, 0.12);
+          --rw-pill-shortcut: rgba(255, 255, 255, 0.46);
         }
       }
       .rw-toast {
@@ -170,23 +178,21 @@
         position: fixed;
         display: none;
         align-items: center;
-        gap: 6px;
-        height: 32px;
-        padding: 0 12px;
+        gap: 5px;
+        height: 26px;
+        padding: 0 10px;
         border-radius: 999px;
-        background: var(--rw-surface);
+        background: var(--rw-pill-bg);
         color: var(--rw-text);
-        border: 1px solid var(--rw-border);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.06);
-        font: 500 12.5px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+        border: 1px solid var(--rw-pill-border);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+        font: 500 12px/1 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
         cursor: pointer;
         pointer-events: auto;
         user-select: none;
         white-space: nowrap;
       }
-      .rw-pill[data-state="ready"]:hover { border-color: var(--rw-accent); }
+      .rw-pill[data-state="ready"]:hover { background: var(--rw-pill-hover); }
       .rw-pill[data-state="saving"],
       .rw-pill[data-state="saved"],
       .rw-pill[data-state="queued"] {
@@ -195,8 +201,12 @@
       .rw-pill-icon {
         color: var(--rw-accent);
         font-weight: 600;
-        font-size: 14px;
+        font-size: 12px;
         line-height: 1;
+      }
+      .rw-pill-icon[hidden],
+      .rw-pill-shortcut[hidden] {
+        display: none;
       }
       .rw-pill[data-state="saved"] .rw-pill-icon {
         color: var(--rw-success);
@@ -205,8 +215,8 @@
         color: var(--rw-warning);
       }
       .rw-pill-shortcut {
-        color: #8a9099;
-        font-size: 11px;
+        color: var(--rw-pill-shortcut);
+        font-size: 11.5px;
         font-weight: 400;
         line-height: 1;
       }
@@ -264,19 +274,23 @@
     pillState = state;
     pillEl.setAttribute("data-state", state);
     if (state === "saving") {
+      pillIconEl.hidden = false;
       pillIconEl.textContent = "…";
       pillLabelEl.textContent = "暂存中…";
       pillShortcutEl.hidden = true;
     } else if (state === "saved") {
+      pillIconEl.hidden = false;
       pillIconEl.textContent = "✓";
       pillLabelEl.textContent = "已同步";
       pillShortcutEl.hidden = true;
     } else if (state === "queued") {
+      pillIconEl.hidden = false;
       pillIconEl.textContent = "✓";
       pillLabelEl.textContent = "待同步";
       pillShortcutEl.hidden = true;
     } else {
-      pillIconEl.textContent = "+";
+      pillIconEl.hidden = true;
+      pillIconEl.textContent = "";
       pillLabelEl.textContent = "暂存";
       pillShortcutEl.textContent = CAPTURE_SHORTCUT_HINT;
       pillShortcutEl.hidden = false;
@@ -286,7 +300,7 @@
   function positionPillAtRect(rect) {
     if (!pillEl || !rect) return;
     const pillWidth = pillEl.offsetWidth || 120;
-    const pillHeight = pillEl.offsetHeight || 32;
+    const pillHeight = pillEl.offsetHeight || 26;
     const pos = computePillPosition({
       rect,
       pillWidth,

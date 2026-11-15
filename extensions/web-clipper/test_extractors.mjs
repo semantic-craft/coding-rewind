@@ -1116,7 +1116,7 @@ function createContentScriptHarness({
       textContent: "",
       isConnected: false,
       offsetWidth: 116,
-      offsetHeight: 32,
+      offsetHeight: 26,
       style: {},
       attributes: {},
       children: [],
@@ -1340,13 +1340,16 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   harness.advanceTime(20);
 
   const pill = harness.getPill();
+  const pillIcon = pill?.children.find((c) => c.className === "rw-pill-icon");
   assert.ok(pill, "Expected .rw-pill to be mounted in shadow root");
   assert.equal(pill.style.display, "inline-flex");
   assert.equal(pill.style.visibility, "visible");
   assert.equal(pill.getAttribute("data-state"), "ready");
   assert.equal(harness.getPillLabel(), "暂存");
+  assert.equal(pillIcon.hidden, true);
+  assert.equal(pillIcon.textContent, "");
   assert.equal(pill.style.left, "322px", "pill centers horizontally above selection rect");
-  assert.equal(pill.style.top, "160px", "pill positions above selection rect");
+  assert.equal(pill.style.top, "166px", "pill positions above selection rect");
   assert.doesNotMatch(
     harness.getStyleText(),
     /\.rw-pill\[data-state="saving"\][\s\S]*?pointer-events:\s*none/
@@ -1357,6 +1360,8 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   assert.equal(click1.propagationStopped, true);
   assert.equal(pill.getAttribute("data-state"), "saving");
   assert.equal(harness.getPillLabel(), "暂存中…");
+  assert.equal(pillIcon.hidden, false);
+  assert.equal(pillIcon.textContent, "…");
 
   const click2 = pill.dispatch("mousedown", { path: [pill] });
   assert.equal(click2.defaultPrevented, true);
@@ -1383,8 +1388,10 @@ test("content.js capsule positions on mouseup, absorbs rapid double-mousedown wi
   await new Promise((r) => setImmediate(r));
   assert.equal(pill.getAttribute("data-state"), "saved");
   assert.equal(harness.getPillLabel(), "已同步");
+  assert.equal(pillIcon.hidden, false);
+  assert.equal(pillIcon.textContent, "✓");
   assert.equal(pill.style.left, "322px");
-  assert.equal(pill.style.top, "160px");
+  assert.equal(pill.style.top, "166px");
 
   harness.advanceTime(950);
   assert.equal(pill.getAttribute("data-state"), "hidden");
@@ -1504,7 +1511,7 @@ test("content.js capsule centers above selection, flips below near top edge, and
   const cases = [
     {
       rect: { left: 300, top: 200, bottom: 224, width: 160, height: 24 },
-      expected: { left: "322px", top: "160px" }
+      expected: { left: "322px", top: "166px" }
     },
     {
       rect: { left: 300, top: 18, bottom: 42, width: 160, height: 24 },
@@ -1512,11 +1519,11 @@ test("content.js capsule centers above selection, flips below near top edge, and
     },
     {
       rect: { left: 2, top: 200, bottom: 224, width: 20, height: 24 },
-      expected: { left: "8px", top: "160px" }
+      expected: { left: "8px", top: "166px" }
     },
     {
       rect: { left: 1250, top: 200, bottom: 224, width: 24, height: 24 },
-      expected: { left: "1156px", top: "160px" }
+      expected: { left: "1156px", top: "166px" }
     }
   ];
 
@@ -1533,7 +1540,7 @@ test("content.js capsule centers above selection, flips below near top edge, and
   harness.document.dispatch("mouseup", { path: [] });
   harness.advanceTime(20);
   const clampedPill = harness.getPill();
-  assert.deepEqual({ left: clampedPill.style.left, top: clampedPill.style.top }, { left: "276px", top: "160px" });
+  assert.deepEqual({ left: clampedPill.style.left, top: clampedPill.style.top }, { left: "276px", top: "166px" });
 });
 
 test("htmlToMarkdown falls back cleanly when DOMParser is unavailable", () => {

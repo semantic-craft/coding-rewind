@@ -10,19 +10,119 @@ import SwiftUI
 
 package enum SelectionPopupHost: Equatable, Sendable {
     case antigravity
+    case chatGPTApp
     case geminiApp
 
     package init?(bundleIdentifier: String?) {
         switch bundleIdentifier {
         case AppBundleID.antigravity: self = .antigravity
+        case AppBundleID.codex: self = .chatGPTApp
         case AppBundleID.gemini: self = .geminiApp
         default: return nil
         }
     }
+
+    package var preferredVerticalPlacement: SelectionPopupLayout.VerticalPlacement {
+        switch self {
+        case .antigravity, .geminiApp: .above
+        case .chatGPTApp: .below
+        }
+    }
+}
+
+package enum ChatGPTWebAreaClassification: Equatable, Sendable {
+    case shell
+    case disallowed
+
+    package static func classify(rawURLString: String?) -> Self {
+        guard let rawURLString else { return .disallowed }
+        if rawURLString == "app://-/index.html"
+            || rawURLString.hasPrefix("app://-/index.html#")
+            || rawURLString.hasPrefix("app://-/index.html?") {
+            return .shell
+        }
+        return .disallowed
+    }
+
+    package static func classify(webArea: AXUIElement) -> Self {
+        classify(rawURLString: AXSupport.urlString(webArea))
+    }
+
+    package static func findShellWebArea(in root: AXUIElement, depth: Int = 0) -> AXUIElement? {
+        guard depth < 24 else { return nil }
+        let role = AXSupport.role(root) ?? ""
+        if [kAXMenuBarRole, kAXStaticTextRole, kAXImageRole, kAXScrollBarRole, kAXToolbarRole].contains(role) {
+            return nil
+        }
+        if role == "AXWebArea", classify(webArea: root) == .shell {
+            return root
+        }
+        for child in AXSupport.children(root) {
+            if let found = findShellWebArea(in: child, depth: depth + 1) {
+                return found
+            }
+        }
+        return nil
+    }
+}
+
+package enum ChatGPTSurfaceClassification {
+    package static func isSelectableContainer(
+        role: String?,
+        subrole: String?,
+        title: String?,
+        domClasses: [String]
+    ) -> Bool {
+        if subrole == "AXLandmarkRegion" && title == "Conversation" {
+            return true
+        }
+        return domClasses.contains { $0.hasPrefix("MarkdownRoot-") || $0.hasPrefix("CodeSurface-") }
+    }
+
+    package static func isDisallowedNode(
+        role: String?,
+        subrole: String?,
+        title: String?,
+        domClasses: [String],
+        hasEditableAncestor: Bool,
+        isAllowedCodeEditor: Bool
+    ) -> Bool {
+        if isAllowedCodeEditor {
+            return false
+        }
+        if let role, [kAXTextFieldRole, kAXComboBoxRole, kAXOutlineRole, kAXTextAreaRole].contains(role) {
+            return true
+        }
+        if hasEditableAncestor {
+            return true
+        }
+        if let subrole, ["AXLandmarkNavigation", "AXLandmarkComplementary", "AXLandmarkBanner"].contains(subrole) {
+            return true
+        }
+        return false
+    }
+}
+
+package enum SelectionPopupStyleMetrics {
+    package static let pillHeight: CGFloat = 26
+    package static let shadowOutset: CGFloat = 8
+    package static let minPillWidth: CGFloat = 64
+    package static let horizontalPadding: CGFloat = 10
+    package static let itemSpacing: CGFloat = 5
 }
 
 package struct SelectionGestureEvaluator: Equatable, Sendable {
     package static let minimumDragDistance: CGFloat = 6.0
+    private static let keyboardNavigationKeyCodes: Set<UInt16> = [115, 119, 123, 124, 125, 126]
+
+    package static func isKeyboardSelectionNavigationKey(
+        keyCode: UInt16,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> Bool {
+        modifierFlags.contains(.shift)
+            && !modifierFlags.contains(.control)
+            && keyboardNavigationKeyCodes.contains(keyCode)
+    }
 
     package struct Sample: Equatable, Sendable {
         package let mouseDownPoint: CGPoint
@@ -94,6 +194,11 @@ package struct SelectionGestureEvaluator: Equatable, Sendable {
 }
 
 package enum SelectionPopupLayout {
+    package enum VerticalPlacement: Equatable, Sendable {
+        case above
+        case below
+    }
+
     package static func primaryScreenHeight(screens: [NSScreen] = NSScreen.screens) -> CGFloat {
         screens.first(where: { $0.frame.origin == .zero })?.frame.height
             ?? NSScreen.main?.frame.height
@@ -117,25 +222,32 @@ package enum SelectionPopupLayout {
         panelSize: CGSize,
         selectionRect: CGRect?,
         releasePoint: CGPoint,
-        visibleFrame: CGRect
+        visibleFrame: CGRect,
+        verticalPlacement: VerticalPlacement = .above
     ) -> CGPoint {
         let anchorMidX = selectionRect?.midX ?? releasePoint.x
         let minX = visibleFrame.minX + 8
         let maxX = max(minX, visibleFrame.maxX - panelSize.width - 8)
         let x = min(max(anchorMidX - panelSize.width / 2, minX), maxX)
 
-        let preferredY = if let selectionRect {
-            selectionRect.maxY + 8
-        } else {
-            releasePoint.y + 12
-        }
         let minY = visibleFrame.minY + 8
         let maxY = max(minY, visibleFrame.maxY - panelSize.height - 8)
         let rawY: CGFloat
-        if preferredY + panelSize.height > visibleFrame.maxY - 8 {
-            rawY = (selectionRect?.minY ?? releasePoint.y) - panelSize.height - 10
-        } else {
-            rawY = preferredY
+        switch verticalPlacement {
+        case .above:
+            let preferredY = selectionRect.map { $0.maxY + 8 } ?? (releasePoint.y + 12)
+            if preferredY + panelSize.height > visibleFrame.maxY - 8 {
+                rawY = (selectionRect?.minY ?? releasePoint.y) - panelSize.height - 10
+            } else {
+                rawY = preferredY
+            }
+        case .below:
+            let preferredY = selectionRect.map { $0.minY - panelSize.height - 8 } ?? (releasePoint.y - panelSize.height - 12)
+            if preferredY < visibleFrame.minY + 8 {
+                rawY = (selectionRect?.maxY ?? releasePoint.y) + 10
+            } else {
+                rawY = preferredY
+            }
         }
         let y = min(max(rawY, minY), maxY)
         return CGPoint(x: round(x), y: round(y))
@@ -197,41 +309,77 @@ enum SelectionPopupAXProbe {
         let selectionRect: CGRect?
     }
 
+    enum Outcome: Equatable {
+        case matched(Result)
+        case warmingUp
+        case none
+    }
+
+    static func warmUpAccessibilityIfNeeded(pid: pid_t, host: SelectionPopupHost) {
+        guard host == .chatGPTApp, AXSupport.isTrusted(prompt: false) else {
+            return
+        }
+        let appElement = AXUIElementCreateApplication(pid)
+        _ = AXSupport.value(appElement, "AXEnhancedUserInterface")
+        _ = AXSupport.focusedWindow(appElement)
+    }
+
     static func probe(
         pid: pid_t,
         host: SelectionPopupHost,
         sample: SelectionGestureEvaluator.Sample,
         primaryScreenHeight: CGFloat
-    ) -> Result? {
+    ) -> Outcome {
         guard AXSupport.isTrusted(prompt: false) else {
-            return nil
+            return .none
         }
         let appElement = AXUIElementCreateApplication(pid)
+        let isPointerSample = sample.mouseUpPoint != .zero || sample.mouseDownPoint != .zero
         let quartzUp = SelectionPopupLayout.quartzPoint(fromAppKit: sample.mouseUpPoint, primaryScreenHeight: primaryScreenHeight)
         let quartzDown = SelectionPopupLayout.quartzPoint(fromAppKit: sample.mouseDownPoint, primaryScreenHeight: primaryScreenHeight)
 
-        let hitUpOutcome = hitTestElement(at: quartzUp, expectedPID: pid, appElement: appElement)
-        if case .foreignApplication = hitUpOutcome {
-            return nil
+        let hitUp: AXUIElement?
+        if isPointerSample {
+            let hitUpOutcome = hitTestElement(at: quartzUp, expectedPID: pid, appElement: appElement)
+            if case .foreignApplication = hitUpOutcome {
+                return .none
+            }
+            hitUp = if case .element(let el) = hitUpOutcome { el } else { nil }
+        } else {
+            hitUp = nil
         }
-        let hitUp: AXUIElement? = if case .element(let el) = hitUpOutcome { el } else { nil }
 
         switch host {
         case .antigravity:
-            return probeAntigravity(
+            if let result = probeAntigravity(
                 appElement: appElement,
                 hitUp: hitUp,
                 primaryScreenHeight: primaryScreenHeight
+            ) {
+                return .matched(result)
+            }
+            return .none
+        case .chatGPTApp:
+            return probeChatGPTApp(
+                pid: pid,
+                appElement: appElement,
+                hitUp: hitUp,
+                quartzDown: quartzDown,
+                isPointerSample: isPointerSample,
+                primaryScreenHeight: primaryScreenHeight
             )
         case .geminiApp:
-            return probeGeminiApp(
+            if let result = probeGeminiApp(
                 pid: pid,
                 appElement: appElement,
                 hitUp: hitUp,
                 quartzDown: quartzDown,
                 sample: sample,
                 primaryScreenHeight: primaryScreenHeight
-            )
+            ) {
+                return .matched(result)
+            }
+            return .none
         }
     }
 
@@ -347,6 +495,242 @@ enum SelectionPopupAXProbe {
         let rect = rangeSelectionBounds(on: hitUp, primaryScreenHeight: primaryScreenHeight)
             ?? rangeSelectionBounds(on: focused, primaryScreenHeight: primaryScreenHeight)
         return Result(selectionRect: rect)
+    }
+
+    private static func probeChatGPTApp(
+        pid: pid_t,
+        appElement: AXUIElement,
+        hitUp: AXUIElement?,
+        quartzDown: CGPoint,
+        isPointerSample: Bool,
+        primaryScreenHeight: CGFloat
+    ) -> Outcome {
+        _ = AXSupport.value(appElement, "AXEnhancedUserInterface")
+        let window = AXSupport.focusedWindow(appElement)
+        let focused = AXSupport.focusedElement(appElement)
+
+        if let hitWebArea = AXSupport.nearestWebArea(hitUp, maxDepth: 64),
+           ChatGPTWebAreaClassification.classify(webArea: hitWebArea) == .disallowed {
+            return .none
+        }
+        if let focusedWebArea = AXSupport.nearestWebArea(focused, maxDepth: 64),
+           ChatGPTWebAreaClassification.classify(webArea: focusedWebArea) == .disallowed {
+            return .none
+        }
+
+        let shellWebArea = owningChatGPTShellWebArea(hitUp)
+            ?? owningChatGPTShellWebArea(focused)
+            ?? window.flatMap { ChatGPTWebAreaClassification.findShellWebArea(in: $0) }
+        guard let shellWebArea else {
+            if let window, !containsAnyWebArea(in: window) {
+                return .warmingUp
+            }
+            return .none
+        }
+
+        let focusedInspection = inspectChatGPTAncestry(focused, shellWebArea: shellWebArea)
+        let hitUpInspection = inspectChatGPTAncestry(hitUp, shellWebArea: shellWebArea)
+        guard !focusedInspection.hasDisallowedAncestor,
+              !hitUpInspection.hasDisallowedAncestor else {
+            return .none
+        }
+
+        var hitDownInspection = ChatGPTAncestryInspection(
+            hasDisallowedAncestor: false,
+            hasSelectableContainer: false,
+            allowedCodeEditor: nil
+        )
+        if !hitUpInspection.hasSelectableContainer, isPointerSample {
+            if case .element(let downEl) = hitTestElement(at: quartzDown, expectedPID: pid, appElement: appElement) {
+                if let downWebArea = AXSupport.nearestWebArea(downEl, maxDepth: 64),
+                   ChatGPTWebAreaClassification.classify(webArea: downWebArea) == .disallowed {
+                    return .none
+                }
+                hitDownInspection = inspectChatGPTAncestry(downEl, shellWebArea: shellWebArea)
+            }
+        }
+
+        let markerRect = markerSelectionBounds(on: shellWebArea, primaryScreenHeight: primaryScreenHeight)
+
+        var keyboardHitInspection = ChatGPTAncestryInspection(
+            hasDisallowedAncestor: false,
+            hasSelectableContainer: false,
+            allowedCodeEditor: nil
+        )
+        if !isPointerSample,
+           !focusedInspection.hasSelectableContainer,
+           let markerRect {
+            let midQuartz = SelectionPopupLayout.quartzPoint(
+                fromAppKit: CGPoint(x: markerRect.midX, y: markerRect.midY),
+                primaryScreenHeight: primaryScreenHeight
+            )
+            if case .element(let midEl) = hitTestElement(at: midQuartz, expectedPID: pid, appElement: appElement) {
+                if let midWebArea = AXSupport.nearestWebArea(midEl, maxDepth: 64),
+                   ChatGPTWebAreaClassification.classify(webArea: midWebArea) == .disallowed {
+                    return .none
+                }
+                keyboardHitInspection = inspectChatGPTAncestry(midEl, shellWebArea: shellWebArea)
+                if keyboardHitInspection.hasDisallowedAncestor {
+                    return .none
+                }
+            }
+        }
+
+        let selectableMatched = hitUpInspection.hasSelectableContainer
+            || focusedInspection.hasSelectableContainer
+            || (!hitDownInspection.hasDisallowedAncestor && hitDownInspection.hasSelectableContainer)
+            || (!keyboardHitInspection.hasDisallowedAncestor && keyboardHitInspection.hasSelectableContainer)
+        guard selectableMatched else {
+            return .none
+        }
+
+        let codeEditor = hitUpInspection.allowedCodeEditor
+            ?? focusedInspection.allowedCodeEditor
+            ?? (hitDownInspection.hasDisallowedAncestor ? nil : hitDownInspection.allowedCodeEditor)
+            ?? keyboardHitInspection.allowedCodeEditor
+
+        let hasSelection = hasNonEmptySelectedText(hitUp)
+            || hasNonEmptySelectedText(focused)
+            || hasNonEmptySelectedText(shellWebArea)
+            || hasNonEmptySelectedTextOrRange(codeEditor)
+        guard hasSelection else {
+            return .none
+        }
+
+        let rect = markerRect
+            ?? rangeSelectionBounds(on: hitUp, primaryScreenHeight: primaryScreenHeight)
+            ?? rangeSelectionBounds(on: focused, primaryScreenHeight: primaryScreenHeight)
+            ?? rangeSelectionBounds(on: codeEditor, primaryScreenHeight: primaryScreenHeight)
+        return .matched(Result(selectionRect: rect))
+    }
+
+    private struct ChatGPTAncestryInspection {
+        let hasDisallowedAncestor: Bool
+        let hasSelectableContainer: Bool
+        let allowedCodeEditor: AXUIElement?
+    }
+
+    private static func owningChatGPTShellWebArea(_ element: AXUIElement?) -> AXUIElement? {
+        guard let webArea = AXSupport.nearestWebArea(element, maxDepth: 64),
+              ChatGPTWebAreaClassification.classify(webArea: webArea) == .shell else {
+            return nil
+        }
+        return webArea
+    }
+
+    private static func containsAnyWebArea(in root: AXUIElement, depth: Int = 0) -> Bool {
+        guard depth < 24 else { return false }
+        let role = AXSupport.role(root) ?? ""
+        if [kAXMenuBarRole, kAXStaticTextRole, kAXImageRole, kAXScrollBarRole, kAXToolbarRole].contains(role) {
+            return false
+        }
+        if role == "AXWebArea" {
+            return true
+        }
+        for child in AXSupport.children(root) {
+            if containsAnyWebArea(in: child, depth: depth + 1) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func inspectChatGPTAncestry(
+        _ element: AXUIElement?,
+        shellWebArea: AXUIElement
+    ) -> ChatGPTAncestryInspection {
+        guard let element, !CFEqual(element, shellWebArea) else {
+            return ChatGPTAncestryInspection(
+                hasDisallowedAncestor: false,
+                hasSelectableContainer: false,
+                allowedCodeEditor: nil
+            )
+        }
+
+        struct NodeSnapshot {
+            let element: AXUIElement
+            let role: String?
+            let subrole: String?
+            let title: String?
+            let domClasses: [String]
+            let hasEditableAncestor: Bool
+            let isSelectable: Bool
+            let isCodeEditorCandidate: Bool
+        }
+
+        var chain: [NodeSnapshot] = []
+        var reachedShell = false
+        var current: AXUIElement? = element
+        var depth = 0
+        while let node = current, depth < 64 {
+            depth += 1
+            if CFEqual(node, shellWebArea) {
+                reachedShell = true
+                break
+            }
+            let role = AXSupport.role(node)
+            let subrole = AXSupport.subrole(node)
+            let title = AXSupport.title(node)
+            let domClasses = AXSupport.value(node, "AXDOMClassList") as? [String] ?? []
+            let hasEditableAncestor = AXSupport.hasEditableAncestorValue(node)
+            let isSelectable = ChatGPTSurfaceClassification.isSelectableContainer(
+                role: role,
+                subrole: subrole,
+                title: title,
+                domClasses: domClasses
+            )
+            let isCodeEditorCandidate = NativeChatCodeBlock.isEditor(
+                role: role,
+                title: title,
+                classes: domClasses
+            )
+            chain.append(NodeSnapshot(
+                element: node,
+                role: role,
+                subrole: subrole,
+                title: title,
+                domClasses: domClasses,
+                hasEditableAncestor: hasEditableAncestor,
+                isSelectable: isSelectable,
+                isCodeEditorCandidate: isCodeEditorCandidate
+            ))
+            if role == "AXWebArea" {
+                break
+            }
+            current = AXSupport.parent(node)
+        }
+
+        let editorIndex: Int? = if reachedShell,
+                                   let idx = chain.firstIndex(where: \.isCodeEditorCandidate),
+                                   chain[idx...].contains(where: \.isSelectable) {
+            idx
+        } else {
+            nil
+        }
+
+        for (index, item) in chain.enumerated() {
+            let insideAllowedEditor = if let editorIndex { index <= editorIndex } else { false }
+            if ChatGPTSurfaceClassification.isDisallowedNode(
+                role: item.role,
+                subrole: item.subrole,
+                title: item.title,
+                domClasses: item.domClasses,
+                hasEditableAncestor: item.hasEditableAncestor,
+                isAllowedCodeEditor: insideAllowedEditor
+            ) {
+                return ChatGPTAncestryInspection(
+                    hasDisallowedAncestor: true,
+                    hasSelectableContainer: false,
+                    allowedCodeEditor: nil
+                )
+            }
+        }
+
+        return ChatGPTAncestryInspection(
+            hasDisallowedAncestor: false,
+            hasSelectableContainer: reachedShell && chain.contains(where: \.isSelectable),
+            allowedCodeEditor: editorIndex.map { chain[$0].element }
+        )
     }
 
     private static func hasDisallowedAntigravityAncestor(_ element: AXUIElement?) -> Bool {
@@ -636,19 +1020,50 @@ enum SelectionPopupAXProbe {
 @MainActor
 private final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let interactiveBounds = bounds.insetBy(
+            dx: SelectionPopupStyleMetrics.shadowOutset,
+            dy: SelectionPopupStyleMetrics.shadowOutset
+        )
+        guard interactiveBounds.contains(point) else { return nil }
+        return super.hitTest(point)
+    }
 }
 
 @MainActor
 public final class SelectionPopupPanel: NSPanel {
     private let hostingView: FirstMouseHostingView<SelectionPopupView>
+    private let onOutsideShadowClick: (@MainActor () -> Void)?
 
-    init(onStash: @escaping @MainActor () -> Void) {
+    package var interactiveFrame: CGRect {
+        frame.insetBy(
+            dx: SelectionPopupStyleMetrics.shadowOutset,
+            dy: SelectionPopupStyleMetrics.shadowOutset
+        )
+    }
+
+    package func updateMousePassthrough(mouseLocation: CGPoint = NSEvent.mouseLocation, isInteractivePhase: Bool) {
+        ignoresMouseEvents = !isInteractivePhase || !interactiveFrame.contains(mouseLocation)
+    }
+
+    init(
+        onStash: @escaping @MainActor () -> Void,
+        onOutsideShadowClick: (@MainActor () -> Void)? = nil
+    ) {
         let initialView = SelectionPopupView(phase: .hidden, onStash: onStash)
         let hosting = FirstMouseHostingView(rootView: initialView)
         self.hostingView = hosting
+        self.onOutsideShadowClick = onOutsideShadowClick
 
+        let outset = SelectionPopupStyleMetrics.shadowOutset
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 108, height: 34),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: SelectionPopupStyleMetrics.minPillWidth + outset * 2,
+                height: SelectionPopupStyleMetrics.pillHeight + outset * 2
+            ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -656,7 +1071,9 @@ public final class SelectionPopupPanel: NSPanel {
         isFloatingPanel = true
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false
+        acceptsMouseMovedEvents = true
+        ignoresMouseEvents = true
         level = .popUpMenu
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         hidesOnDeactivate = false
@@ -668,40 +1085,72 @@ public final class SelectionPopupPanel: NSPanel {
     public override var canBecomeKey: Bool { false }
     public override var canBecomeMain: Bool { false }
 
+    public override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            let interactiveRect = NSRect(origin: .zero, size: frame.size).insetBy(
+                dx: SelectionPopupStyleMetrics.shadowOutset,
+                dy: SelectionPopupStyleMetrics.shadowOutset
+            )
+            if !interactiveRect.contains(event.locationInWindow) {
+                onOutsideShadowClick?()
+                return
+            }
+        default:
+            break
+        }
+        super.sendEvent(event)
+    }
+
     func render(
         phase: SelectionPopupPhase,
         selectionRect: CGRect?,
         releasePoint: CGPoint,
+        verticalPlacement: SelectionPopupLayout.VerticalPlacement = .above,
         onStash: @escaping @MainActor () -> Void
     ) {
         guard phase != .hidden else {
+            ignoresMouseEvents = true
             orderOut(nil)
             return
         }
         hostingView.rootView = SelectionPopupView(phase: phase, onStash: onStash)
         hostingView.layoutSubtreeIfNeeded()
+        let outset = SelectionPopupStyleMetrics.shadowOutset
         let fitting = hostingView.fittingSize
-        let size = CGSize(width: max(76, ceil(fitting.width)), height: 34)
+        let pillWidth = max(SelectionPopupStyleMetrics.minPillWidth, ceil(fitting.width - outset * 2))
+        let pillSize = CGSize(width: pillWidth, height: SelectionPopupStyleMetrics.pillHeight)
         let visible = SelectionPopupLayout.preferredVisibleFrame(
             selectionRect: selectionRect,
             releasePoint: releasePoint,
             screens: NSScreen.screens.map { (frame: $0.frame, visibleFrame: $0.visibleFrame) },
             mainVisibleFrame: NSScreen.main?.visibleFrame
         )
-        let origin = SelectionPopupLayout.panelOrigin(
-            panelSize: size,
+        let pillOrigin = SelectionPopupLayout.panelOrigin(
+            panelSize: pillSize,
             selectionRect: selectionRect,
             releasePoint: releasePoint,
-            visibleFrame: visible
+            visibleFrame: visible,
+            verticalPlacement: verticalPlacement
         )
-        setFrame(NSRect(origin: origin, size: size), display: true)
-        invalidateShadow()
+        let panelFrame = NSRect(
+            x: pillOrigin.x - outset,
+            y: pillOrigin.y - outset,
+            width: pillSize.width + outset * 2,
+            height: pillSize.height + outset * 2
+        )
+        setFrame(panelFrame, display: true)
+        let isInteractive = if case .ready = phase { true } else { false }
+        updateMousePassthrough(isInteractivePhase: isInteractive)
         orderFrontRegardless()
     }
 }
 
 @MainActor
 struct SelectionPopupView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
     let phase: SelectionPopupPhase
     let onStash: @MainActor () -> Void
 
@@ -710,54 +1159,89 @@ struct SelectionPopupView: View {
         return false
     }
 
+    private var surfaceFillColor: Color {
+        let hoveredReady = isInteractive && isHovered
+        if colorScheme == .dark {
+            return hoveredReady
+                ? Color(red: 0.185, green: 0.185, blue: 0.205)
+                : Color(red: 0.145, green: 0.145, blue: 0.16)
+        }
+        return hoveredReady ? Color(white: 0.965) : Color.white
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.12) : Color.black.opacity(0.075)
+    }
+
+    private var primaryTextColor: Color {
+        colorScheme == .dark ? Color(white: 0.95) : Color(red: 0.145, green: 0.145, blue: 0.16)
+    }
+
+    private var shortcutTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.46) : Color.black.opacity(0.42)
+    }
+
     var body: some View {
         Button(action: onStash) {
-            HStack(spacing: 6) {
+            HStack(spacing: SelectionPopupStyleMetrics.itemSpacing) {
                 leadingAccessory
                 Text(phase.labelText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(primaryTextColor)
                 if case .ready(let hint) = phase, let hint, !hint.isEmpty {
                     Text(hint)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11.5, weight: .regular))
+                        .foregroundStyle(shortcutTextColor)
                 }
             }
-            .padding(.horizontal, 12)
-            .frame(height: 34)
+            .padding(.horizontal, SelectionPopupStyleMetrics.horizontalPadding)
+            .frame(minWidth: SelectionPopupStyleMetrics.minPillWidth, minHeight: SelectionPopupStyleMetrics.pillHeight)
             .fixedSize(horizontal: true, vertical: false)
-            .background(.ultraThinMaterial, in: Capsule(style: .continuous))
+            .background(
+                Capsule(style: .continuous)
+                    .fill(surfaceFillColor)
+                    .shadow(
+                        color: .black.opacity(colorScheme == .dark ? 0.34 : 0.08),
+                        radius: 5,
+                        x: 0,
+                        y: 2
+                    )
+                    .shadow(
+                        color: .black.opacity(colorScheme == .dark ? 0.18 : 0.04),
+                        radius: 1,
+                        x: 0,
+                        y: 0.5
+                    )
+            )
             .overlay {
                 Capsule(style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.14), lineWidth: 0.5)
+                    .strokeBorder(borderColor, lineWidth: 1)
             }
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
+        .onHover { isHovered = $0 }
         .disabled(!isInteractive)
         .environment(\.controlActiveState, .key)
         .accessibilityIdentifier("selectionPopup.stash")
         .accessibilityLabel(phase.labelText)
+        .padding(SelectionPopupStyleMetrics.shadowOutset)
     }
 
     @ViewBuilder
     private var leadingAccessory: some View {
         switch phase {
-        case .hidden:
+        case .hidden, .ready:
             EmptyView()
-        case .ready:
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
         case .saving:
             ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.72)
-                .frame(width: 13, height: 13)
+                .controlSize(.mini)
+                .scaleEffect(0.75)
+                .frame(width: 11, height: 11)
         case .saved(let offline):
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13))
+            Image(systemName: offline ? "clock.badge.checkmark" : "checkmark")
+                .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(offline ? Color.orange : Color.green)
         }
     }
@@ -770,9 +1254,15 @@ public final class SelectionPopupController {
     private let onTriggerCapture: @MainActor () async -> SelectionCaptureOutcome
     private let onPresentErrorHUD: @MainActor () -> Void
 
-    private lazy var panel = SelectionPopupPanel { [weak self] in
-        self?.handleCapsuleClick()
-    }
+    private lazy var panel = SelectionPopupPanel(
+        onStash: { [weak self] in
+            self?.handleCapsuleClick()
+        },
+        onOutsideShadowClick: { [weak self] in
+            guard let self, self.phase != .saving else { return }
+            self.hideImmediately()
+        }
+    )
     private var gestureEvaluator = SelectionGestureEvaluator()
     private var eventMonitors: [Any] = []
     private var workspaceObserver: NSObjectProtocol?
@@ -780,6 +1270,7 @@ public final class SelectionPopupController {
     private var holdTask: Task<Void, Never>?
     private var anchorSelectionRect: CGRect?
     private var anchorReleasePoint: CGPoint = .zero
+    private var anchorVerticalPlacement: SelectionPopupLayout.VerticalPlacement = .above
     private var anchorPID: pid_t?
     private var isRunning = false
     private var observationGeneration: UInt64 = 0
@@ -806,6 +1297,7 @@ public final class SelectionPopupController {
         isRunning = true
         observationGeneration &+= 1
         observeAppearancePreference()
+        warmUpFrontmostApplicationIfNeeded()
 
         let pointerDownMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: pointerDownMask, handler: { [weak self] event in
@@ -841,9 +1333,48 @@ public final class SelectionPopupController {
             eventMonitors.append(monitor)
         }
 
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved, handler: { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.panel.isVisible else { return }
+                self.syncPanelMousePassthrough()
+            }
+        }) {
+            eventMonitors.append(monitor)
+        }
+
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved, handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                if let self, self.panel.isVisible {
+                    self.syncPanelMousePassthrough()
+                }
+            }
+            return event
+        }) {
+            eventMonitors.append(monitor)
+        }
+
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             MainActor.assumeIsolated {
                 self?.handleGlobalKeyDown(event)
+            }
+        }) {
+            eventMonitors.append(monitor)
+        }
+
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                if let self, self.isVisible {
+                    self.handleGlobalKeyDown(event)
+                }
+            }
+            return event
+        }) {
+            eventMonitors.append(monitor)
+        }
+
+        if let monitor = NSEvent.addGlobalMonitorForEvents(matching: .keyUp, handler: { [weak self] event in
+            MainActor.assumeIsolated {
+                self?.handleGlobalKeyUp(event)
             }
         }) {
             eventMonitors.append(monitor)
@@ -854,9 +1385,11 @@ public final class SelectionPopupController {
             object: nil,
             queue: .main
         ) { [weak self] note in
-            let activatedPID = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let activatedPID = app?.processIdentifier
+            let bundleIdentifier = app?.bundleIdentifier
             MainActor.assumeIsolated {
-                self?.handleApplicationActivation(activatedPID: activatedPID)
+                self?.handleApplicationActivation(activatedPID: activatedPID, bundleIdentifier: bundleIdentifier)
             }
         }
     }
@@ -879,7 +1412,9 @@ public final class SelectionPopupController {
         phase = .hidden
         anchorSelectionRect = nil
         anchorReleasePoint = .zero
+        anchorVerticalPlacement = .above
         anchorPID = nil
+        panel.ignoresMouseEvents = true
         panel.orderOut(nil)
     }
 
@@ -890,7 +1425,9 @@ public final class SelectionPopupController {
         phase = .hidden
         anchorSelectionRect = nil
         anchorReleasePoint = .zero
+        anchorVerticalPlacement = .above
         anchorPID = nil
+        panel.ignoresMouseEvents = true
         panel.orderOut(nil)
     }
 
@@ -926,7 +1463,12 @@ public final class SelectionPopupController {
         }
     }
 
-    package func handleApplicationActivation(activatedPID: pid_t?) {
+    package func handleApplicationActivation(activatedPID: pid_t?, bundleIdentifier: String? = nil) {
+        if appearance.showsSelectionPopup,
+           let activatedPID,
+           let host = SelectionPopupHost(bundleIdentifier: bundleIdentifier) {
+            SelectionPopupAXProbe.warmUpAccessibilityIfNeeded(pid: activatedPID, host: host)
+        }
         guard phase != .saving else { return }
         if case .saved = phase, let anchorPID, activatedPID == anchorPID {
             return
@@ -939,12 +1481,24 @@ public final class SelectionPopupController {
         anchorPID: pid_t,
         selectionRect: CGRect? = CGRect(x: 200, y: 200, width: 120, height: 22),
         releasePoint: CGPoint = CGPoint(x: 260, y: 210),
+        verticalPlacement: SelectionPopupLayout.VerticalPlacement = .above,
         shortcutHint: String? = nil
     ) {
         self.anchorPID = anchorPID
         self.anchorSelectionRect = selectionRect
         self.anchorReleasePoint = releasePoint
+        self.anchorVerticalPlacement = verticalPlacement
         setPhase(.ready(shortcutHint: shortcutHint))
+    }
+
+    private func warmUpFrontmostApplicationIfNeeded() {
+        guard appearance.showsSelectionPopup,
+              let frontmost = NSWorkspace.shared.frontmostApplication,
+              !frontmost.isTerminated,
+              let host = SelectionPopupHost(bundleIdentifier: frontmost.bundleIdentifier) else {
+            return
+        }
+        SelectionPopupAXProbe.warmUpAccessibilityIfNeeded(pid: frontmost.processIdentifier, host: host)
     }
 
     private func handleCapsuleClick() {
@@ -959,7 +1513,7 @@ public final class SelectionPopupController {
 
     private func handleGlobalMouseDown(_ event: NSEvent) {
         let location = NSEvent.mouseLocation
-        if panel.isVisible && panel.frame.contains(location) {
+        if panel.isVisible && panel.interactiveFrame.contains(location) {
             return
         }
         if phase != .saving {
@@ -993,7 +1547,9 @@ public final class SelectionPopupController {
             hideImmediately()
             return
         }
-        if NSApplication.shared.windows.contains(where: { $0.isVisible && $0.frame.contains(location) }) {
+        if NSApplication.shared.windows.contains(where: { window in
+            window.isVisible && (window === panel ? panel.interactiveFrame.contains(location) : window.frame.contains(location))
+        }) {
             return
         }
         guard sample.qualifies else {
@@ -1011,7 +1567,14 @@ public final class SelectionPopupController {
             return
         }
 
-        let targetPID = frontmost.processIdentifier
+        scheduleProbe(sample: sample, targetPID: frontmost.processIdentifier, host: host)
+    }
+
+    private func scheduleProbe(
+        sample: SelectionGestureEvaluator.Sample,
+        targetPID: pid_t,
+        host: SelectionPopupHost
+    ) {
         cancelPendingProbe()
         probeTask = Task { @MainActor [weak self] in
             do {
@@ -1019,19 +1582,38 @@ public final class SelectionPopupController {
             } catch {
                 return
             }
+            var outcome: SelectionPopupAXProbe.Outcome = .none
+            for attempt in 0..<3 {
+                guard let self, !Task.isCancelled, self.appearance.showsSelectionPopup else { return }
+                guard let active = NSWorkspace.shared.frontmostApplication,
+                      active.processIdentifier == targetPID,
+                      SelectionPopupHost(bundleIdentifier: active.bundleIdentifier) == host else {
+                    return
+                }
+                let primaryHeight = SelectionPopupLayout.primaryScreenHeight()
+                outcome = SelectionPopupAXProbe.probe(
+                    pid: targetPID,
+                    host: host,
+                    sample: sample,
+                    primaryScreenHeight: primaryHeight
+                )
+                guard case .warmingUp = outcome, attempt < 2 else {
+                    break
+                }
+                do {
+                    try await Task.sleep(for: .milliseconds(120))
+                } catch {
+                    return
+                }
+            }
             guard let self, !Task.isCancelled, self.appearance.showsSelectionPopup else { return }
-            guard let active = NSWorkspace.shared.frontmostApplication,
-                  active.processIdentifier == targetPID,
-                  SelectionPopupHost(bundleIdentifier: active.bundleIdentifier) == host else {
+            guard case .matched(let result) = outcome else {
+                if self.phase != .saving {
+                    self.hideImmediately()
+                }
                 return
             }
-            let primaryHeight = SelectionPopupLayout.primaryScreenHeight()
-            guard let result = SelectionPopupAXProbe.probe(
-                pid: targetPID,
-                host: host,
-                sample: sample,
-                primaryScreenHeight: primaryHeight
-            ) else {
+            if sample.mouseUpPoint == .zero, result.selectionRect == nil {
                 if self.phase != .saving {
                     self.hideImmediately()
                 }
@@ -1039,7 +1621,12 @@ public final class SelectionPopupController {
             }
             self.anchorPID = targetPID
             self.anchorSelectionRect = result.selectionRect
-            self.anchorReleasePoint = sample.mouseUpPoint
+            self.anchorVerticalPlacement = host.preferredVerticalPlacement
+            if sample.mouseUpPoint == .zero, let rect = result.selectionRect {
+                self.anchorReleasePoint = CGPoint(x: rect.midX, y: rect.midY)
+            } else {
+                self.anchorReleasePoint = sample.mouseUpPoint
+            }
             let hint: String? = if self.shortcuts.state(for: .captureSelection) == .active {
                 self.shortcuts.shortcut(for: .captureSelection).map(String.init(describing:))
             } else {
@@ -1056,7 +1643,44 @@ public final class SelectionPopupController {
            KeyboardShortcuts.Shortcut(event: event) == captureShortcut {
             return
         }
+        if SelectionGestureEvaluator.isKeyboardSelectionNavigationKey(
+            keyCode: event.keyCode,
+            modifierFlags: event.modifierFlags
+        ) {
+            cancelPendingProbe()
+            return
+        }
         hideImmediately()
+    }
+
+    private func syncPanelMousePassthrough() {
+        if case .ready = phase, panel.isVisible {
+            panel.updateMousePassthrough(isInteractivePhase: true)
+        } else {
+            panel.ignoresMouseEvents = true
+        }
+    }
+
+    private func handleGlobalKeyUp(_ event: NSEvent) {
+        guard appearance.showsSelectionPopup else { return }
+        guard SelectionGestureEvaluator.isKeyboardSelectionNavigationKey(
+            keyCode: event.keyCode,
+            modifierFlags: event.modifierFlags
+        ) else {
+            return
+        }
+        guard let frontmost = NSWorkspace.shared.frontmostApplication,
+              !frontmost.isTerminated,
+              let host = SelectionPopupHost(bundleIdentifier: frontmost.bundleIdentifier) else {
+            return
+        }
+        let sample = SelectionGestureEvaluator.Sample(
+            mouseDownPoint: .zero,
+            mouseUpPoint: .zero,
+            clickCount: 1,
+            modifierFlags: event.modifierFlags
+        )
+        scheduleProbe(sample: sample, targetPID: frontmost.processIdentifier, host: host)
     }
 
     private func setPhase(_ nextPhase: SelectionPopupPhase) {
@@ -1066,7 +1690,8 @@ public final class SelectionPopupController {
         panel.render(
             phase: nextPhase,
             selectionRect: anchorSelectionRect,
-            releasePoint: anchorReleasePoint
+            releasePoint: anchorReleasePoint,
+            verticalPlacement: anchorVerticalPlacement
         ) { [weak self] in
             self?.handleCapsuleClick()
         }
@@ -1099,7 +1724,9 @@ public final class SelectionPopupController {
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.isRunning, trackedGeneration == self.observationGeneration else { return }
-                if !self.appearance.showsSelectionPopup {
+                if self.appearance.showsSelectionPopup {
+                    self.warmUpFrontmostApplicationIfNeeded()
+                } else {
                     self.hideImmediately()
                 }
                 self.observeAppearancePreference(generation: trackedGeneration)
