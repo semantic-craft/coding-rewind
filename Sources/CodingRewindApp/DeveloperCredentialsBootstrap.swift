@@ -13,18 +13,33 @@ enum DeveloperCredentialsBootstrap {
         case invalidConfiguration
         case credentialReadFailed
 
-        var errorDescription: String? {
-            switch self {
-            case .invalidConfiguration:
-                return "开发凭据配置无效，应用未连接 Memos。"
-            case .credentialReadFailed:
-                return "无法从 1Password 读取开发凭据。请解锁 1Password 后重新打开 Coding Rewind。"
+        func localizedDescription(in language: AppLanguage) -> String {
+            switch language {
+            case .zhHans:
+                switch self {
+                case .invalidConfiguration:
+                    return "开发凭据配置无效，应用未连接 Memos。"
+                case .credentialReadFailed:
+                    return "无法从 1Password 读取开发凭据。请解锁 1Password 后重新打开 Coding Rewind。"
+                }
+            case .en:
+                switch self {
+                case .invalidConfiguration:
+                    return "Developer credentials configuration is invalid; Memos was not connected."
+                case .credentialReadFailed:
+                    return "Could not read developer credentials from 1Password. Unlock 1Password and reopen Coding Rewind."
+                }
             }
+        }
+
+        var errorDescription: String? {
+            localizedDescription(in: .zhHans)
         }
     }
 
     static func resolveEnvironment(
         configurationURL: URL?,
+        externalConfigurationURL: URL? = nil,
         environment: [String: String]
     ) throws -> [String: String] {
         if let token = environment[StoragePaths.memosTokenEnvironmentKey],
@@ -32,12 +47,30 @@ enum DeveloperCredentialsBootstrap {
             return environment
         }
         if environment[StoragePaths.qaEnvironmentKey] == "1" { return environment }
-        guard let configurationURL else { return environment }
-        guard let data = try? Data(contentsOf: configurationURL),
-              let configuration = try? PropertyListDecoder().decode(Configuration.self, from: data),
+
+        let fm = FileManager.default
+        let activeData: Data
+        if let configurationURL {
+            guard let data = try? Data(contentsOf: configurationURL) else {
+                throw Failure.invalidConfiguration
+            }
+            activeData = data
+            if let extURL = externalConfigurationURL {
+                try? AtomicFile.writeData(data, to: extURL, permissions: 0o600)
+            }
+        } else if let extURL = externalConfigurationURL, fm.fileExists(atPath: extURL.path) {
+            guard let data = try? Data(contentsOf: extURL) else {
+                throw Failure.invalidConfiguration
+            }
+            activeData = data
+        } else {
+            return environment
+        }
+
+        guard let configuration = try? PropertyListDecoder().decode(Configuration.self, from: activeData),
               configuration.token_reference.range(of: #"^op://[^/]+/[^/]+/.+$"#, options: .regularExpression) != nil,
               configuration.op_executable.hasPrefix("/"),
-              FileManager.default.isExecutableFile(atPath: configuration.op_executable) else {
+              fm.isExecutableFile(atPath: configuration.op_executable) else {
             throw Failure.invalidConfiguration
         }
 

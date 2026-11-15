@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import CodingRewindCore
 import KeyboardShortcuts
 import Observation
 
@@ -9,7 +10,10 @@ public enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case toggleHUD
 
     public var id: String { rawValue }
-    public var title: String { self == .captureSelection ? "保存所选文本" : "显示或隐藏片段浮窗" }
+    public func title(in language: AppLanguage) -> String {
+        AppStrings.shortcutTitle(self, in: language)
+    }
+    public var title: String { title(in: .zhHans) }
     public var defaultShortcut: KeyboardShortcuts.Shortcut {
         switch self {
         case .captureSelection:
@@ -26,6 +30,13 @@ public enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
 @Observable
 public final class AppShortcuts {
     public private(set) var revision = 0
+    public var language: AppLanguage {
+        didSet {
+            guard oldValue != language else { return }
+            validationMessages.removeAll()
+            revision &+= 1
+        }
+    }
     public private(set) var validationMessages: [ShortcutAction: String] = [:]
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var menuItems: [ShortcutAction: [NSMenuItem]] = [:]
@@ -37,7 +48,8 @@ public final class AppShortcuts {
     private static let captureSelectionSchemaKey = "CodingRewind.captureSelectionShortcutSchemaVersion"
     private static let legacyCaptureSelectionShortcut = KeyboardShortcuts.Shortcut(.s, modifiers: [.control, .option])
 
-    public init(onCommand: @escaping @MainActor (AppCommand) -> Void) {
+    public init(language: AppLanguage = .zhHans, onCommand: @escaping @MainActor (AppCommand) -> Void) {
+        self.language = language
         Self.migrateCaptureSelectionShortcutIfNeeded()
         for action in ShortcutAction.allCases {
             KeyboardShortcuts.onKeyUp(for: action.name) { onCommand(action.command) }
@@ -98,45 +110,49 @@ public final class AppShortcuts {
         let value = shortcut(for: action).map(String.init(describing:)) ?? ""
         switch state(for: action) {
         case .active: return value
-        case .paused: return value.isEmpty ? "已停用" : "\(value)（暂停）"
-        case .unassigned: return "已停用"
-        case .failed: return "\(value)（未生效）"
+        case .paused: return AppStrings.shortcutPausedHint(value: value, in: language)
+        case .unassigned: return AppStrings.shortcutDisabled(in: language)
+        case .failed: return AppStrings.shortcutFailedHint(value: value, in: language)
         }
     }
 
     public func instruction(for action: ShortcutAction) -> String {
+        let actionTitle = action.title(in: language)
         switch state(for: action) {
         case .active:
-            return action == .captureSelection
-                ? "选中文本后按 \(hint(for: action)) 即可保存"
-                : "按 \(hint(for: action)) 查看近 72 小时保存的片段"
-        case .unassigned: return "“\(action.title)”的快捷键已停用，可在设置中重新指定"
-        case .paused: return "设置快捷键期间，“\(action.title)”暂时停用"
-        case .failed: return "“\(action.title)”的快捷键未生效，请在设置中重试或更换组合键"
+            return AppStrings.shortcutInstructionActive(action, hint: hint(for: action), in: language)
+        case .unassigned:
+            return AppStrings.shortcutInstructionUnassigned(title: actionTitle, in: language)
+        case .paused:
+            return AppStrings.shortcutInstructionPaused(title: actionTitle, in: language)
+        case .failed:
+            return AppStrings.shortcutInstructionFailed(title: actionTitle, in: language)
         }
     }
 
     public func statusText(for action: ShortcutAction) -> String {
         switch state(for: action) {
-        case .active: return "已生效"
-        case .unassigned: return "已停用"
-        case .paused: return "录制期间暂停"
-        case .failed(let status): return "快捷键未生效（错误代码 \(status)）。请重试或更换组合键"
+        case .active: return AppStrings.shortcutStatusActive(in: language)
+        case .unassigned: return AppStrings.shortcutDisabled(in: language)
+        case .paused: return AppStrings.shortcutStatusPaused(in: language)
+        case .failed(let status): return AppStrings.shortcutStatusFailed(status: Int(status), in: language)
         }
     }
 
     public func validate(_ shortcut: KeyboardShortcuts.Shortcut, for action: ShortcutAction) -> KeyboardShortcuts.ValidationResult {
         if shortcut.modifiers.intersection([.command, .control, .option]).isEmpty,
            shortcut.key?.isFunctionKey != true {
-            return .disallow(reason: "字母等普通按键请至少搭配 ⌃、⌥、⌘ 中的一个修饰键。")
+            return .disallow(reason: AppStrings.shortcutValidationNeedsModifier(in: language))
         }
-        if shortcut.isTakenBySystem { return .disallow(reason: "此组合键已由系统使用，请选择其他快捷键。") }
+        if shortcut.isTakenBySystem {
+            return .disallow(reason: AppStrings.shortcutValidationSystemTaken(in: language))
+        }
         if let other = ShortcutAction.allCases.first(where: { $0 != action && $0.name.shortcut == shortcut }) {
-            return .disallow(reason: "此组合键已用于“\(other.title)”。")
+            return .disallow(reason: AppStrings.shortcutValidationDuplicateAction(otherTitle: other.title(in: language), in: language))
         }
         if let menu = NSApplication.shared.mainMenu,
            let conflict = shortcut.menuItemWithMatchingShortcut(in: menu, excluding: Set(menuItems[action] ?? [])) {
-            return .disallow(reason: "此组合键用于菜单“\(conflict.title)”，请选择其他快捷键。")
+            return .disallow(reason: AppStrings.shortcutValidationMenuConflict(menuTitle: conflict.title, in: language))
         }
         return .allow
     }
@@ -154,6 +170,10 @@ public final class AppShortcuts {
 
     public func restoreDefault(for action: ShortcutAction) { set(action.defaultShortcut, for: action) }
     public func retry(_ action: ShortcutAction) { KeyboardShortcuts.retryRegistration(for: action.name) }
+
+    public func resetBoundMenuItems() {
+        menuItems.removeAll()
+    }
 
     public func bindMenuItem(_ item: NSMenuItem, to action: ShortcutAction) {
         menuItems[action, default: []].append(item)

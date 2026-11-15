@@ -18,6 +18,7 @@ public enum AppCommand: Equatable, Sendable {
     case requestAccessibility
     case resetAccessibility
     case openSettings
+    case checkForUpdates
     case selectRecentCard(String)
     case showAbout
     case quit
@@ -67,45 +68,49 @@ private func makeCommandMenuItem(
 public enum MainMenuBuilder {
     public static func buildMainMenu(
         shortcuts: AppShortcuts,
+        language: AppLanguage = .zhHans,
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) -> NSMenu {
+        shortcuts.resetBoundMenuItems()
         let mainMenu = NSMenu()
 
         let appMenuItem = NSMenuItem(title: "Coding Rewind", action: nil, keyEquivalent: "")
         let appMenu = NSMenu(title: "Coding Rewind")
-        appMenu.addItem(makeCommandMenuItem(title: "关于 Coding Rewind", command: .showAbout, handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: AppStrings.aboutApp(in: language), command: .showAbout, handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: AppStrings.checkForUpdatesMenu(in: language), command: .checkForUpdates, handler: onCommand))
         appMenu.addItem(.separator())
-        appMenu.addItem(makeCommandMenuItem(title: "设置…", command: .openSettings, keyEquivalent: ",", handler: onCommand))
-        appMenu.addItem(makeCommandMenuItem(title: "安装或修复 Antigravity 插件", command: .installOrRepairPlugin, handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: AppStrings.settingsEllipsis(in: language), command: .openSettings, keyEquivalent: ",", handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: AppStrings.installOrRepairAntigravityPlugin(in: language), command: .installOrRepairPlugin, handler: onCommand))
         appMenu.addItem(.separator())
 
-        let hideItem = NSMenuItem(title: "隐藏 Coding Rewind", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideItem = NSMenuItem(title: AppStrings.hideApp(in: language), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         hideItem.keyEquivalentModifierMask = [.command]
         appMenu.addItem(hideItem)
 
-        let hideOthersItem = NSMenuItem(title: "隐藏其他", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        let hideOthersItem = NSMenuItem(title: AppStrings.hideOthers(in: language), action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
         hideOthersItem.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(hideOthersItem)
 
-        let showAllItem = NSMenuItem(title: "全部显示", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        let showAllItem = NSMenuItem(title: AppStrings.showAll(in: language), action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(showAllItem)
 
         appMenu.addItem(.separator())
-        appMenu.addItem(makeCommandMenuItem(title: "退出 Coding Rewind", command: .quit, keyEquivalent: "q", handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: AppStrings.quitApp(in: language), command: .quit, keyEquivalent: "q", handler: onCommand))
         appMenuItem.submenu = appMenu
         mainMenu.addItem(appMenuItem)
 
-        let actionsMenuItem = NSMenuItem(title: "操作", action: nil, keyEquivalent: "")
-        let actionsMenu = NSMenu(title: "操作")
-        let toggleItem = makeCommandMenuItem(title: "显示或隐藏片段浮窗", command: .toggleHUD, handler: onCommand)
+        let actionsTitle = AppStrings.actionsMenuTitle(in: language)
+        let actionsMenuItem = NSMenuItem(title: actionsTitle, action: nil, keyEquivalent: "")
+        let actionsMenu = NSMenu(title: actionsTitle)
+        let toggleItem = makeCommandMenuItem(title: ShortcutAction.toggleHUD.title(in: language), command: .toggleHUD, handler: onCommand)
         shortcuts.bindMenuItem(toggleItem, to: .toggleHUD)
         actionsMenu.addItem(toggleItem)
-        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelection, handler: onCommand)
+        let captureItem = makeCommandMenuItem(title: ShortcutAction.captureSelection.title(in: language), command: .captureSelection, handler: onCommand)
         shortcuts.bindMenuItem(captureItem, to: .captureSelection)
         actionsMenu.addItem(captureItem)
         actionsMenu.addItem(
             makeCommandMenuItem(
-                title: "在所选应用中开始对话",
+                title: AppStrings.startChatInSelectedApp(in: language),
                 command: .launchConversation,
                 keyEquivalent: "\r",
                 modifiers: [.command],
@@ -114,14 +119,14 @@ public enum MainMenuBuilder {
         )
         for host in ConversationHost.allCases {
             actionsMenu.addItem(makeCommandMenuItem(
-                title: "在 \(host.displayName) 中开始对话",
+                title: AppStrings.startChatInHost(host, in: language),
                 command: .launchIn(host),
                 handler: onCommand
             ))
         }
         actionsMenu.addItem(
             makeCommandMenuItem(
-                title: "立即同步",
+                title: AppStrings.syncNow(in: language),
                 command: .refreshHotStream,
                 keyEquivalent: "r",
                 modifiers: [.command],
@@ -129,32 +134,34 @@ public enum MainMenuBuilder {
             )
         )
         actionsMenu.addItem(.separator())
-        actionsMenu.addItem(makeCommandMenuItem(title: "打开 Memos 网页", command: .openMemosWeb, handler: onCommand))
+        actionsMenu.addItem(makeCommandMenuItem(title: AppStrings.openMemosWeb(withArrow: false, in: language), command: .openMemosWeb, handler: onCommand))
         actionsMenuItem.submenu = actionsMenu
         mainMenu.addItem(actionsMenuItem)
 
-        let editMenuItem = NSMenuItem(title: "编辑", action: nil, keyEquivalent: "")
-        let editMenu = NSMenu(title: "编辑")
-        let undoItem = NSMenuItem(title: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        let editTitle = AppStrings.editMenuTitle(in: language)
+        let editMenuItem = NSMenuItem(title: editTitle, action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: editTitle)
+        let undoItem = NSMenuItem(title: AppStrings.undo(in: language), action: Selector(("undo:")), keyEquivalent: "z")
         undoItem.keyEquivalentModifierMask = [.command]
         editMenu.addItem(undoItem)
 
-        let redoItem = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        let redoItem = NSMenuItem(title: AppStrings.redo(in: language), action: Selector(("redo:")), keyEquivalent: "z")
         redoItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(redoItem)
 
         editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(title: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenu.addItem(NSMenuItem(title: AppStrings.cut(in: language), action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: AppStrings.copy(in: language), action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: AppStrings.paste(in: language), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: AppStrings.selectAll(in: language), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         editMenuItem.submenu = editMenu
         mainMenu.addItem(editMenuItem)
 
-        let windowMenuItem = NSMenuItem(title: "窗口", action: nil, keyEquivalent: "")
-        let windowMenu = NSMenu(title: "窗口")
-        windowMenu.addItem(NSMenuItem(title: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-        windowMenu.addItem(makeCommandMenuItem(title: "前置片段浮窗", command: .presentHUDAndFocus, handler: onCommand))
+        let windowTitle = AppStrings.windowMenuTitle(in: language)
+        let windowMenuItem = NSMenuItem(title: windowTitle, action: nil, keyEquivalent: "")
+        let windowMenu = NSMenu(title: windowTitle)
+        windowMenu.addItem(NSMenuItem(title: AppStrings.closeWindow(in: language), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        windowMenu.addItem(makeCommandMenuItem(title: AppStrings.bringHUDToFront(in: language), command: .presentHUDAndFocus, handler: onCommand))
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
 
@@ -326,6 +333,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
     public init(
         shortcuts: AppShortcuts,
+        language: AppLanguage = .zhHans,
         snapshotProvider: @escaping @MainActor () -> MenuStatusSnapshot,
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
@@ -341,7 +349,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
         if let button = statusItem.button {
             button.setAccessibilityLabel("Coding Rewind")
-            button.toolTip = "Coding Rewind，左键打开菜单，右键或 ⌥点击显示或隐藏片段浮窗"
+            button.toolTip = AppStrings.statusItemTooltip(in: language)
             button.target = self
             button.action = #selector(handleStatusButtonClick(_:))
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
@@ -352,6 +360,10 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
             }
         }
         refreshIcon()
+    }
+
+    public func updateLanguage(_ language: AppLanguage) {
+        statusItem.button?.toolTip = AppStrings.statusItemTooltip(in: language)
     }
 
     public var anchorFrame: NSRect? {
@@ -387,6 +399,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
     public func menuNeedsUpdate(_ menu: NSMenu) {
         let snapshot = snapshotProvider()
+        let lang = snapshot.language
         applyIcon(for: snapshot)
         menu.removeAllItems()
 
@@ -417,7 +430,11 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         let toggleItem = makeCommandMenuItem(title: snapshot.toggleHUDTitle, command: .toggleHUD, handler: onCommand)
         shortcuts.applyMenuShortcut(to: toggleItem, for: .toggleHUD)
         menu.addItem(toggleItem)
-        let captureItem = makeCommandMenuItem(title: "保存所选文本", command: .captureSelection, handler: onCommand)
+        let captureItem = makeCommandMenuItem(
+            title: ShortcutAction.captureSelection.title(in: lang),
+            command: .captureSelection,
+            handler: onCommand
+        )
         shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
         menu.addItem(captureItem)
         menu.addItem(
@@ -431,14 +448,14 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         for host in ConversationHost.allCases {
             menu.addItem(makeCommandMenuItem(
-                title: "在 \(host.displayName) 中开始对话",
+                title: AppStrings.startChatInHost(host, in: lang),
                 command: .launchIn(host),
                 handler: onCommand
             ))
         }
         menu.addItem(
             makeCommandMenuItem(
-                title: "立即同步",
+                title: AppStrings.syncNow(in: lang),
                 command: .refreshHotStream,
                 keyEquivalent: "r",
                 modifiers: [.command],
@@ -447,8 +464,9 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
 
         if !snapshot.recentCards.isEmpty {
-            let recentRoot = NSMenuItem(title: "最近片段", action: nil, keyEquivalent: "")
-            let recentMenu = NSMenu(title: "最近片段")
+            let recentTitle = AppStrings.recentClips(in: lang)
+            let recentRoot = NSMenuItem(title: recentTitle, action: nil, keyEquivalent: "")
+            let recentMenu = NSMenu(title: recentTitle)
             recentMenu.autoenablesItems = false
             for card in snapshot.recentCards.prefix(5) {
                 recentMenu.addItem(
@@ -472,7 +490,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         }()
         menu.addItem(
             makeCommandMenuItem(
-                title: "打开 Memos 网页 ↗",
+                title: AppStrings.openMemosWeb(withArrow: true, in: lang),
                 command: .openMemosWeb,
                 isEnabled: isMemosConfigured,
                 handler: onCommand
@@ -480,7 +498,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
-                title: "安装或修复 Antigravity 插件",
+                title: AppStrings.installOrRepairAntigravityPlugin(in: lang),
                 command: .installOrRepairPlugin,
                 state: snapshot.isPluginReady ? .on : .off,
                 handler: onCommand
@@ -488,7 +506,7 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
-                title: snapshot.isAccessibilityTrusted ? "辅助功能权限：已授权" : "辅助功能权限：前往系统设置…",
+                title: AppStrings.accessibilityStatusMenu(isTrusted: snapshot.isAccessibilityTrusted, in: lang),
                 command: .requestAccessibility,
                 state: snapshot.isAccessibilityTrusted ? .on : .off,
                 handler: onCommand
@@ -496,7 +514,14 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
-                title: "设置…",
+                title: AppStrings.checkForUpdatesMenu(in: lang),
+                command: .checkForUpdates,
+                handler: onCommand
+            )
+        )
+        menu.addItem(
+            makeCommandMenuItem(
+                title: AppStrings.settingsEllipsis(in: lang),
                 command: .openSettings,
                 keyEquivalent: ",",
                 modifiers: [.command],
@@ -505,10 +530,10 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
 
         menu.addItem(.separator())
-        menu.addItem(makeCommandMenuItem(title: "关于 Coding Rewind", command: .showAbout, handler: onCommand))
+        menu.addItem(makeCommandMenuItem(title: AppStrings.aboutApp(in: lang), command: .showAbout, handler: onCommand))
         menu.addItem(
             makeCommandMenuItem(
-                title: "退出 Coding Rewind",
+                title: AppStrings.quitApp(in: lang),
                 command: .quit,
                 keyEquivalent: "q",
                 modifiers: [.command],
@@ -540,8 +565,10 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 @MainActor
 public final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let coordinator: AppCoordinator
+    private let loginItemController: LoginItemController?
     private let permissionState: AccessibilityPermissionState
     public let connectionDraft: SettingsConnectionDraft
+    public let navigationModel: SettingsNavigationModel
     private let permissionPollInterval: Duration
     private var permissionPollTask: Task<Void, Never>?
     private var hasCenteredOnce = false
@@ -550,15 +577,20 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         coordinator: AppCoordinator,
         appearance: AppAppearancePreferences,
         shortcuts: AppShortcuts,
+        loginItemController: LoginItemController? = nil,
+        updater: AppUpdater? = nil,
         permissionState: AccessibilityPermissionState = AccessibilityPermissionState(),
         connectionDraft: SettingsConnectionDraft? = nil,
+        navigationModel: SettingsNavigationModel = SettingsNavigationModel(),
         permissionPollInterval: Duration = .seconds(1),
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
         let draft = connectionDraft ?? SettingsConnectionDraft(memosURL: coordinator.connectionSettings.memosURL)
         self.coordinator = coordinator
+        self.loginItemController = loginItemController
         self.permissionState = permissionState
         self.connectionDraft = draft
+        self.navigationModel = navigationModel
         self.permissionPollInterval = permissionPollInterval
 
         let window = NSWindow(
@@ -567,14 +599,17 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
             backing: .buffered,
             defer: false
         )
-        window.title = "Coding Rewind 设置"
+        window.title = AppStrings.settingsWindowTitle(in: appearance.effectiveLanguage)
         window.isReleasedWhenClosed = false
         let rootView = SettingsRootView(
             coordinator: coordinator,
             appearance: appearance,
             shortcuts: shortcuts,
+            loginItemController: loginItemController,
+            updater: updater,
             permissionState: permissionState,
             connectionDraft: draft,
+            navigationModel: navigationModel,
             onCommand: onCommand,
             onClose: { [weak window] in
                 window?.close()
@@ -591,9 +626,18 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func show() {
+    public func updateLanguage(_ language: AppLanguage) {
+        window?.title = AppStrings.settingsWindowTitle(in: language)
+        connectionDraft.updateLanguage(language)
+    }
+
+    public func show(page: SettingsPage? = nil) {
         let wasClosed = (window?.isVisible != true)
+        if let page {
+            navigationModel.selectedPage = page
+        }
         coordinator.refreshPluginStatus()
+        loginItemController?.refresh()
         permissionState.refresh()
         if wasClosed {
             connectionDraft.reset(memosURL: coordinator.connectionSettings.memosURL)
@@ -615,6 +659,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
                 try? await Task.sleep(for: self.permissionPollInterval)
                 guard !Task.isCancelled && self.window?.isVisible == true else { break }
                 self.permissionState.refresh()
+                self.loginItemController?.refresh()
             }
         }
     }
@@ -626,10 +671,12 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
 
     public func refreshPermissions() {
         permissionState.refresh()
+        loginItemController?.refresh()
     }
 
     public func windowDidBecomeKey(_ notification: Notification) {
         coordinator.refreshPluginStatus()
         permissionState.refresh()
+        loginItemController?.refresh()
     }
 }

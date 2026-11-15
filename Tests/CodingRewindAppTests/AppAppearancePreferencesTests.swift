@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import CodingRewindCore
 @testable import CodingRewindApp
 import Testing
 
@@ -12,6 +13,7 @@ struct AppAppearancePreferencesTests {
 
     nonisolated private static func cleanSuite(_ suiteName: String) {
         UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        _ = CFPreferencesAppSynchronize(suiteName as CFString)
         let plistURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Preferences/\(suiteName).plist")
         try? FileManager.default.removeItem(at: plistURL)
@@ -106,5 +108,48 @@ struct AppAppearancePreferencesTests {
         reopenedDisabled.setShowsSelectionPopup(true)
         #expect(reopenedDisabled.showsSelectionPopup)
         #expect(AppAppearancePreferences(defaults: defaults) { _ in true }.showsSelectionPopup)
+    }
+
+    @Test func languagePreferencePersistsResolvesSystemAndFiresLiveCallback() {
+        let domain = Self.domain
+        Self.cleanSuite(domain)
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { Self.cleanSuite(domain) }
+
+        var systemPreferred = ["zh-Hans-CN"]
+        let preferences = AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in false },
+            preferredLanguagesProvider: { systemPreferred }
+        )
+        #expect(preferences.languagePreference == .system)
+        #expect(preferences.effectiveLanguage == .zhHans)
+
+        var observedLanguages: [AppLanguage] = []
+        preferences.onEffectiveLanguageChange = { observedLanguages.append($0) }
+        preferences.setShowsDockIcon(false)
+        #expect(preferences.errorMessage == AppStrings.dockIconError(in: .zhHans))
+
+        preferences.setLanguagePreference(.en)
+        #expect(preferences.languagePreference == .en)
+        #expect(preferences.effectiveLanguage == .en)
+        #expect(observedLanguages == [.en])
+        #expect(preferences.errorMessage == AppStrings.dockIconError(in: .en))
+
+        let reopened = AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in true },
+            preferredLanguagesProvider: { ["zh-Hans-CN"] }
+        )
+        #expect(reopened.languagePreference == .en)
+        #expect(reopened.effectiveLanguage == .en)
+
+        systemPreferred = ["en-US"]
+        preferences.setLanguagePreference(.system)
+        #expect(observedLanguages == [.en])
+        systemPreferred = ["zh-Hant-TW"]
+        preferences.refreshSystemLanguageIfNeeded()
+        #expect(preferences.effectiveLanguage == .zhHans)
+        #expect(observedLanguages == [.en, .zhHans])
     }
 }

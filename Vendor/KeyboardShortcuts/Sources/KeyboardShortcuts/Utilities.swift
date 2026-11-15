@@ -15,7 +15,14 @@ extension String {
 	Makes the string localizable.
 	*/
 	var localized: String {
-		NSLocalizedString(self, bundle: .module, comment: self)
+		if let code = KeyboardShortcuts.localizationLanguageCode {
+			let path = Bundle.module.path(forResource: code, ofType: "lproj")
+				?? Bundle.module.path(forResource: code.lowercased(), ofType: "lproj")
+			if let path, let bundle = Bundle(path: path) {
+				return NSLocalizedString(self, bundle: bundle, comment: self)
+			}
+		}
+		return NSLocalizedString(self, bundle: .module, comment: self)
 	}
 }
 
@@ -602,6 +609,8 @@ nonisolated func runtimeWarn(
 }
 
 extension KeyboardShortcuts {
+	public nonisolated(unsafe) static var localizationLanguageCode: String?
+
 	nonisolated static func isValidShortcutName(_ name: String) -> Bool {
 		!name.contains(".")
 	}

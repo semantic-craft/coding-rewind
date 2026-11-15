@@ -86,6 +86,74 @@ struct DeveloperCredentialsBootstrapTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
     }
 
+    @Test func bundledConfigurationMigratesToExternalFileWith0600PermissionsAndSupportsReleaseFallback() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let externalURL = fixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
+
+        let resolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: fixture.configurationURL,
+            externalConfigurationURL: externalURL,
+            environment: fixture.environment
+        )
+        #expect(resolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
+        #expect(FileManager.default.fileExists(atPath: externalURL.path))
+        let attrs = try FileManager.default.attributesOfItem(atPath: externalURL.path)
+        let perms = (attrs[.posixPermissions] as? NSNumber)?.intValue
+        #expect(perms == 0o600)
+
+        try FileManager.default.removeItem(at: fixture.argumentsURL)
+        let fallbackResolved = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: nil,
+            externalConfigurationURL: externalURL,
+            environment: fixture.environment
+        )
+        #expect(fallbackResolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
+        #expect(try String(contentsOf: fixture.argumentsURL, encoding: .utf8) ==
+            "read\n--no-newline\nop://fixture-vault/fixture-item/password\n")
+    }
+
+    @Test func rotatedBundledConfigurationRefreshesExternalConfigurationAndQABypassesBoth() throws {
+        let initialFixture = try Fixture(reference: "op://fixture-vault/old-item/password")
+        defer { initialFixture.remove() }
+        let externalURL = initialFixture.root.appendingPathComponent("AppSupport/DeveloperCredentials.plist")
+
+        _ = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: initialFixture.configurationURL,
+            externalConfigurationURL: externalURL,
+            environment: initialFixture.environment
+        )
+
+        let rotatedConfigURL = initialFixture.root.appendingPathComponent("RotatedDeveloperCredentials.plist")
+        let executablePath = initialFixture.root.appendingPathComponent("fake op").path
+        let rotatedData = try PropertyListSerialization.data(fromPropertyList: [
+            "token_reference": "op://fixture-vault/rotated-item/password",
+            "op_executable": executablePath
+        ], format: .xml, options: 0)
+        try rotatedData.write(to: rotatedConfigURL)
+
+        var rotatedEnv = initialFixture.environment
+        rotatedEnv["FAKE_OP_RESULT"] = "rotated-fixture-token"
+        let refreshed = try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: rotatedConfigURL,
+            externalConfigurationURL: externalURL,
+            environment: rotatedEnv
+        )
+        #expect(refreshed[StoragePaths.memosTokenEnvironmentKey] == "rotated-fixture-token")
+        #expect(try String(contentsOf: initialFixture.argumentsURL, encoding: .utf8) ==
+            "read\n--no-newline\nop://fixture-vault/rotated-item/password\n")
+        #expect(try Data(contentsOf: externalURL) == rotatedData)
+
+        try FileManager.default.removeItem(at: initialFixture.argumentsURL)
+        let qaEnv = rotatedEnv.merging([StoragePaths.qaEnvironmentKey: "1"]) { _, new in new }
+        #expect(try DeveloperCredentialsBootstrap.resolveEnvironment(
+            configurationURL: rotatedConfigURL,
+            externalConfigurationURL: externalURL,
+            environment: qaEnv
+        ) == qaEnv)
+        #expect(!FileManager.default.fileExists(atPath: initialFixture.argumentsURL.path))
+    }
+
     private struct Fixture {
         let root: URL
         let configurationURL: URL

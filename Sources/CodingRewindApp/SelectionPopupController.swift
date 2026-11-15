@@ -273,13 +273,12 @@ package enum SelectionPopupPhase: Equatable, Sendable {
     case saving
     case saved(offline: Bool)
 
+    package func labelText(in language: AppLanguage) -> String {
+        AppStrings.selectionPopupLabel(self, in: language)
+    }
+
     package var labelText: String {
-        switch self {
-        case .hidden: ""
-        case .ready: "暂存"
-        case .saving: "暂存中…"
-        case .saved(let offline): offline ? "待同步" : "已同步"
-        }
+        labelText(in: .zhHans)
     }
 
     package struct CaptureResolution: Equatable, Sendable {
@@ -933,7 +932,14 @@ enum SelectionPopupAXProbe {
             "thumb-up-unselected",
             "thumb-down-unselected"
         ]
-        let rejectedLabels: Set<String> = ["更多操作", "重新生成"]
+        let rejectedLabels: Set<String> = [
+            "更多操作",
+            "重新生成",
+            "More actions",
+            "More options",
+            "Regenerate",
+            "Redo"
+        ]
 
         var matchedMessageContent = false
         var insideConversationRow = false
@@ -1051,7 +1057,7 @@ public final class SelectionPopupPanel: NSPanel {
         onStash: @escaping @MainActor () -> Void,
         onOutsideShadowClick: (@MainActor () -> Void)? = nil
     ) {
-        let initialView = SelectionPopupView(phase: .hidden, onStash: onStash)
+        let initialView = SelectionPopupView(phase: .hidden, language: .zhHans, onStash: onStash)
         let hosting = FirstMouseHostingView(rootView: initialView)
         self.hostingView = hosting
         self.onOutsideShadowClick = onOutsideShadowClick
@@ -1104,6 +1110,7 @@ public final class SelectionPopupPanel: NSPanel {
 
     func render(
         phase: SelectionPopupPhase,
+        language: AppLanguage = .zhHans,
         selectionRect: CGRect?,
         releasePoint: CGPoint,
         verticalPlacement: SelectionPopupLayout.VerticalPlacement = .above,
@@ -1114,7 +1121,7 @@ public final class SelectionPopupPanel: NSPanel {
             orderOut(nil)
             return
         }
-        hostingView.rootView = SelectionPopupView(phase: phase, onStash: onStash)
+        hostingView.rootView = SelectionPopupView(phase: phase, language: language, onStash: onStash)
         hostingView.layoutSubtreeIfNeeded()
         let outset = SelectionPopupStyleMetrics.shadowOutset
         let fitting = hostingView.fittingSize
@@ -1152,6 +1159,7 @@ struct SelectionPopupView: View {
     @State private var isHovered = false
 
     let phase: SelectionPopupPhase
+    let language: AppLanguage
     let onStash: @MainActor () -> Void
 
     private var isInteractive: Bool {
@@ -1182,10 +1190,11 @@ struct SelectionPopupView: View {
     }
 
     var body: some View {
+        let label = phase.labelText(in: language)
         Button(action: onStash) {
             HStack(spacing: SelectionPopupStyleMetrics.itemSpacing) {
                 leadingAccessory
-                Text(phase.labelText)
+                Text(label)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(primaryTextColor)
                 if case .ready(let hint) = phase, let hint, !hint.isEmpty {
@@ -1225,7 +1234,7 @@ struct SelectionPopupView: View {
         .disabled(!isInteractive)
         .environment(\.controlActiveState, .key)
         .accessibilityIdentifier("selectionPopup.stash")
-        .accessibilityLabel(phase.labelText)
+        .accessibilityLabel(label)
         .padding(SelectionPopupStyleMetrics.shadowOutset)
     }
 
@@ -1275,6 +1284,20 @@ public final class SelectionPopupController {
     private var isRunning = false
     private var observationGeneration: UInt64 = 0
     package private(set) var phase: SelectionPopupPhase = .hidden
+    public var language: AppLanguage {
+        didSet {
+            guard oldValue != language, phase != .hidden else { return }
+            panel.render(
+                phase: phase,
+                language: language,
+                selectionRect: anchorSelectionRect,
+                releasePoint: anchorReleasePoint,
+                verticalPlacement: anchorVerticalPlacement
+            ) { [weak self] in
+                self?.handleCapsuleClick()
+            }
+        }
+    }
 
     public var isVisible: Bool {
         phase != .hidden && panel.isVisible
@@ -1283,11 +1306,13 @@ public final class SelectionPopupController {
     public init(
         appearance: AppAppearancePreferences,
         shortcuts: AppShortcuts,
+        language: AppLanguage = .zhHans,
         onTriggerCapture: @escaping @MainActor () async -> SelectionCaptureOutcome,
         onPresentErrorHUD: @escaping @MainActor () -> Void
     ) {
         self.appearance = appearance
         self.shortcuts = shortcuts
+        self.language = language
         self.onTriggerCapture = onTriggerCapture
         self.onPresentErrorHUD = onPresentErrorHUD
     }
@@ -1689,6 +1714,7 @@ public final class SelectionPopupController {
         phase = nextPhase
         panel.render(
             phase: nextPhase,
+            language: language,
             selectionRect: anchorSelectionRect,
             releasePoint: anchorReleasePoint,
             verticalPlacement: anchorVerticalPlacement
