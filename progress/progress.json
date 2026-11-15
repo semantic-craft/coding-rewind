@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "a5209ffd42f5cfd9987000c89a3df303fdf25120",
+    "main": "a71838d84ef6bde129368fb967bb1e71b91d8d0e",
     "open_pulls": [],
     "pulls": [
       {
@@ -256,6 +256,13 @@
     "releases": [
       {
         "draft": false,
+        "id": 446141462,
+        "prerelease": false,
+        "published_at": "2026-11-15T15:05:05Z",
+        "tag": "v0.3.2"
+      },
+      {
+        "draft": false,
         "id": 445481885,
         "prerelease": false,
         "published_at": "2026-11-14T17:53:47Z",
@@ -288,7 +295,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-15T11:24:03.309404Z",
+  "observed_at": "2026-11-15T15:06:00.483091Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -301,6 +308,31 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "release-032",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "v0.3.2 正式发布 macOS 桌面包、14 文件网页扩展包与 SHA256SUMS.txt，匿名下载校验一致。",
+              "ref": "v0.3.2"
+            },
+            {
+              "kind": "issue",
+              "note": "跨浏览器生命周期与剩余实机覆盖继续单列跟踪。",
+              "ref": 14
+            }
+          ],
+          "id": "release-032-publication",
+          "next": "",
+          "status": "done",
+          "summary": "基于 main 提交 a71838d84ef6bde129368fb967bb1e71b91d8d0e 运行 ./scripts/check 六道门禁通过后，由 ./scripts/package-release.sh 打包并公开发布 v0.3.2（合入 PR #27 至 #32，桌面 0.3.2 build 6，网页扩展 0.3.2 / 内部 0.3.2.0）。桌面 ZIP（2633004 字节，SHA-256 0d1cb68c7d5f0f3b2b843e6ae9dbc08eaa7b7fa4be727db829861a32ec8f3361，Developer ID 签名 TeamIdentifier LQAVR62TK2，不含 DeveloperCredentials.plist）与扩展 ZIP（59301 字节，SHA-256 78d5af7d4389a2a00b1a8be3783ee66bcb1b4c6a1994912736aff7b33d6e54c2，不含测试桩与 .DS_Store）及 SHA256SUMS.txt 均已通过公开下载 shasum 校验。",
+          "title": "v0.3.2 公开发布与公开包校验"
+        }
+      ],
+      "title": "0.3.2 正式发布（自更新、双语、全网划词与云端同步引导）"
+    },
     {
       "id": "settings-about-sidebar-and-menu-streamlining",
       "items": [
