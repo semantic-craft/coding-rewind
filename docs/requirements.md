@@ -105,7 +105,7 @@
 
 MVP 闭环围绕四步主链路构建：
 
-1. **桌面与网页双端无感暂存**，在 Antigravity App 2.x 与 Gemini 桌面端划选对话正文弹出非激活“暂存”胶囊，或在任意 macOS 应用中按 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区并关联当前会话提问与近 4 轮记录；在 ChatGPT、Claude、Gemini 网页中通过选区上方“暂存”胶囊、右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 提取选区 Markdown 与近 4 轮对话直连写入 `Memos`，全程不抢焦点、不弹自定义协议确认框。
+1. **桌面与网页双端无感暂存**，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文弹出非激活“暂存”胶囊，或在任意 macOS 应用中按 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区并关联当前会话提问与近 4 轮记录；在 ChatGPT、Claude、Gemini 网页中通过选区上方“暂存”胶囊、右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 提取选区 Markdown 与近 4 轮对话直连写入 `Memos`，全程不抢焦点、不弹自定义协议确认框。
 2. **异步幂等 AI 脉络定锚**，VPS 端 `rewind-enricher` 读取片段及上下文评论，生成精炼标题、原会话主题、上下文摘要与关键词引用头，100% 保留用户选中原文一字不改。
 3. **72 小时毛玻璃热流速览与离线兜底**，按 `⌃⌥R` 呼出非激活毛玻璃面板查看近 72 小时热流卡片，断网时依赖 `hot_cache.json` 与 `outbox.jsonl` 实现毫秒级打开和后续幂等重放。
 4. **无缝接入 Antigravity 开展 A 与 C**，在 HUD 多选卡片按 `⌘Return` 调用 `agentapi new-conversation` 带完整上下文拉起新对话，或在 Antigravity `Knowledge Work` 界面通过 `/rewind` 与钥匙串保护的 `Memos` 原生 `/mcp` 检索引用片段辅助成文。

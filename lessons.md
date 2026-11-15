@@ -243,3 +243,14 @@
 - 正确做法 `Done right`：开发机打包优先使用真实开发者身份避免临时 cdhash 失效；状态栏按钮属性变更必须做幂等防御阻断系统级反馈循环；测试套件禁止生成无界 UUID 偏好域，由门禁统一断言物理文件与构建目录零泄漏。
 - 验证点：运行 `./scripts/check` 确认全部 6 项门禁与测试通过；运行 `build-app-bundle.sh` 并通过 `codesign -dvvv -r-` 核验 anchor apple generic；检查 LaunchServices 未保留构建包路径；检查偏好设置目录无 `dev.codingrewind.qa.*.plist` 残留。
 - 复发记录：`Seen 1x (2026-11-15)`，代码签名与性能走查中定位检出。
+
+### Electron 宿主懒加载辅助功能树与原生选区浮层避让
+
+**接入 Electron 桌面应用选区探测时，必须显式唤醒宿主辅助功能树、不将常驻启用的菜单剪切项误判为可编辑输入，并按宿主原生选区浮层方位错位锚定胶囊。**
+
+- 标签：#macOS原生 #辅助功能 #Electron #选区捕获 #验收
+- 起因与后果：2026-11-15 为 ChatGPT 桌面端（`com.openai.codex`）启用划词暂存胶囊时，实机与逆向核查暴露三处宿主差异：Chromium 默认懒初始化辅助功能树，首次查询前未读取 `AXEnhancedUserInterface` 时窗口下不存在 `app://-/index.html` 的 `AXWebArea`；Electron 主菜单 `Edit > Cut` 常驻 `AXEnabled = true`，若沿用原生 AppKit 宿主以 `cutEnabled` 排除输入框的规则会误拒全部对话选区；ChatGPT 自带的 `Add to chat | Side chat` 选区工具栏固定锚定在选区上方 `8pt`，与默认上置胶囊完全重叠。此外用 `ditto` 覆盖已有 `/Applications/CodingRewind.app` 会保留旧包内未重新封签的 `DeveloperCredentials.plist`，破坏严格签名校验。
+- 修复与证据：[SelectionPopupController.swift](Sources/CodingRewindApp/SelectionPopupController.swift) 与 [MacOSSelection.swift](Sources/CodingRewindApp/MacOSSelection.swift) 在激活与探测 `com.openai.codex` 时读取 `AXEnhancedUserInterface` 并支持懒加载重试，改为按 `app://-/index.html` 壳层 `AXWebArea`、`Conversation` 地标、`MarkdownRoot-*` / `CodeSurface-*` 容器与只读 `cm-content` 代码块判定可捕获选区，同时为 `SelectionPopupHost.chatGPTApp` 设置 `.below` 下置 `8pt` 锚定；安装升级直接执行 `./scripts/build-app-bundle.sh /Applications` 先清空旧包再构建封签。WindowServer 实屏截图确认上下双栏零重叠。
+- 正确做法 `Done right`：新接入桌面宿主先核查其辅助功能懒加载属性、菜单项真实启用语义与原生选区浮层几何方位，将方位建模进 `SelectionPopupHost.preferredVerticalPlacement`；升级 `/Applications` 应用包走 `build-app-bundle.sh /Applications` 或先移除旧目录再复制，禁止对签名包做增量目录合并。
+- 验证点：运行 `./scripts/check` 通过 `SelectionPopupTests` 全部用例；运行 `codesign --verify --deep --strict /Applications/CodingRewind.app` 通过；在 `ChatGPT.app` 实机划选对话并经 WindowServer 截图确认顶部 `Add to chat | Side chat` 与底部 `暂存` 胶囊互不遮挡。
+- 复发记录：`Seen 1x (2026-11-15)`，`ChatGPT.app` 实机接入与 WindowServer 截图验收检出。

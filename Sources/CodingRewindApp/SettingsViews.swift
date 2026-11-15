@@ -191,7 +191,7 @@ public struct SettingsRootView: View {
                 }
             }
             SettingsSection("划词暂存") {
-                SettingsRow("选中文本时显示暂存胶囊", help: "在 Antigravity 与 Gemini 桌面端选中对话文本后，自动在选区上方显示快捷暂存按钮。") {
+                SettingsRow("选中文本时显示暂存胶囊", help: "在 Antigravity、ChatGPT 与 Gemini 桌面端选中对话文本后，自动在选区附近显示快捷暂存按钮。") {
                     Toggle("选中文本时显示暂存胶囊", isOn: Binding(
                         get: { appearance.showsSelectionPopup },
                         set: { appearance.setShowsSelectionPopup($0) }
