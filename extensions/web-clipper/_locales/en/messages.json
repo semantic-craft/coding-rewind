@@ -10,5 +10,8 @@
   },
   "saveSelectionCommand": {
     "message": "Save selected text"
+  },
+  "untitledSession": {
+    "message": "Untitled Session"
   }
 }

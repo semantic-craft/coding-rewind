@@ -332,7 +332,7 @@ test("background save response does not claim an offline clip is queued after st
   assert.deepEqual(persistedOutbox, []);
   assert.equal(response.status, "error", "a failed storage write must not be reported as queued");
   assert.equal(response.queued, false);
-  assert.match(response.toast, /保存失败/);
+  assert.match(response.toast, /保存失败|Save failed/);
 
   rejectWrites = false;
   const queued = await new Promise((resolve) => onMessage({ type: "REWIND_SAVE_CLIP", clip }, {}, resolve));
@@ -673,13 +673,29 @@ test("buildMemosWirePayloads matches exact canonical wire contract with and with
       recentTurns: "",
       sourceUrl: "https://example.org/notes"
     },
-    { clipId: "rw-1794366666123-plain001", createdAt: "2026-11-11T03:16:00Z" }
+    { clipId: "rw-1794366666123-plain001", createdAt: "2026-11-11T03:16:00Z", locale: "zh-CN" }
   );
 
   assert.equal(withoutCtx.hasContext, false);
   assert.equal(withoutCtx.commentBody, null);
   assert.doesNotMatch(withoutCtx.memoBody.content, /#rewind\/has-ctx/);
-  assert.match(withoutCtx.memoBody.content, /^#rewind\/pending #source\/web\n\n> \*\*Source:\*\* \[web\]\(https:\/\/example\.org\/notes\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/);
+  assert.match(withoutCtx.memoBody.content, /^#rewind\/pending #source\/web\n\n> \*\*Source:\*\* \[未命名对话\]\(https:\/\/example\.org\/notes\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/);
+
+  const withoutCtxEn = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Standalone paragraph",
+      sourcePlatform: "ChatGPT",
+      sessionTitle: "",
+      prompt: "",
+      recentTurns: "",
+      sourceUrl: "https://chatgpt.com/c/untitled"
+    },
+    { clipId: "rw-1794366666123-plain002", createdAt: "2026-11-11T03:16:00Z", locale: "en" }
+  );
+  assert.match(
+    withoutCtxEn.memoBody.content,
+    /^#rewind\/pending #source\/chatgpt\n\n> \*\*Source:\*\* \[Untitled Session\]\(https:\/\/chatgpt\.com\/c\/untitled\) · 2026-11-11T03:16:00Z\n\nStandalone paragraph$/
+  );
   assert.equal(parseServerMemoId({ name: "memos/abc999" }), "abc999");
 });
 
@@ -1612,7 +1628,13 @@ test("MV3 _locales catalogs, manifest __MSG__ bindings, and CodingRewindI18n dic
   assert.equal(manifest.commands["save-selection"].description, "__MSG_saveSelectionCommand__");
   assert.deepEqual(manifest.content_scripts[0].js, ["i18n.js", "content.js"]);
 
-  const expectedLocaleKeys = ["actionTitle", "extDescription", "extName", "saveSelectionCommand"];
+  const expectedLocaleKeys = [
+    "actionTitle",
+    "extDescription",
+    "extName",
+    "saveSelectionCommand",
+    "untitledSession"
+  ];
   assert.deepEqual(Object.keys(enMessages).sort(), expectedLocaleKeys);
   assert.deepEqual(Object.keys(zhMessages).sort(), expectedLocaleKeys);
   for (const key of expectedLocaleKeys) {
@@ -1630,14 +1652,43 @@ test("MV3 _locales catalogs, manifest __MSG__ bindings, and CodingRewindI18n dic
   );
 });
 
-test("resolveLocale and createTranslator resolve auto, browser languages, and explicit overrides", () => {
-  const { resolveLocale, createTranslator } = globalThis.CodingRewindI18n;
+test("resolveLocale and createTranslator resolve auto, browser languages, and explicit overrides", (t) => {
+  const { detectBrowserLanguage, resolveLocale, createTranslator } = globalThis.CodingRewindI18n;
+  const originalChrome = globalThis.chrome;
+  const navDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  t.after(() => {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (navDescriptor) Object.defineProperty(globalThis, "navigator", navDescriptor);
+    else delete globalThis.navigator;
+  });
 
   assert.equal(resolveLocale("auto", "en-US"), "en");
   assert.equal(resolveLocale("auto", "zh-CN"), "zh-CN");
   assert.equal(resolveLocale("auto", "zh_CN"), "zh-CN");
   assert.equal(resolveLocale("auto", "zh-TW"), "zh-CN");
   assert.equal(resolveLocale("auto", "ja-JP"), "en");
+
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { language: "en-GB" }
+  });
+  globalThis.chrome = { i18n: { getUILanguage: () => "zh-CN" } };
+  assert.equal(detectBrowserLanguage(), "zh-CN");
+  assert.equal(resolveLocale("auto"), "zh-CN");
+  assert.equal(resolveLocale("auto", undefined), "zh-CN");
+  assert.equal(resolveLocale("auto", null), "zh-CN");
+
+  delete globalThis.chrome;
+  assert.equal(detectBrowserLanguage(), "en-GB");
+  assert.equal(resolveLocale("auto"), "en");
+  assert.equal(resolveLocale("auto", undefined), "en");
+
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { language: "" }
+  });
+  assert.equal(detectBrowserLanguage(), undefined);
   assert.equal(resolveLocale("auto", undefined), "zh-CN");
   assert.equal(resolveLocale("auto", ""), "zh-CN");
   assert.equal(resolveLocale("en", "zh-CN"), "en");
@@ -1752,6 +1803,10 @@ test("probeMemosConnection, saveClipWithOutbox, and background context menu loca
   });
   assert.equal(unconf.status, "unconfigured");
   assert.equal(unconf.toast, "Clip saved locally; check Memos URL and access token");
+  assert.match(
+    storage.peek()[0].memoBody.content,
+    /^#rewind\/pending #source\/chatgpt\n\n> \*\*Source:\*\* Untitled Session · /
+  );
 
   const queued = await saveClipWithOutbox({
     clip: sampleClip,
@@ -1923,4 +1978,89 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   await parsed.getElementById("settings-form").dispatch("submit");
   assert.equal(parsed.getElementById("status").textContent, "Settings saved");
   assert.equal(persisted.uiLanguage, "en");
+});
+
+test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartup, and storage.onChanged calls", async (t) => {
+  const originalChrome = globalThis.chrome;
+  const originalSelf = globalThis.self;
+  t.after(() => {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+    if (originalSelf === undefined) delete globalThis.self;
+    else globalThis.self = originalSelf;
+  });
+
+  let installedListener;
+  let startupListener;
+  let storageChangedListener;
+  const events = [];
+  const pendingRemovals = [];
+  let currentLang = "en";
+
+  globalThis.chrome = {
+    i18n: { getUILanguage: () => "en-US" },
+    runtime: {
+      onInstalled: { addListener(fn) { installedListener = fn; } },
+      onStartup: { addListener(fn) { startupListener = fn; } },
+      onMessage: { addListener() {} }
+    },
+    contextMenus: {
+      removeAll(cb) {
+        events.push("removeAll:start");
+        pendingRemovals.push(() => {
+          events.push("removeAll:done");
+          cb();
+        });
+      },
+      create(item) {
+        events.push(`create:${item.title}`);
+      },
+      update(_id, patch, cb) {
+        events.push(`update:${patch.title}`);
+        if (cb) cb();
+      },
+      onClicked: { addListener() {} }
+    },
+    commands: { onCommand: { addListener() {} } },
+    storage: {
+      local: {
+        async get() { return { uiLanguage: currentLang, outbox: [] }; },
+        async set() {}
+      },
+      onChanged: { addListener(fn) { storageChangedListener = fn; } }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+
+  await import("./background.js?serialized-menu-setup");
+
+  installedListener();
+  startupListener();
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(pendingRemovals.length, 1);
+  assert.deepEqual(events, ["removeAll:start"]);
+
+  currentLang = "zh-CN";
+  storageChangedListener({ uiLanguage: { oldValue: "en", newValue: "zh-CN" } }, "local");
+  assert.deepEqual(events, ["removeAll:start"]);
+
+  pendingRemovals.shift()();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.equal(pendingRemovals.length, 1);
+  pendingRemovals.shift()();
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepEqual(events, [
+    "removeAll:start",
+    "removeAll:done",
+    "create:保存所选文本到 Coding Rewind",
+    "removeAll:start",
+    "removeAll:done",
+    "create:保存所选文本到 Coding Rewind",
+    "update:保存所选文本到 Coding Rewind"
+  ]);
 });

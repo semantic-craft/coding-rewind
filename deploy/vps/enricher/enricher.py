@@ -34,7 +34,8 @@ SYSTEM_PROMPT_EN = (
     '"context_summary": "<1-2 English sentences>", "keywords": ["<keyword>"]}'
 )
 
-_FENCED_CODE_RE = re.compile(r"(`{3,}|~{3,})[\s\S]*?\1")
+_FENCED_CODE_RE = re.compile(r"(`{3,}|~{3,})[\s\S]*?(?:\1|$)")
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 _URL_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
 _CONTEXT_LABEL_RE = re.compile(r"(?m)^(?:Session Title:|Prompt:|### Recent Turns\b|User:|Assistant:)[ \t]*")
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
@@ -46,17 +47,37 @@ def _strip_code_and_urls(text: str | None, *, strip_context_labels: bool = False
         return ""
     cleaned = text.replace(CONTEXT_MARKER, " ")
     cleaned = _FENCED_CODE_RE.sub(" ", cleaned)
+    cleaned = _INLINE_CODE_RE.sub(" ", cleaned)
     cleaned = _URL_RE.sub(" ", cleaned)
     if strip_context_labels:
         cleaned = _CONTEXT_LABEL_RE.sub(" ", cleaned)
     return cleaned
 
 
-def detect_clip_language(excerpt: str, context: str | None = None) -> str:
-    combined = f"{_strip_code_and_urls(excerpt)} {_strip_code_and_urls(context, strip_context_labels=True)}"
-    if _CJK_RE.search(combined):
+def _dominant_prose_lang(prose: str) -> str | None:
+    cjk = len(_CJK_RE.findall(prose))
+    latin = len(_ASCII_WORD_RE.findall(prose))
+    if cjk == 0 and latin < 2:
+        return None
+    if cjk > 0 and cjk * 3 >= latin:
         return "zh-Hans"
-    if len(_ASCII_WORD_RE.findall(combined)) >= 2:
+    if latin >= 2:
+        return "en"
+    return "zh-Hans"
+
+
+def detect_clip_language(excerpt: str, context: str | None = None) -> str:
+    excerpt_lang = _dominant_prose_lang(_strip_code_and_urls(excerpt))
+    if excerpt_lang is not None:
+        return excerpt_lang
+    context_lang = _dominant_prose_lang(_strip_code_and_urls(context, strip_context_labels=True))
+    if context_lang is not None:
+        return context_lang
+    raw_cjk = len(_CJK_RE.findall(excerpt or ""))
+    raw_latin = len(_ASCII_WORD_RE.findall(excerpt or ""))
+    if raw_cjk > 0 and raw_cjk * 3 >= raw_latin:
+        return "zh-Hans"
+    if raw_latin >= 2:
         return "en"
     return "zh-Hans"
 
@@ -195,7 +216,7 @@ class EnricherService:
     poll_interval: float = 5.0
     ctx_wait_seconds: float = 15.0
     clock: Callable[[], float] = time.time
-    summary_language: str = "zh-Hans"
+    summary_language: str = "auto"
     _wake: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
 

@@ -12,15 +12,7 @@
   );
   const CAPTURE_SHORTCUT_HINT = IS_APPLE_PLATFORM ? "⌃⌥⇧⌘S" : "Alt+Shift+S";
   const i18n = globalThis.CodingRewindI18n;
-
-  function detectBrowserLanguage() {
-    return (
-      (typeof chrome !== "undefined" && chrome.i18n && typeof chrome.i18n.getUILanguage === "function"
-        ? chrome.i18n.getUILanguage()
-        : undefined) ||
-      (globalThis.navigator && typeof navigator.language === "string" ? navigator.language : undefined)
-    );
-  }
+  const detectBrowserLanguage = i18n.detectBrowserLanguage;
 
   let extractorsModulePromise = null;
   let shadowRootRef = null;

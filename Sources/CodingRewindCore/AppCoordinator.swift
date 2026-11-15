@@ -248,6 +248,7 @@ public final class AppCoordinator {
 
     public func setLanguage(_ language: AppLanguage) {
         self.language = language
+        try? AntigravityPluginInstaller(paths: paths).refreshLocalizedMetadataIfInstalled(language: language)
         if let failureNotice = lastPluginInstallFailureNotice {
             pluginStatusText = L10n.banner(failureNotice, in: language)
         } else {
@@ -258,6 +259,10 @@ public final class AppCoordinator {
             bannerMessage = L10n.banner(activeBannerNotice, in: language)
             isUpdatingBannerFromNotice = false
         }
+    }
+
+    public func recordStartupWarning(_ message: String) {
+        setBanner(.custom(message), isError: true)
     }
 
     public var filteredCards: [RewindCard] {
@@ -753,6 +758,7 @@ public final class AppCoordinator {
         }
         if !settings.isTokenManaged && !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try KeychainTokenStore.saveToken(token, environment: environment)
+            environment.removeValue(forKey: KeychainTokenStore.disableKeychainFallbackEnvironmentKey)
         }
         setBanner(.savedConnectionSettings, isError: false)
     }

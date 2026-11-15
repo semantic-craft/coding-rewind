@@ -536,6 +536,10 @@ class EnricherUnitTests(unittest.TestCase):
 
     def test_detect_and_resolve_summary_language(self) -> None:
         self.assertEqual(
+            enricher.EnricherService("http://memos", "tok", "http://ai", "key", "m").summary_language,
+            "auto",
+        )
+        self.assertEqual(
             enricher.detect_clip_language("如何使用 Swift Actor 隔离共享状态？"),
             "zh-Hans",
         )
@@ -555,11 +559,54 @@ class EnricherUnitTests(unittest.TestCase):
         )
         self.assertEqual(
             enricher.detect_clip_language(
-                "```python\ndef compute_digest(payload: bytes) -> str:\n    return payload.hex()\n```",
-                "Session Title: \nPrompt: \n\n### Recent Turns\nUser: ```python\nx = 1\n```\nAssistant: ```python\nx = 2\n```",
+                "When parsing UTF-8 headers, reject stray characters like 中 while validating ASCII tokens across HTTP boundaries.",
+                None,
+            ),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "Use `let label = \"暂存\"` when wiring localized button text inside AppKit panels.",
+                None,
+            ),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "Explain unclosed code fences cleanly:\n```python\nmsg = '中文未闭合代码块'\ndef helper():\n    return msg",
+                None,
+            ),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "在 AppCoordinator 的 setLanguage 方法中同步刷新 Antigravity 插件配置。",
+                None,
             ),
             "zh-Hans",
         )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "Keep actor isolation strict across module boundaries.",
+                "Session Title: 旧中文标题\nPrompt: 请用英文回答并发问题",
+            ),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "```python\ndef compute_digest(payload: bytes) -> str:\n    return payload.hex()\n```",
+                "Session Title: \nPrompt: \n\n### Recent Turns\nUser: ```python\nx = 1\n```\nAssistant: ```python\nx = 2\n```",
+            ),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(
+                "```python\n# 计算哈希摘要并返回十六进制字符串\nx = 1\n```",
+                None,
+            ),
+            "zh-Hans",
+        )
+        self.assertEqual(enricher.detect_clip_language("```\nx = 1\n```", None), "zh-Hans")
         self.assertEqual(enricher.detect_clip_language("", None), "zh-Hans")
 
         self.assertEqual(enricher.resolve_summary_language("zh", "English words here"), "zh-Hans")
@@ -638,7 +685,6 @@ class EnricherUnitTests(unittest.TestCase):
                 ai_base_url=f"{base_url}/v1",
                 ai_api_key="ai-tok",
                 ai_model="qwen-plus",
-                summary_language="auto",
             )
             self.assertEqual(svc.process_memo(state.memos["rw-auto-en"]), "enriched")
             self.assertEqual(state.ai_calls[0]["messages"][0]["content"], enricher.SYSTEM_PROMPT_EN)
@@ -659,7 +705,7 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertTrue(state.memos["rw-auto-zh"]["content"].endswith("\n\n" + zh_verbatim))
 
             self.assertEqual(svc.process_memo(state.memos["rw-auto-code"]), "enriched")
-            self.assertEqual(state.ai_calls[2]["messages"][0]["content"], enricher.SYSTEM_PROMPT)
+            self.assertEqual(state.ai_calls[2]["messages"][0]["content"], enricher.SYSTEM_PROMPT_EN)
             self.assertTrue(state.memos["rw-auto-code"]["content"].endswith("\n\n" + code_only_verbatim))
 
             state.ai_response = {}

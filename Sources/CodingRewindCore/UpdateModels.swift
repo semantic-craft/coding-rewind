@@ -90,6 +90,7 @@ public struct SHA256Digest: Codable, Equatable, Hashable, Sendable, CustomString
     }
 
     public static func parseChecksumsFile(_ text: String) -> [String: SHA256Digest] {
+        let horizontalWhitespace = CharacterSet(charactersIn: " \t")
         var table: [String: SHA256Digest] = [:]
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
@@ -97,15 +98,15 @@ public struct SHA256Digest: Codable, Equatable, Hashable, Sendable, CustomString
             if trimmed.isEmpty || trimmed.hasPrefix("#") {
                 continue
             }
-            guard line.count > 66 else { continue }
+            guard line.count >= 66 else { continue }
             let hexPrefix = String(line.prefix(64))
             guard let digest = SHA256Digest(hexString: hexPrefix) else { continue }
-            let rest = String(line.dropFirst(64))
-            let rawTarget: String
-            if rest.hasPrefix("  ") || rest.hasPrefix(" *") {
-                rawTarget = String(rest.dropFirst(2)).trimmingCharacters(in: .whitespaces)
-            } else {
-                continue
+            let rest = line.dropFirst(64)
+            guard rest.first == " " || rest.first == "\t" else { continue }
+            var rawTarget = String(rest).trimmingCharacters(in: horizontalWhitespace)
+            if rawTarget.hasPrefix("*") {
+                rawTarget.removeFirst()
+                rawTarget = rawTarget.trimmingCharacters(in: horizontalWhitespace)
             }
             guard !rawTarget.isEmpty else { continue }
             let cleanTarget = rawTarget.hasPrefix("./") ? String(rawTarget.dropFirst(2)) : rawTarget
@@ -251,10 +252,33 @@ public struct GitHubReleaseCandidate: Codable, Equatable, Sendable {
 public enum BundleSignatureAuthority: Equatable, Sendable {
     case developerID(teamID: String)
     case appleDevelopment(teamID: String)
+    case otherSigned(teamID: String)
     case adhoc
     case unsigned
 
     public static let defaultReleaseTeamID = "LQAVR62TK2"
+
+    public var displayDescription: String {
+        switch self {
+        case .developerID(let teamID):
+            return teamID.isEmpty ? "Developer ID" : "Developer ID (\(teamID))"
+        case .appleDevelopment(let teamID):
+            return teamID.isEmpty ? "Apple Development" : "Apple Development (\(teamID))"
+        case .otherSigned(let teamID):
+            return teamID.isEmpty ? "Signed" : "Signed (\(teamID))"
+        case .adhoc:
+            return "Ad-hoc"
+        case .unsigned:
+            return "Unsigned"
+        }
+    }
+
+    public func canReplace(
+        with candidate: BundleSignatureAuthority,
+        expectedReleaseTeamID: String = defaultReleaseTeamID
+    ) -> Bool {
+        Self.canReplace(installed: self, with: candidate, expectedReleaseTeamID: expectedReleaseTeamID)
+    }
 
     public static func canReplace(
         installed: BundleSignatureAuthority,
@@ -262,14 +286,14 @@ public enum BundleSignatureAuthority: Equatable, Sendable {
         expectedReleaseTeamID: String = defaultReleaseTeamID
     ) -> Bool {
         switch (installed, candidate) {
-        case (_, .unsigned):
+        case (_, .unsigned), (_, .otherSigned), (.otherSigned, _):
             return false
         case (.developerID(let t1), .developerID(let t2)):
             return !t1.isEmpty && t1 == t2
         case (.developerID, _):
             return false
         case (.appleDevelopment(let t1), .developerID(let t2)):
-            return !t2.isEmpty && (t1 == t2 || t2 == expectedReleaseTeamID)
+            return !t1.isEmpty && t1 == t2
         case (.appleDevelopment(let t1), .appleDevelopment(let t2)):
             return !t1.isEmpty && t1 == t2
         case (.appleDevelopment, _):

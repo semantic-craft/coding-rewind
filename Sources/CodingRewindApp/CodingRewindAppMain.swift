@@ -29,6 +29,11 @@ private final class AtomicLanguageBox: @unchecked Sendable {
 
 @MainActor
 public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
+    public enum StartupBootstrapDisposition: Equatable, Sendable {
+        case startDegraded(environment: [String: String], warningMessage: String)
+        case terminateWithModalAlert(title: String, message: String)
+    }
+
     public var coordinator: AppCoordinator?
     public var hudPanel: QuickPeekHUDPanel?
     public var statusItemController: StatusItemController?
@@ -38,13 +43,60 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var appearance: AppAppearancePreferences?
     public var loginItemController: LoginItemController?
     public var updater: AppUpdater?
+    public var antigravityInstaller: AntigravityPluginInstaller?
     public private(set) var lastExternalApplication: NSRunningApplication?
 
     private var workspaceObserver: NSObjectProtocol?
 
+    public static func resolveBootstrapLanguage(
+        environment: [String: String],
+        preferredLanguagesProvider: @escaping @Sendable () -> [String] = { Locale.preferredLanguages }
+    ) -> AppLanguage {
+        guard let paths = try? StoragePaths.resolve(environment: environment) else {
+            return AppLanguagePreference.system.resolved(preferredLanguages: preferredLanguagesProvider())
+        }
+        let defaults = AppPreferences.userDefaults(environment: environment, dataDirectory: paths.dataDirectoryURL)
+        return AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in true },
+            preferredLanguagesProvider: preferredLanguagesProvider
+        ).effectiveLanguage
+    }
+
+    public static func evaluateBootstrapFailure(
+        error: any Error,
+        environment: [String: String],
+        launchContext: LaunchContext,
+        bundledConfigurationURL: URL?,
+        language: AppLanguage? = nil,
+        fileManager: FileManager = .default
+    ) -> StartupBootstrapDisposition {
+        let resolvedLanguage = language ?? resolveBootstrapLanguage(environment: environment)
+        let localizedError: String
+        if let bootstrapFailure = error as? DeveloperCredentialsBootstrap.Failure {
+            localizedError = bootstrapFailure.localizedDescription(in: resolvedLanguage)
+        } else {
+            localizedError = error.localizedDescription
+        }
+        let hasBundledConfig = DeveloperCredentialsBootstrap.hasBundledConfiguration(
+            at: bundledConfigurationURL,
+            fileManager: fileManager
+        )
+        if !launchContext.shouldPresentHUDOnInitialLaunch || !hasBundledConfig {
+            var degradedEnvironment = environment
+            if degradedEnvironment[StoragePaths.qaEnvironmentKey] != "1" {
+                degradedEnvironment[KeychainTokenStore.disableKeychainFallbackEnvironmentKey] = "1"
+            }
+            return .startDegraded(environment: degradedEnvironment, warningMessage: localizedError)
+        }
+        return .terminateWithModalAlert(
+            title: AppStrings.startupFailedAlertTitle(in: resolvedLanguage),
+            message: localizedError
+        )
+    }
+
     public func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = ProcessInfo.processInfo.environment
-        // Capture currentAppleEvent synchronously before any async suspension drains the launch event.
         let launchContext = LaunchContext.captureCurrent(
             arguments: CommandLine.arguments,
             environment: environment
@@ -80,21 +132,35 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 }.value
                 self?.start(environment: resolved, launchContext: launchContext)
             } catch {
-                let alertLang = AppLanguagePreference.system.resolved()
-                let alert = NSAlert()
-                alert.messageText = AppStrings.startupFailedAlertTitle(in: alertLang)
-                if let bootstrapFailure = error as? DeveloperCredentialsBootstrap.Failure {
-                    alert.informativeText = bootstrapFailure.localizedDescription(in: alertLang)
-                } else {
-                    alert.informativeText = error.localizedDescription
+                let disposition = Self.evaluateBootstrapFailure(
+                    error: error,
+                    environment: environment,
+                    launchContext: launchContext,
+                    bundledConfigurationURL: configurationURL
+                )
+                switch disposition {
+                case .startDegraded(let degradedEnv, let warningMessage):
+                    self?.start(
+                        environment: degradedEnv,
+                        launchContext: launchContext,
+                        startupWarning: warningMessage
+                    )
+                case .terminateWithModalAlert(let title, let message):
+                    let alert = NSAlert()
+                    alert.messageText = title
+                    alert.informativeText = message
+                    alert.runModal()
+                    NSApplication.shared.terminate(nil)
                 }
-                alert.runModal()
-                NSApplication.shared.terminate(nil)
             }
         }
     }
 
-    private func start(environment: [String: String], launchContext: LaunchContext) {
+    func start(
+        environment: [String: String],
+        launchContext: LaunchContext,
+        startupWarning: String? = nil
+    ) {
         do {
             let paths = try StoragePaths.resolve(environment: environment)
             let defaults = AppPreferences.userDefaults(
@@ -108,6 +174,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             let initialLanguage = appearance.effectiveLanguage
             KeyboardShortcuts.localizationLanguageCode = initialLanguage.rawValue
             let languageBox = AtomicLanguageBox(initialLanguage)
+
+            let installer = AntigravityPluginInstaller(paths: paths)
+            self.antigravityInstaller = installer
+            try? installer.refreshLocalizedMetadataIfInstalled(language: initialLanguage)
 
             let loginItem = LoginItemController.live(
                 environment: environment,
@@ -157,6 +227,9 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 return NSWorkspace.shared.open(url)
             }
             self.coordinator = coord
+            if let startupWarning {
+                coord.recordStartupWarning(startupWarning)
+            }
 
             if CommandLine.arguments.contains("--install-plugin") {
                 installPlugin()
@@ -240,6 +313,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 KeyboardShortcuts.localizationLanguageCode = lang.rawValue
                 languageBox.set(lang)
                 guard let self else { return }
+                try? self.antigravityInstaller?.refreshLocalizedMetadataIfInstalled(language: lang)
                 self.coordinator?.setLanguage(lang)
                 self.loginItemController?.language = lang
                 self.updater?.language = lang

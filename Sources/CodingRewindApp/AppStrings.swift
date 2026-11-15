@@ -437,6 +437,8 @@ enum AppStrings {
                 return "已登记登录项，需要在系统设置的“登录项”中批准后台运行。"
             case .unavailable(.unbundledExecutable):
                 return "当前以独立可执行文件运行，使用完整应用包打开后可启用开机自启动。"
+            case .unavailable(.relocatedBundle):
+                return "当前应用位于临时或构建目录，请将 CodingRewind.app 移入“应用程序”文件夹后再开启开机时启动。"
             case .unavailable(.qaIsolated):
                 return "QA 隔离模式下不会修改系统登录项。"
             }
@@ -448,6 +450,8 @@ enum AppStrings {
                 return "Registered, but requires approval in System Settings > General > Login Items."
             case .unavailable(.unbundledExecutable):
                 return "Unavailable when running outside a packaged .app bundle."
+            case .unavailable(.relocatedBundle):
+                return "Move CodingRewind.app to the Applications folder before enabling Launch at Login."
             case .unavailable(.qaIsolated):
                 return "System Login Items are isolated in QA mode."
             }

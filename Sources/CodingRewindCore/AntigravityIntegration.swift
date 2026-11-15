@@ -91,21 +91,7 @@ public enum AntigravityIntegration {
             }
         }
 
-        let pluginManifest: [String: Any] = [
-            "name": pluginName,
-            "version": pluginVersion,
-            "description": "Coding Rewind 72-hour hot-window context stash and Memos bridge for Antigravity 2.x.",
-            "suggestedPrompts": suggestedPrompts(in: language)
-        ]
-        let pluginData = try JSONSerialization.data(
-            withJSONObject: pluginManifest,
-            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        )
-        try AtomicFile.writeData(
-            pluginData,
-            to: pluginDir.appendingPathComponent("plugin.json", isDirectory: false),
-            permissions: 0o644
-        )
+        try writePluginManifest(to: pluginDir, language: language)
 
         let skillMarkdown = """
         ---
@@ -293,5 +279,61 @@ public enum AntigravityIntegration {
         return reasons.isEmpty
             ? .installed(pluginDirectoryURL: pluginDir)
             : .needsInstallOrRepair(reasons: reasons.map { L10n.pluginRepairReason($0, in: language) })
+    }
+
+    public static func writePluginManifest(to pluginDirectoryURL: URL, language: AppLanguage) throws {
+        let pluginManifest: [String: Any] = [
+            "name": pluginName,
+            "version": pluginVersion,
+            "description": "Coding Rewind 72-hour hot-window context stash and Memos bridge for Antigravity 2.x.",
+            "suggestedPrompts": suggestedPrompts(in: language)
+        ]
+        let pluginData = try JSONSerialization.data(
+            withJSONObject: pluginManifest,
+            options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        )
+        try AtomicFile.writeData(
+            pluginData,
+            to: pluginDirectoryURL.appendingPathComponent("plugin.json", isDirectory: false),
+            permissions: 0o644
+        )
+    }
+}
+
+public struct AntigravityPluginInstaller: Sendable {
+    public enum InspectionStatus: Equatable, Sendable {
+        case installed
+        case needsInstallOrRepair([PluginRepairReason])
+    }
+
+    public let dataDirectoryURL: URL
+    public let configDirectoryURL: URL
+
+    public init(dataDirectoryURL: URL, configDirectoryURL: URL) {
+        self.dataDirectoryURL = dataDirectoryURL.standardizedFileURL
+        self.configDirectoryURL = configDirectoryURL.standardizedFileURL
+    }
+
+    public init(paths: StoragePaths) {
+        self.init(
+            dataDirectoryURL: paths.dataDirectoryURL,
+            configDirectoryURL: paths.antigravityConfigDirectoryURL
+        )
+    }
+
+    public func inspectStatus() -> InspectionStatus {
+        let reasons = AntigravityIntegration.repairReasons(
+            dataDirectoryURL: dataDirectoryURL,
+            configDirectoryURL: configDirectoryURL
+        )
+        return reasons.isEmpty ? .installed : .needsInstallOrRepair(reasons)
+    }
+
+    public func refreshLocalizedMetadataIfInstalled(language: AppLanguage) throws {
+        guard inspectStatus() == .installed else { return }
+        let pluginDir = configDirectoryURL
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent(AntigravityIntegration.pluginName, isDirectory: true)
+        try AntigravityIntegration.writePluginManifest(to: pluginDir, language: language)
     }
 }

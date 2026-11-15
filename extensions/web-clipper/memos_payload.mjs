@@ -5,7 +5,7 @@ import "./i18n.js";
 export const CLIP_ID_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$/;
 export const MAX_OUTBOX_ITEMS = 50;
 
-export function getToastMessages(locale = "zh-CN") {
+export function getToastMessages(locale = "auto") {
   const i18n = globalThis.CodingRewindI18n;
   const resolved = i18n.resolveLocale(locale);
   return Object.freeze({
@@ -15,7 +15,7 @@ export function getToastMessages(locale = "zh-CN") {
   });
 }
 
-export const TOAST_MESSAGES = getToastMessages("zh-CN");
+export const TOAST_MESSAGES = getToastMessages("auto");
 
 const ALPHANUM = "abcdefghijklmnopqrstuvwxyz0123456789";
 
@@ -120,7 +120,10 @@ export function buildMemosWirePayloads(clip, options = {}) {
     ? `#rewind/pending #rewind/has-ctx #source/${platform}`
     : `#rewind/pending #source/${platform}`;
 
-  const linkLabel = escapeMarkdownLinkLabel(sessionTitle || platform);
+  const i18n = globalThis.CodingRewindI18n;
+  const resolvedLocale = i18n.resolveLocale(options.locale ?? "auto");
+  const fallbackTitle = i18n.t(resolvedLocale, "untitledSession");
+  const linkLabel = escapeMarkdownLinkLabel(sessionTitle || fallbackTitle);
   const sourceLine = sourceUrl
     ? `> **Source:** [${linkLabel}](${sourceUrl}) · ${createdAtIso}`
     : `> **Source:** ${linkLabel} · ${createdAtIso}`;
@@ -351,10 +354,10 @@ export async function saveClipWithOutbox({
   fetchImpl = globalThis.fetch,
   nowMs,
   randomFn,
-  locale = "zh-CN"
+  locale = "auto"
 }) {
   const toasts = getToastMessages(locale);
-  const envelope = createOutboxEnvelope(clip, { nowMs, randomFn });
+  const envelope = createOutboxEnvelope(clip, { nowMs, randomFn, locale });
   const normalizedUrl = normalizeMemosBaseUrl(baseUrl);
 
   if (!normalizedUrl) {

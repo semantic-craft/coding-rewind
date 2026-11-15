@@ -184,8 +184,8 @@ extension AppStrings {
 
     static func showSelectionPopupHelp(in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return "在 Antigravity 与 Gemini 桌面端选中对话文本后，自动在选区上方显示快捷暂存按钮。"
-        case .en: return "Shows a non-activating Stash button above selected conversation text in Antigravity and Gemini desktop."
+        case .zhHans: return "在 Antigravity、ChatGPT 与 Gemini 桌面端选中对话文本后，自动在选区附近显示快捷暂存按钮。"
+        case .en: return "Shows a non-activating Stash button near selected conversation text in Antigravity, ChatGPT, and Gemini desktop."
         }
     }
 
@@ -543,6 +543,73 @@ extension AppStrings {
         switch language {
         case .zhHans: return "Coding Rewind 未能启动"
         case .en: return "Coding Rewind Could Not Start"
+        }
+    }
+
+    static func updaterFailureMessage(_ notice: AppUpdater.FailureNotice, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans:
+            switch notice {
+            case .sha256Mismatch:
+                return "安装包 SHA-256 校验不匹配，已拒绝安装。"
+            case .missingAppInArchive:
+                return "更新压缩包中未找到有效的应用包。"
+            case .tamperedSignature:
+                return "更新包代码签名校验失败，已拒绝安装。"
+            case .httpStatus(let code, let detail):
+                let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty
+                    ? "GitHub Releases 请求失败（HTTP \(code)）。"
+                    : "GitHub Releases 请求失败（HTTP \(code)）：\(trimmed)"
+            case .parse(let parseError):
+                switch parseError {
+                case .invalidJSON:
+                    return "GitHub Releases 返回的数据格式无效。"
+                case .draftOrPrerelease:
+                    return "最新 GitHub Release 为草稿或预发布版本，已跳过自动更新。"
+                case .invalidVersionTag(let tag):
+                    return "GitHub Release 版本标签无效：\(tag)"
+                case .invalidReleaseURL(let url):
+                    return "GitHub Release 下载地址无效或不安全：\(url)"
+                case .missingMacOSArchiveAsset:
+                    return "最新 GitHub Release 中未找到 macOS 安装包。"
+                }
+            case .rewind(let err):
+                return "检查更新失败：\(err.localizedDescription(in: .zhHans))"
+            case .other(let detail):
+                return "检查更新失败：\(detail)"
+            }
+        case .en:
+            switch notice {
+            case .sha256Mismatch:
+                return "Archive SHA-256 checksum mismatch; update was rejected."
+            case .missingAppInArchive:
+                return "No valid application bundle was found in the update archive."
+            case .tamperedSignature:
+                return "Code signature verification failed; update was rejected."
+            case .httpStatus(let code, let detail):
+                let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty
+                    ? "GitHub Releases request failed (HTTP \(code))."
+                    : "GitHub Releases request failed (HTTP \(code)): \(trimmed)"
+            case .parse(let parseError):
+                switch parseError {
+                case .invalidJSON:
+                    return "Invalid release metadata returned from GitHub Releases."
+                case .draftOrPrerelease:
+                    return "Latest GitHub Release is a draft or prerelease; automatic update skipped."
+                case .invalidVersionTag(let tag):
+                    return "Invalid GitHub Release version tag: \(tag)"
+                case .invalidReleaseURL(let url):
+                    return "Invalid or insecure GitHub Release URL: \(url)"
+                case .missingMacOSArchiveAsset:
+                    return "No macOS archive asset found in the latest GitHub Release."
+                }
+            case .rewind(let err):
+                return "Update check failed: \(err.localizedDescription(in: .en))"
+            case .other(let detail):
+                return "Update check failed: \(detail)"
+            }
         }
     }
 }

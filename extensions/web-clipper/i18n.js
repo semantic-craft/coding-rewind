@@ -12,6 +12,7 @@
       toastUnconfigured: "片段已保存到本机，请检查 Memos 服务地址和访问令牌",
       toastSaveUnconfirmedError: "保存失败，未能确认片段已保存到 Memos 或本机",
       toastSaveRetryError: "保存失败，请重试",
+      untitledSession: "未命名对话",
       contextMenuSaveSelection: "保存所选文本到 Coding Rewind",
       pillAriaLabel: "暂存选中文本",
       pillReady: "暂存",
@@ -53,6 +54,7 @@
       toastUnconfigured: "Clip saved locally; check Memos URL and access token",
       toastSaveUnconfirmedError: "Save failed; could not confirm clip was saved to Memos or locally",
       toastSaveRetryError: "Save failed, please try again",
+      untitledSession: "Untitled Session",
       contextMenuSaveSelection: "Save selection to Coding Rewind",
       pillAriaLabel: "Stash selected text",
       pillReady: "Stash",
@@ -90,7 +92,19 @@
     })
   });
 
-  function resolveLocale(preferredLanguage = "auto", browserLanguage = undefined) {
+  function detectBrowserLanguage() {
+    const chromeLang = globalThis.chrome?.i18n?.getUILanguage?.();
+    if (typeof chromeLang === "string" && chromeLang.trim().length > 0) {
+      return chromeLang.trim();
+    }
+    const navLang = globalThis.navigator?.language;
+    if (typeof navLang === "string" && navLang.trim().length > 0) {
+      return navLang.trim();
+    }
+    return undefined;
+  }
+
+  function resolveLocale(preferredLanguage = "auto", browserLanguage = detectBrowserLanguage()) {
     const pref = typeof preferredLanguage === "string" ? preferredLanguage.trim().toLowerCase() : "auto";
     if (pref === "zh-cn" || pref === "zh-hans" || pref === "zh") {
       return "zh-CN";
@@ -98,8 +112,12 @@
     if (pref === "en" || pref.startsWith("en-")) {
       return "en";
     }
-    if (typeof browserLanguage === "string" && browserLanguage.trim().length > 0) {
-      return /^zh(?:$|[-_])/i.test(browserLanguage.trim()) ? "zh-CN" : "en";
+    const effectiveBrowserLanguage =
+      browserLanguage === undefined || browserLanguage === null
+        ? detectBrowserLanguage()
+        : browserLanguage;
+    if (typeof effectiveBrowserLanguage === "string" && effectiveBrowserLanguage.trim().length > 0) {
+      return /^zh(?:$|[-_])/i.test(effectiveBrowserLanguage.trim()) ? "zh-CN" : "en";
     }
     return "zh-CN";
   }
@@ -133,6 +151,7 @@
   globalThis.CodingRewindI18n = Object.freeze({
     SUPPORTED_UI_LANGUAGES,
     MESSAGES,
+    detectBrowserLanguage,
     resolveLocale,
     t,
     createTranslator

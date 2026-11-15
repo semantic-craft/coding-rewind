@@ -10,5 +10,8 @@
   },
   "saveSelectionCommand": {
     "message": "保存所选文本"
+  },
+  "untitledSession": {
+    "message": "未命名对话"
   }
 }

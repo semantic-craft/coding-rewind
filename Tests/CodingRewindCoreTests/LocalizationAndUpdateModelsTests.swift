@@ -296,13 +296,21 @@ struct LocalizationAndUpdateModelsTests {
         #expect(SHA256Digest(hexString: String(repeating: "z", count: 64)) == nil)
 
         let otherHex = String(repeating: "a1", count: 32)
+        let singleSpaceHex = String(repeating: "c3", count: 32)
+        let tabHex = String(repeating: "d4", count: 32)
+        let multiSpaceHex = String(repeating: "e5", count: 32)
         let manifest = """
-        # Release checksums
         \(memoryDigest.hexValue)  CodingRewind-v0.4.0-macos-arm64.zip\r
         \(otherHex) *./CodingRewind-WebClipper-v0.4.0.zip
+        \(singleSpaceHex) SingleSpace.zip
+        \(tabHex)\t*\tTabbedArchive.zip
+        \(multiSpaceHex)     MultiSpaceArchive.zip
         """
         #expect(SHA256Digest.lookup(archiveName: "CodingRewind-v0.4.0-macos-arm64.zip", inChecksumsText: manifest) == memoryDigest)
         #expect(SHA256Digest.lookup(archiveName: "CodingRewind-WebClipper-v0.4.0.zip", inChecksumsText: manifest)?.hexValue == otherHex)
+        #expect(SHA256Digest.lookup(archiveName: "SingleSpace.zip", inChecksumsText: manifest)?.hexValue == singleSpaceHex)
+        #expect(SHA256Digest.lookup(archiveName: "TabbedArchive.zip", inChecksumsText: manifest)?.hexValue == tabHex)
+        #expect(SHA256Digest.lookup(archiveName: "MultiSpaceArchive.zip", inChecksumsText: manifest)?.hexValue == multiSpaceHex)
         #expect(SHA256Digest.lookup(archiveName: "Missing.zip", inChecksumsText: manifest) == nil)
     }
 
@@ -413,5 +421,66 @@ struct LocalizationAndUpdateModelsTests {
         #expect(BundleSignatureAuthority.canReplace(installed: .adhoc, with: .adhoc))
         #expect(!BundleSignatureAuthority.canReplace(installed: .adhoc, with: .unsigned))
         #expect(!BundleSignatureAuthority.canReplace(installed: .adhoc, with: otherDevID))
+
+        let emptyAppleDev = BundleSignatureAuthority.appleDevelopment(teamID: "")
+        let otherSignedTeam = BundleSignatureAuthority.otherSigned(teamID: team)
+        let otherSignedEmpty = BundleSignatureAuthority.otherSigned(teamID: "")
+        #expect(otherSignedTeam.displayDescription == "Signed (\(team))")
+        #expect(otherSignedEmpty.displayDescription == "Signed")
+        #expect(!BundleSignatureAuthority.canReplace(installed: otherAppleDev, with: devID, expectedReleaseTeamID: team))
+        #expect(!BundleSignatureAuthority.canReplace(installed: emptyAppleDev, with: devID, expectedReleaseTeamID: team))
+        #expect(!BundleSignatureAuthority.canReplace(installed: devID, with: otherSignedTeam))
+        #expect(!BundleSignatureAuthority.canReplace(installed: appleDev, with: otherSignedTeam))
+        #expect(!BundleSignatureAuthority.canReplace(installed: otherSignedTeam, with: devID))
+        #expect(!BundleSignatureAuthority.canReplace(installed: otherSignedTeam, with: appleDev))
+        #expect(!BundleSignatureAuthority.canReplace(installed: otherSignedTeam, with: otherSignedTeam))
+    }
+
+    @Test func antigravityPluginInstallerRefreshesLocalizedPromptsOnlyWhenInstalled() throws {
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent(".test-data", isDirectory: true)
+            .appendingPathComponent("core-plugin-refresh-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("AntigravityConfig", isDirectory: true)
+        )
+        let installer = AntigravityPluginInstaller(paths: paths)
+        try installer.refreshLocalizedMetadataIfInstalled(language: .en)
+        #expect(!FileManager.default.fileExists(atPath: paths.antigravityConfigDirectoryURL.path))
+
+        let dummySidecar = root.appendingPathComponent("src-sidecar")
+        let dummyBridge = root.appendingPathComponent("src-bridge.sh")
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: dummySidecar, permissions: 0o755)
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: dummyBridge, permissions: 0o755)
+
+        let pluginDir = try AntigravityIntegration.installOrRepair(
+            dataDirectoryURL: paths.dataDirectoryURL,
+            configDirectoryURL: paths.antigravityConfigDirectoryURL,
+            sourceMCPBridgeURL: dummyBridge,
+            sourceSidecarBinaryURL: dummySidecar,
+            language: .zhHans
+        )
+        #expect(installer.inspectStatus() == .installed)
+
+        let manifestURL = pluginDir.appendingPathComponent("plugin.json")
+        let zhData = try Data(contentsOf: manifestURL)
+        let zhJSON = try #require(JSONSerialization.jsonObject(with: zhData) as? [String: Any])
+        #expect(zhJSON["suggestedPrompts"] as? [String] == AntigravityIntegration.suggestedPrompts(in: .zhHans))
+
+        try installer.refreshLocalizedMetadataIfInstalled(language: .en)
+        let enData = try Data(contentsOf: manifestURL)
+        let enJSON = try #require(JSONSerialization.jsonObject(with: enData) as? [String: Any])
+        #expect(enJSON["suggestedPrompts"] as? [String] == AntigravityIntegration.suggestedPrompts(in: .en))
+
+        try installer.refreshLocalizedMetadataIfInstalled(language: .zhHans)
+        let revertedData = try Data(contentsOf: manifestURL)
+        let revertedJSON = try #require(JSONSerialization.jsonObject(with: revertedData) as? [String: Any])
+        #expect(revertedJSON["suggestedPrompts"] as? [String] == AntigravityIntegration.suggestedPrompts(in: .zhHans))
     }
 }

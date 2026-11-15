@@ -58,12 +58,7 @@ async function requestOriginPermission(normalizedUrl) {
 }
 
 function detectBrowserLanguage() {
-  return (
-    (typeof chrome !== "undefined" && chrome.i18n && typeof chrome.i18n.getUILanguage === "function"
-      ? chrome.i18n.getUILanguage()
-      : undefined) ??
-    (globalThis.navigator && typeof navigator.language === "string" ? navigator.language : undefined)
-  );
+  return globalThis.CodingRewindI18n.detectBrowserLanguage();
 }
 
 function normalizeUiLanguagePreference(value) {

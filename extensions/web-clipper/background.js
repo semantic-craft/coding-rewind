@@ -10,6 +10,8 @@ const OUTBOX_ALARM_NAME = "rewind-outbox-flush";
 const i18n = globalThis.CodingRewindI18n;
 
 let serialQueue = Promise.resolve();
+let menuSetupChain = Promise.resolve();
+let menuSetupInFlight = 0;
 let cachedUiLanguage = "auto";
 
 function runSerialized(task) {
@@ -18,12 +20,22 @@ function runSerialized(task) {
   return next;
 }
 
+function enqueueMenuSetup(task) {
+  menuSetupInFlight += 1;
+  const wrapped = async () => {
+    try {
+      return await task();
+    } finally {
+      menuSetupInFlight -= 1;
+    }
+  };
+  const next = menuSetupChain.then(wrapped, wrapped);
+  menuSetupChain = next.catch(() => {});
+  return next;
+}
+
 function resolveExtensionLocale(preferredLanguage = cachedUiLanguage) {
-  const browserLanguage =
-    typeof chrome !== "undefined" && chrome.i18n && typeof chrome.i18n.getUILanguage === "function"
-      ? chrome.i18n.getUILanguage()
-      : undefined;
-  return i18n.resolveLocale(preferredLanguage, browserLanguage);
+  return i18n.resolveLocale(preferredLanguage, i18n.detectBrowserLanguage());
 }
 
 const chromeOutboxStorage = {
@@ -48,24 +60,39 @@ async function getMemosSettings() {
   };
 }
 
-async function setupMenusAndAlarms() {
-  try {
-    const data = await chrome.storage?.local?.get?.(["uiLanguage"]);
-    if (typeof data?.uiLanguage === "string") {
-      cachedUiLanguage = data.uiLanguage;
-    }
-  } catch {}
-  const locale = resolveExtensionLocale(cachedUiLanguage);
-  chrome.contextMenus?.removeAll?.(() => {
-    chrome.contextMenus?.create?.({
-      id: CONTEXT_MENU_ID,
-      title: i18n.t(locale, "contextMenuSaveSelection"),
-      contexts: ["selection"]
+function setupMenusAndAlarms() {
+  return enqueueMenuSetup(async () => {
+    try {
+      const data = await chrome.storage?.local?.get?.(["uiLanguage"]);
+      if (typeof data?.uiLanguage === "string") {
+        cachedUiLanguage = data.uiLanguage;
+      }
+    } catch {}
+    await new Promise((resolve) => {
+      if (typeof chrome.contextMenus?.removeAll !== "function") {
+        resolve();
+        return;
+      }
+      chrome.contextMenus.removeAll(() => {
+        void chrome.runtime?.lastError;
+        const locale = resolveExtensionLocale(cachedUiLanguage);
+        chrome.contextMenus?.create?.(
+          {
+            id: CONTEXT_MENU_ID,
+            title: i18n.t(locale, "contextMenuSaveSelection"),
+            contexts: ["selection"]
+          },
+          () => {
+            void chrome.runtime?.lastError;
+          }
+        );
+        resolve();
+      });
     });
+    if (chrome.alarms) {
+      chrome.alarms.create(OUTBOX_ALARM_NAME, { periodInMinutes: 5 });
+    }
   });
-  if (chrome.alarms) {
-    chrome.alarms.create(OUTBOX_ALARM_NAME, { periodInMinutes: 5 });
-  }
 }
 
 async function ensureContentScriptAndExtract(tabId) {
@@ -164,14 +191,23 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
     if (area === "local" && changes.uiLanguage) {
       cachedUiLanguage =
         typeof changes.uiLanguage.newValue === "string" ? changes.uiLanguage.newValue : "auto";
-      const locale = resolveExtensionLocale(cachedUiLanguage);
-      chrome.contextMenus?.update?.(
-        CONTEXT_MENU_ID,
-        { title: i18n.t(locale, "contextMenuSaveSelection") },
-        () => {
-          void chrome.runtime?.lastError;
-        }
-      );
+      const applyMenuTitleUpdate = () => {
+        const locale = resolveExtensionLocale(cachedUiLanguage);
+        chrome.contextMenus?.update?.(
+          CONTEXT_MENU_ID,
+          { title: i18n.t(locale, "contextMenuSaveSelection") },
+          () => {
+            void chrome.runtime?.lastError;
+          }
+        );
+      };
+      if (menuSetupInFlight > 0) {
+        void enqueueMenuSetup(async () => {
+          applyMenuTitleUpdate();
+        });
+      } else {
+        applyMenuTitleUpdate();
+      }
     }
   });
 

@@ -5,192 +5,6 @@ import CodingRewindCore
 import Darwin
 import Foundation
 import Observation
-import Security
-
-public struct StagedUpdate: Equatable, Sendable {
-    public let candidate: GitHubReleaseCandidate
-    public let stagingDirectoryURL: URL
-    public let stagedAppURL: URL
-
-    public init(candidate: GitHubReleaseCandidate, stagingDirectoryURL: URL, stagedAppURL: URL) {
-        self.candidate = candidate
-        self.stagingDirectoryURL = stagingDirectoryURL
-        self.stagedAppURL = stagedAppURL
-    }
-}
-
-public enum ManualUpdateReason: Equatable, Sendable {
-    case missingChecksum
-    case signatureDowngradeBlocked
-    case bundleIdentifierMismatch
-    case installLocationNotWritable
-    case nonAppBundleInstall
-}
-
-public struct InspectedCodeSignature: Equatable, Sendable {
-    public let authority: BundleSignatureAuthority
-    public let bundleIdentifier: String?
-
-    public init(authority: BundleSignatureAuthority, bundleIdentifier: String?) {
-        self.authority = authority
-        self.bundleIdentifier = bundleIdentifier
-    }
-}
-
-public enum CodeSignatureInspectionError: Error, Equatable, Sendable {
-    case invalidOrTamperedSignature(OSStatus)
-    case bundleIdentifierMismatch(plist: String, signed: String)
-}
-
-public protocol ReleaseTransport: Sendable {
-    func fetchLatestReleaseJSON() async throws -> Data
-    func fetchText(from url: URL) async throws -> String
-    func downloadArchive(from url: URL, to destinationURL: URL) async throws
-}
-
-public struct URLSessionReleaseTransport: ReleaseTransport {
-    public static let defaultLatestReleaseURL = URL(
-        string: "https://api.github.com/repos/semantic-craft/coding-rewind/releases/latest"
-    )!
-
-    private let latestReleaseURL: URL
-    private let session: URLSession
-
-    public init(
-        latestReleaseURL: URL = defaultLatestReleaseURL,
-        session: URLSession = .shared
-    ) {
-        self.latestReleaseURL = latestReleaseURL
-        self.session = session
-    }
-
-    public func fetchLatestReleaseJSON() async throws -> Data {
-        var request = URLRequest(url: latestReleaseURL)
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
-        request.setValue("CodingRewind-macOS", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw RewindError.httpError(
-                statusCode: http.statusCode,
-                body: String(decoding: data.prefix(200), as: UTF8.self)
-            )
-        }
-        return data
-    }
-
-    public func fetchText(from url: URL) async throws -> String {
-        var request = URLRequest(url: url)
-        request.setValue("CodingRewind-macOS", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            throw RewindError.httpError(
-                statusCode: http.statusCode,
-                body: String(decoding: data.prefix(200), as: UTF8.self)
-            )
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    public func downloadArchive(from url: URL, to destinationURL: URL) async throws {
-        var request = URLRequest(url: url)
-        request.setValue("CodingRewind-macOS", forHTTPHeaderField: "User-Agent")
-        let (downloadedURL, response) = try await session.download(for: request)
-        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
-            try? FileManager.default.removeItem(at: downloadedURL)
-            throw RewindError.httpError(statusCode: http.statusCode, body: "archive download failed")
-        }
-        let fm = FileManager.default
-        try fm.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: destinationURL.path) {
-            try fm.removeItem(at: destinationURL)
-        }
-        try fm.moveItem(at: downloadedURL, to: destinationURL)
-        _ = chmod(destinationURL.path, 0o600)
-    }
-}
-
-public protocol CodeSignatureInspecting: Sendable {
-    func inspect(bundleURL: URL) throws -> InspectedCodeSignature
-}
-
-public struct SecStaticCodeSignatureInspector: CodeSignatureInspecting {
-    public init() {}
-
-    public func inspect(bundleURL: URL) throws -> InspectedCodeSignature {
-        let plistBundleID = Self.readPlistBundleIdentifier(at: bundleURL)
-        var staticCode: SecStaticCode?
-        let createStatus = SecStaticCodeCreateWithPath(bundleURL as CFURL, [], &staticCode)
-        guard createStatus == errSecSuccess, let code = staticCode else {
-            return InspectedCodeSignature(authority: .unsigned, bundleIdentifier: plistBundleID)
-        }
-
-        let checkFlags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
-        let validStatus = SecStaticCodeCheckValidityWithErrors(code, checkFlags, nil, nil)
-        if validStatus == errSecCSUnsigned {
-            return InspectedCodeSignature(authority: .unsigned, bundleIdentifier: plistBundleID)
-        }
-        guard validStatus == errSecSuccess else {
-            throw CodeSignatureInspectionError.invalidOrTamperedSignature(validStatus)
-        }
-
-        var infoRef: CFDictionary?
-        let infoStatus = SecCodeCopySigningInformation(
-            code,
-            SecCSFlags(rawValue: kSecCSSigningInformation),
-            &infoRef
-        )
-        guard infoStatus == errSecSuccess, let info = infoRef as? [String: Any] else {
-            throw CodeSignatureInspectionError.invalidOrTamperedSignature(infoStatus)
-        }
-
-        let signedID = info[kSecCodeInfoIdentifier as String] as? String
-        if let plistBundleID, let signedID, plistBundleID != signedID {
-            throw CodeSignatureInspectionError.bundleIdentifierMismatch(plist: plistBundleID, signed: signedID)
-        }
-
-        let flags: UInt32
-        if let rawFlags = info[kSecCodeInfoFlags as String] as? UInt32 {
-            flags = rawFlags
-        } else if let rawInt = info[kSecCodeInfoFlags as String] as? Int {
-            flags = UInt32(truncatingIfNeeded: rawInt)
-        } else {
-            flags = 0
-        }
-
-        if (flags & SecCodeSignatureFlags.adhoc.rawValue) != 0 {
-            return InspectedCodeSignature(authority: .adhoc, bundleIdentifier: plistBundleID ?? signedID)
-        }
-
-        let teamID = (info[kSecCodeInfoTeamIdentifier as String] as? String) ?? ""
-        let certificates = (info[kSecCodeInfoCertificates as String] as? [SecCertificate]) ?? []
-        let leafSummary = certificates.first.flatMap { SecCertificateCopySubjectSummary($0) as String? } ?? ""
-
-        let authority: BundleSignatureAuthority
-        if leafSummary.hasPrefix("Developer ID Application:") {
-            authority = .developerID(teamID: teamID)
-        } else if leafSummary.hasPrefix("Apple Development:") || leafSummary.hasPrefix("Mac Developer:") {
-            authority = .appleDevelopment(teamID: teamID)
-        } else if !teamID.isEmpty {
-            authority = .appleDevelopment(teamID: teamID)
-        } else {
-            authority = .unsigned
-        }
-
-        return InspectedCodeSignature(authority: authority, bundleIdentifier: plistBundleID ?? signedID)
-    }
-
-    private static func readPlistBundleIdentifier(at bundleURL: URL) -> String? {
-        let infoURL = bundleURL.appendingPathComponent("Contents/Info.plist", isDirectory: false)
-        guard let data = try? Data(contentsOf: infoURL),
-              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let id = plist["CFBundleIdentifier"] as? String,
-              !id.isEmpty else {
-            return nil
-        }
-        return id
-    }
-}
 
 @MainActor
 @Observable
@@ -208,37 +22,17 @@ public final class AppUpdater {
         case failed(String)
     }
 
-    private enum FailureNotice {
+    enum FailureNotice: Equatable, Sendable {
         case sha256Mismatch
         case missingAppInArchive
         case tamperedSignature
-        case generic(String)
+        case httpStatus(Int, String)
+        case parse(UpdateParseError)
+        case rewind(RewindError)
+        case other(String)
 
         func message(in language: AppLanguage) -> String {
-            switch language {
-            case .zhHans:
-                switch self {
-                case .sha256Mismatch:
-                    return "安装包 SHA-256 校验不匹配，已拒绝安装。"
-                case .missingAppInArchive:
-                    return "更新压缩包中未找到有效的应用包。"
-                case .tamperedSignature:
-                    return "更新包代码签名校验失败，已拒绝安装。"
-                case .generic(let detail):
-                    return "检查更新失败：\(detail)"
-                }
-            case .en:
-                switch self {
-                case .sha256Mismatch:
-                    return "Archive SHA-256 checksum mismatch; update was rejected."
-                case .missingAppInArchive:
-                    return "No valid application bundle was found in the update archive."
-                case .tamperedSignature:
-                    return "Code signature verification failed; update was rejected."
-                case .generic(let detail):
-                    return "Update check failed: \(detail)"
-                }
-            }
+            AppStrings.updaterFailureMessage(self, in: language)
         }
     }
 
@@ -246,6 +40,7 @@ public final class AppUpdater {
     public static let lastCheckedTimestampDefaultsKey = "lastUpdateCheckTimestamp"
     public static let backgroundCheckIntervalSeconds: TimeInterval = 12 * 3600
     private nonisolated static let lsregisterPath = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    private nonisolated static let swapDirectoryPrefix = ".CodingRewind-swap-"
 
     public let currentVersion: SemanticVersion
     public let installedBundleURL: URL
@@ -268,6 +63,7 @@ public final class AppUpdater {
     private let transport: any ReleaseTransport
     private let signatureInspector: any CodeSignatureInspecting
     private let isInstallLocationWritable: @Sendable (URL) -> Bool
+    private let sameVolumeCheck: @Sendable (URL, URL) -> Bool
     private let nowProvider: @Sendable () -> Date
     private let relaunchExecutablePath: String
     private let waitProcessIDProvider: @Sendable () -> pid_t
@@ -289,8 +85,9 @@ public final class AppUpdater {
         transport: any ReleaseTransport = URLSessionReleaseTransport(),
         signatureInspector: any CodeSignatureInspecting = SecStaticCodeSignatureInspector(),
         isInstallLocationWritable: @escaping @Sendable (URL) -> Bool = AppUpdater.defaultIsInstallLocationWritable,
+        sameVolumeCheck: @escaping @Sendable (URL, URL) -> Bool = AppUpdater.defaultSameFilesystemVolume,
         nowProvider: @escaping @Sendable () -> Date = { Date() },
-        relaunchExecutablePath: String = "/usr/bin/open",
+        relaunchExecutablePath: String = "",
         waitProcessIDProvider: @escaping @Sendable () -> pid_t = { getpid() },
         onOpenURL: @escaping @MainActor (URL) -> Void = { NSWorkspace.shared.open($0) },
         onTerminate: @escaping @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
@@ -306,6 +103,7 @@ public final class AppUpdater {
         self.transport = transport
         self.signatureInspector = signatureInspector
         self.isInstallLocationWritable = isInstallLocationWritable
+        self.sameVolumeCheck = sameVolumeCheck
         self.nowProvider = nowProvider
         self.relaunchExecutablePath = relaunchExecutablePath
         self.waitProcessIDProvider = waitProcessIDProvider
@@ -391,28 +189,40 @@ public final class AppUpdater {
     }
 
     public func pruneStaleStagingDirectories() {
-        let updatesDir = paths.updatesDirectoryURL
         let fm = FileManager.default
-        guard fm.fileExists(atPath: updatesDir.path),
-              let children = try? fm.contentsOfDirectory(at: updatesDir, includingPropertiesForKeys: nil) else {
-            return
+        let updatesDir = paths.updatesDirectoryURL
+        if fm.fileExists(atPath: updatesDir.path),
+           let children = try? fm.contentsOfDirectory(at: updatesDir, includingPropertiesForKeys: nil) {
+            let activeStagingURL: URL?
+            if case .readyToInstall(let staged) = state {
+                activeStagingURL = staged.stagingDirectoryURL.standardizedFileURL
+            } else {
+                activeStagingURL = nil
+            }
+            let installedExists = fm.fileExists(atPath: installedBundleURL.path)
+            for child in children {
+                let name = child.lastPathComponent
+                if name.hasPrefix("staging-") {
+                    if child.standardizedFileURL == activeStagingURL { continue }
+                    Self.unregisterAppsRecursively(under: child)
+                    try? fm.removeItem(at: child)
+                } else if installedExists && name.hasPrefix("rollback-") {
+                    Self.unregisterAppsRecursively(under: child)
+                    try? fm.removeItem(at: child)
+                }
+            }
         }
-        let activeStagingURL: URL?
-        if case .readyToInstall(let staged) = state {
-            activeStagingURL = staged.stagingDirectoryURL.standardizedFileURL
-        } else {
-            activeStagingURL = nil
-        }
-        let installedExists = fm.fileExists(atPath: installedBundleURL.path)
-        for child in children {
-            let name = child.lastPathComponent
-            if name.hasPrefix("staging-") {
-                if child.standardizedFileURL == activeStagingURL { continue }
-                Self.unregisterAppsRecursively(under: child)
-                try? fm.removeItem(at: child)
-            } else if installedExists && name.hasPrefix("rollback-") {
-                Self.unregisterAppsRecursively(under: child)
-                try? fm.removeItem(at: child)
+
+        let installParent = installedBundleURL.deletingLastPathComponent()
+        if Darwin.access(installParent.path, W_OK) == 0,
+           let siblings = try? fm.contentsOfDirectory(at: installParent, includingPropertiesForKeys: nil) {
+            for sibling in siblings where sibling.lastPathComponent.hasPrefix(Self.swapDirectoryPrefix) {
+                let rollbackApp = sibling.appendingPathComponent("rollback.app", isDirectory: true)
+                if !fm.fileExists(atPath: installedBundleURL.path), Self.isRealDirectory(at: rollbackApp) {
+                    try? fm.moveItem(at: rollbackApp, to: installedBundleURL)
+                }
+                Self.unregisterAppsRecursively(under: sibling)
+                try? fm.removeItem(at: sibling)
             }
         }
     }
@@ -424,8 +234,7 @@ public final class AppUpdater {
         defer { isCheckingOrInstalling = false }
 
         if case .readyToInstall(let previousStaged) = state {
-            Self.unregisterBundleFromLaunchServices(previousStaged.stagedAppURL)
-            try? FileManager.default.removeItem(at: previousStaged.stagingDirectoryURL)
+            Self.cleanupDirectory(previousStaged.stagingDirectoryURL)
         }
         activeFailureNotice = nil
         state = .checking
@@ -493,50 +302,29 @@ public final class AppUpdater {
                 executablePath: "/usr/bin/ditto",
                 arguments: ["-x", "-k", archiveURL.path, unpackedDir.path]
             )
-            guard unpackOK, let stagedAppURL = Self.findStagedAppBundle(in: unpackedDir) else {
-                Self.unregisterAppsRecursively(under: stagingDir)
-                try? FileManager.default.removeItem(at: stagingDir)
+            guard unpackOK,
+                  let stagedAppURL = Self.findStagedAppBundle(
+                      in: unpackedDir,
+                      expectedName: installedBundleURL.lastPathComponent
+                  ) else {
+                Self.cleanupDirectory(stagingDir)
                 setFailure(.missingAppInArchive)
                 return
             }
 
-            // Unregister immediately so LaunchServices never routes URL schemes or Login Items to staging.
             Self.unregisterBundleFromLaunchServices(stagedAppURL)
 
-            let installedSig: InspectedCodeSignature
-            let stagedSig: InspectedCodeSignature
-            do {
-                installedSig = try signatureInspector.inspect(bundleURL: installedBundleURL)
-                stagedSig = try signatureInspector.inspect(bundleURL: stagedAppURL)
-            } catch {
-                Self.unregisterBundleFromLaunchServices(stagedAppURL)
-                try? FileManager.default.removeItem(at: stagingDir)
-                setFailure(.tamperedSignature)
-                return
-            }
-
-            let expectedBundleID = installedSig.bundleIdentifier ?? installedBundleIdentifier
-            guard stagedSig.bundleIdentifier == expectedBundleID else {
-                Self.unregisterBundleFromLaunchServices(stagedAppURL)
-                try? FileManager.default.removeItem(at: stagingDir)
-                state = .manualDownloadRequired(candidate: candidate, reason: .bundleIdentifierMismatch)
-                return
-            }
-
-            guard BundleSignatureAuthority.canReplace(
-                installed: installedSig.authority,
-                with: stagedSig.authority,
-                expectedReleaseTeamID: expectedReleaseTeamID
+            guard let (_, expectedBundleID) = verifyBundleReplacement(
+                candidate: candidate,
+                candidateBundleURL: stagedAppURL,
+                cleanupURLs: [stagingDir]
             ) else {
-                Self.unregisterBundleFromLaunchServices(stagedAppURL)
-                try? FileManager.default.removeItem(at: stagingDir)
-                state = .manualDownloadRequired(candidate: candidate, reason: .signatureDowngradeBlocked)
                 return
             }
+            _ = expectedBundleID
 
             guard isInstallLocationWritable(installedBundleURL) else {
-                Self.unregisterBundleFromLaunchServices(stagedAppURL)
-                try? FileManager.default.removeItem(at: stagingDir)
+                Self.cleanupDirectory(stagingDir)
                 state = .manualDownloadRequired(candidate: candidate, reason: .installLocationNotWritable)
                 return
             }
@@ -550,11 +338,7 @@ public final class AppUpdater {
                 )
             )
         } catch {
-            if let rewindError = error as? RewindError {
-                setFailure(.generic(rewindError.localizedDescription(in: language)))
-            } else {
-                setFailure(.generic(error.localizedDescription))
-            }
+            setFailure(Self.failureNotice(from: error))
         }
     }
 
@@ -564,29 +348,128 @@ public final class AppUpdater {
             return false
         }
         guard installedBundleURL.pathExtension.lowercased() == "app" else {
-            Self.unregisterBundleFromLaunchServices(staged.stagedAppURL)
-            try? FileManager.default.removeItem(at: staged.stagingDirectoryURL)
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
             state = .manualDownloadRequired(candidate: staged.candidate, reason: .nonAppBundleInstall)
-            return false
-        }
-        guard isInstallLocationWritable(installedBundleURL) else {
-            Self.unregisterBundleFromLaunchServices(staged.stagedAppURL)
-            try? FileManager.default.removeItem(at: staged.stagingDirectoryURL)
-            state = .manualDownloadRequired(candidate: staged.candidate, reason: .installLocationNotWritable)
             return false
         }
 
         isCheckingOrInstalling = true
         defer { isCheckingOrInstalling = false }
+
+        guard Self.isRealDirectory(at: staged.stagedAppURL) else {
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
+            setFailure(.missingAppInArchive)
+            return false
+        }
+
+        guard let (installedSig, expectedBundleID) = verifyBundleReplacement(
+            candidate: staged.candidate,
+            candidateBundleURL: staged.stagedAppURL,
+            cleanupURLs: [staged.stagingDirectoryURL]
+        ) else {
+            return false
+        }
+
+        guard isInstallLocationWritable(installedBundleURL) else {
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
+            state = .manualDownloadRequired(candidate: staged.candidate, reason: .installLocationNotWritable)
+            return false
+        }
+
+        let installParentURL = installedBundleURL.deletingLastPathComponent()
+        let swapWorkDir = installParentURL.appendingPathComponent(
+            "\(Self.swapDirectoryPrefix)\(UUID().uuidString)",
+            isDirectory: true
+        )
+        guard mkdir(swapWorkDir.path, 0o700) == 0 else {
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
+            state = .manualDownloadRequired(candidate: staged.candidate, reason: .installLocationNotWritable)
+            return false
+        }
+        _ = chmod(swapWorkDir.path, 0o700)
+
+        guard sameVolumeCheck(swapWorkDir, installParentURL) else {
+            Self.cleanupDirectory(swapWorkDir)
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
+            state = .manualDownloadRequired(candidate: staged.candidate, reason: .installLocationNotWritable)
+            return false
+        }
+
+        let sameVolumeStagedApp = swapWorkDir.appendingPathComponent("staged.app", isDirectory: true)
+        let movedOnSameVolume = sameVolumeCheck(staged.stagedAppURL, swapWorkDir)
+        if movedOnSameVolume {
+            do {
+                try FileManager.default.moveItem(at: staged.stagedAppURL, to: sameVolumeStagedApp)
+            } catch {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                state = .manualDownloadRequired(candidate: staged.candidate, reason: .installLocationNotWritable)
+                return false
+            }
+            Self.unregisterBundleFromLaunchServices(sameVolumeStagedApp)
+        } else {
+            let copied = await Self.runProcess(
+                executablePath: "/usr/bin/ditto",
+                arguments: [staged.stagedAppURL.path, sameVolumeStagedApp.path]
+            )
+            guard copied, Self.isRealDirectory(at: sameVolumeStagedApp) else {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                state = .manualDownloadRequired(candidate: staged.candidate, reason: .installLocationNotWritable)
+                return false
+            }
+            Self.unregisterBundleFromLaunchServices(sameVolumeStagedApp)
+
+            let copiedSig: InspectedCodeSignature
+            do {
+                copiedSig = try signatureInspector.inspect(bundleURL: sameVolumeStagedApp)
+            } catch CodeSignatureInspectionError.bundleIdentifierMismatch {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                state = .manualDownloadRequired(candidate: staged.candidate, reason: .bundleIdentifierMismatch)
+                return false
+            } catch {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                setFailure(.tamperedSignature)
+                return false
+            }
+            guard copiedSig.bundleIdentifier == expectedBundleID else {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                state = .manualDownloadRequired(candidate: staged.candidate, reason: .bundleIdentifierMismatch)
+                return false
+            }
+            guard installedSig.authority.canReplace(
+                with: copiedSig.authority,
+                expectedReleaseTeamID: expectedReleaseTeamID
+            ) else {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                state = .manualDownloadRequired(candidate: staged.candidate, reason: .signatureDowngradeBlocked)
+                return false
+            }
+        }
+
+        let helpersDir = sameVolumeStagedApp.appendingPathComponent("Contents/Helpers", isDirectory: true)
+        guard Self.isAbsentOrRegularFile(at: helpersDir.appendingPathComponent("coding-rewind-sidecar")),
+              Self.isAbsentOrRegularFile(at: helpersDir.appendingPathComponent("memos-mcp-bridge.sh")) else {
+            Self.cleanupDirectory(swapWorkDir)
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
+            setFailure(.tamperedSignature)
+            return false
+        }
+
         state = .installing(staged.candidate.version)
 
         do {
-            try refreshInstalledHelpersIfPresent(from: staged.stagedAppURL)
             let updatesDir = try ensurePrivateUpdatesDirectory()
             let scriptURL = updatesDir.appendingPathComponent("apply-update.sh", isDirectory: false)
-            let rollbackURL = updatesDir.appendingPathComponent("rollback-CodingRewind.app", isDirectory: true)
             try AtomicFile.writeUTF8(Self.swapScriptContents, to: scriptURL, permissions: 0o700)
             _ = chmod(scriptURL.path, 0o700)
+
+            let destSidecar = AntigravityIntegration.stableSidecarBinaryURL(in: paths.dataDirectoryURL)
+            let destBridge = AntigravityIntegration.stableMCPBridgeURL(in: paths.dataDirectoryURL)
 
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -594,9 +477,10 @@ public final class AppUpdater {
                 scriptURL.path,
                 String(waitProcessIDProvider()),
                 installedBundleURL.path,
-                staged.stagedAppURL.path,
-                rollbackURL.path,
+                swapWorkDir.path,
                 staged.stagingDirectoryURL.path,
+                destSidecar.path,
+                destBridge.path,
                 relaunchExecutablePath
             ]
             process.standardInput = FileHandle.nullDevice
@@ -610,28 +494,57 @@ public final class AppUpdater {
             }
             return true
         } catch {
-            setFailure(.generic(error.localizedDescription))
+            Self.cleanupDirectory(swapWorkDir)
+            Self.cleanupDirectory(staged.stagingDirectoryURL)
+            setFailure(Self.failureNotice(from: error))
             return false
         }
     }
 
-    private func refreshInstalledHelpersIfPresent(from stagedAppURL: URL) throws {
-        let fm = FileManager.default
-        let helpersDir = stagedAppURL.appendingPathComponent("Contents/Helpers", isDirectory: true)
-
-        let destSidecar = AntigravityIntegration.stableSidecarBinaryURL(in: paths.dataDirectoryURL)
-        let srcSidecar = helpersDir.appendingPathComponent("coding-rewind-sidecar", isDirectory: false)
-        if fm.fileExists(atPath: destSidecar.path), fm.isExecutableFile(atPath: srcSidecar.path) {
-            try AtomicFile.writeData(Data(contentsOf: srcSidecar), to: destSidecar, permissions: 0o755)
-            _ = chmod(destSidecar.path, 0o755)
+    private func verifyBundleReplacement(
+        candidate: GitHubReleaseCandidate,
+        candidateBundleURL: URL,
+        cleanupURLs: [URL]
+    ) -> (installed: InspectedCodeSignature, expectedBundleID: String)? {
+        let installedSig: InspectedCodeSignature
+        do {
+            installedSig = try signatureInspector.inspect(bundleURL: installedBundleURL)
+        } catch {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            setFailure(.tamperedSignature)
+            return nil
         }
 
-        let destBridge = AntigravityIntegration.stableMCPBridgeURL(in: paths.dataDirectoryURL)
-        let srcBridge = helpersDir.appendingPathComponent("memos-mcp-bridge.sh", isDirectory: false)
-        if fm.fileExists(atPath: destBridge.path), fm.fileExists(atPath: srcBridge.path) {
-            try AtomicFile.writeData(Data(contentsOf: srcBridge), to: destBridge, permissions: 0o755)
-            _ = chmod(destBridge.path, 0o755)
+        let candidateSig: InspectedCodeSignature
+        do {
+            candidateSig = try signatureInspector.inspect(bundleURL: candidateBundleURL)
+        } catch CodeSignatureInspectionError.bundleIdentifierMismatch {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            state = .manualDownloadRequired(candidate: candidate, reason: .bundleIdentifierMismatch)
+            return nil
+        } catch {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            setFailure(.tamperedSignature)
+            return nil
         }
+
+        let expectedBundleID = installedSig.bundleIdentifier ?? installedBundleIdentifier
+        guard candidateSig.bundleIdentifier == expectedBundleID else {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            state = .manualDownloadRequired(candidate: candidate, reason: .bundleIdentifierMismatch)
+            return nil
+        }
+
+        guard installedSig.authority.canReplace(
+            with: candidateSig.authority,
+            expectedReleaseTeamID: expectedReleaseTeamID
+        ) else {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            state = .manualDownloadRequired(candidate: candidate, reason: .signatureDowngradeBlocked)
+            return nil
+        }
+
+        return (installedSig, expectedBundleID)
     }
 
     private func ensurePrivateUpdatesDirectory() throws -> URL {
@@ -648,6 +561,22 @@ public final class AppUpdater {
         state = .failed(notice.message(in: language))
     }
 
+    private static func failureNotice(from error: any Error) -> FailureNotice {
+        if let transportError = error as? ReleaseTransportError {
+            switch transportError {
+            case .httpStatus(let code, let detail):
+                return .httpStatus(code, detail)
+            }
+        }
+        if let parseError = error as? UpdateParseError {
+            return .parse(parseError)
+        }
+        if let rewindError = error as? RewindError {
+            return .rewind(rewindError)
+        }
+        return .other(error.localizedDescription)
+    }
+
     public static nonisolated func defaultIsInstallLocationWritable(_ installedAppURL: URL) -> Bool {
         let parentPath = installedAppURL.deletingLastPathComponent().path
         guard Darwin.access(parentPath, W_OK) == 0 else { return false }
@@ -657,22 +586,51 @@ public final class AppUpdater {
         return true
     }
 
-    private static nonisolated func findStagedAppBundle(in unpackedDir: URL) -> URL? {
+    public static nonisolated func defaultSameFilesystemVolume(_ lhs: URL, _ rhs: URL) -> Bool {
+        var leftStat = statfs()
+        var rightStat = statfs()
+        guard statfs(lhs.path, &leftStat) == 0,
+              statfs(rhs.path, &rightStat) == 0 else {
+            return false
+        }
+        return leftStat.f_fsid.val == rightStat.f_fsid.val
+    }
+
+    static nonisolated func findStagedAppBundle(
+        in unpackedDir: URL,
+        expectedName: String = "CodingRewind.app"
+    ) -> URL? {
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: unpackedDir,
-            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+            includingPropertiesForKeys: nil
         ) else {
             return nil
         }
-        for entry in entries where entry.pathExtension.lowercased() == "app" {
-            var st = stat()
-            guard lstat(entry.path, &st) == 0,
-                  (st.st_mode & S_IFMT) == S_IFDIR else {
-                continue
-            }
-            return entry.standardizedFileURL
+        let sortedEntries = entries.sorted { $0.lastPathComponent < $1.lastPathComponent }
+        let validApps = sortedEntries.filter { entry in
+            entry.pathExtension.lowercased() == "app" && isRealDirectory(at: entry)
         }
-        return nil
+        let chosen = validApps.first { $0.lastPathComponent == expectedName } ?? validApps.first
+        return chosen?.standardizedFileURL
+    }
+
+    private static nonisolated func isRealDirectory(at url: URL) -> Bool {
+        var st = stat()
+        guard lstat(url.path, &st) == 0 else { return false }
+        return (st.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    private static nonisolated func isAbsentOrRegularFile(at url: URL) -> Bool {
+        var st = stat()
+        if lstat(url.path, &st) != 0 {
+            return errno == ENOENT
+        }
+        return (st.st_mode & S_IFMT) == S_IFREG
+    }
+
+    private static nonisolated func cleanupDirectory(_ directoryURL: URL) {
+        unregisterAppsRecursively(under: directoryURL)
+        try? FileManager.default.removeItem(at: directoryURL)
     }
 
     private static nonisolated func unregisterAppsRecursively(under directoryURL: URL) {
@@ -735,39 +693,81 @@ public final class AppUpdater {
 
     private static let swapScriptContents = """
     #!/bin/sh
-    set -eu
+    trap '' HUP
+    set -u
     WAIT_PID="$1"
     INSTALLED_APP="$2"
-    STAGED_APP="$3"
-    ROLLBACK_APP="$4"
-    STAGING_DIR="$5"
-    RELAUNCH_CMD="$6"
+    SWAP_WORK_DIR="$3"
+    STAGING_DIR="$4"
+    DEST_SIDECAR="$5"
+    DEST_BRIDGE="$6"
+    RELAUNCH_OVERRIDE="$7"
+
+    STAGED_APP="$SWAP_WORK_DIR/staged.app"
+    ROLLBACK_APP="$SWAP_WORK_DIR/rollback.app"
+
+    relaunch_installed_app() {
+      app_exec="$INSTALLED_APP/Contents/MacOS/CodingRewindApp"
+      if [ -n "$RELAUNCH_OVERRIDE" ]; then
+        "$RELAUNCH_OVERRIDE" "$app_exec" --restarted-after-update >/dev/null 2>&1 || true
+      elif [ -x "$app_exec" ]; then
+        "$app_exec" --restarted-after-update </dev/null >/dev/null 2>&1 &
+      fi
+    }
+
+    refresh_helper() {
+      src_file="$1"
+      dest_file="$2"
+      if [ -n "$dest_file" ] && [ -e "$dest_file" ] && [ -f "$src_file" ] && [ ! -L "$src_file" ]; then
+        tmp_file="${dest_file}.tmp.$$"
+        if /bin/cp "$src_file" "$tmp_file" && /bin/chmod 755 "$tmp_file"; then
+          /bin/mv -f "$tmp_file" "$dest_file" || /bin/rm -f "$tmp_file"
+        else
+          /bin/rm -f "$tmp_file"
+        fi
+      fi
+    }
 
     elapsed=0
     while kill -0 "$WAIT_PID" 2>/dev/null; do
       if [ "$elapsed" -ge 150 ]; then
+        /bin/rm -rf "$SWAP_WORK_DIR" "$STAGING_DIR"
         exit 1
       fi
       /bin/sleep 0.1
       elapsed=$((elapsed + 1))
     done
 
-    /bin/rm -rf "$ROLLBACK_APP"
+    move_ok=1
     if [ -e "$INSTALLED_APP" ]; then
-      /bin/mv "$INSTALLED_APP" "$ROLLBACK_APP"
+      if ! /bin/mv "$INSTALLED_APP" "$ROLLBACK_APP"; then
+        move_ok=0
+      fi
     fi
 
-    if /bin/mv "$STAGED_APP" "$INSTALLED_APP"; then
-      /usr/bin/xattr -dr com.apple.quarantine "$INSTALLED_APP" 2>/dev/null || true
-      /bin/rm -rf "$ROLLBACK_APP" "$STAGING_DIR"
-      if [ -n "$RELAUNCH_CMD" ]; then
-        "$RELAUNCH_CMD" "$INSTALLED_APP" --args --restarted-after-update >/dev/null 2>&1 || true
+    if [ "$move_ok" -eq 1 ]; then
+      if ! /bin/mv "$STAGED_APP" "$INSTALLED_APP"; then
+        move_ok=0
       fi
-    else
-      if [ -e "$ROLLBACK_APP" ] && [ ! -e "$INSTALLED_APP" ]; then
-        /bin/mv "$ROLLBACK_APP" "$INSTALLED_APP" || true
-      fi
-      exit 1
     fi
+
+    if [ "$move_ok" -eq 1 ]; then
+      /usr/bin/xattr -dr com.apple.quarantine "$INSTALLED_APP" 2>/dev/null || true
+      refresh_helper "$INSTALLED_APP/Contents/Helpers/coding-rewind-sidecar" "$DEST_SIDECAR"
+      refresh_helper "$INSTALLED_APP/Contents/Helpers/memos-mcp-bridge.sh" "$DEST_BRIDGE"
+      /bin/rm -rf "$SWAP_WORK_DIR" "$STAGING_DIR"
+      relaunch_installed_app
+      exit 0
+    fi
+
+    if [ -e "$ROLLBACK_APP" ]; then
+      /bin/rm -rf "$INSTALLED_APP"
+      /bin/mv "$ROLLBACK_APP" "$INSTALLED_APP" || true
+    fi
+    if [ -e "$INSTALLED_APP" ]; then
+      /bin/rm -rf "$SWAP_WORK_DIR" "$STAGING_DIR"
+      relaunch_installed_app
+    fi
+    exit 1
     """
 }

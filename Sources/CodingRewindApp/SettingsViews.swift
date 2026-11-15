@@ -26,12 +26,37 @@ public final class AccessibilityPermissionState {
 @MainActor
 @Observable
 public final class SettingsConnectionDraft {
+    private enum SaveOutcome {
+        case savedVerified
+        case rewindError(RewindError)
+        case otherError(String)
+
+        var isError: Bool {
+            switch self {
+            case .savedVerified:
+                return false
+            case .rewindError, .otherError:
+                return true
+            }
+        }
+
+        func message(in language: AppLanguage) -> String {
+            switch self {
+            case .savedVerified:
+                return AppStrings.connectionSavedVerifyHint(in: language)
+            case .rewindError(let rewindError):
+                return rewindError.localizedDescription(in: language)
+            case .otherError(let detail):
+                return detail
+            }
+        }
+    }
+
     public var urlDraft: String
     public var tokenDraft: String = ""
     public private(set) var saveMessage: String?
     public private(set) var saveFailed = false
-    private var didSaveVerifyNotice = false
-    private var lastRewindError: RewindError?
+    private var lastOutcome: SaveOutcome?
 
     public init(memosURL: String) {
         self.urlDraft = memosURL
@@ -40,41 +65,35 @@ public final class SettingsConnectionDraft {
     public func reset(memosURL: String) {
         urlDraft = memosURL
         tokenDraft = ""
+        lastOutcome = nil
         saveMessage = nil
         saveFailed = false
-        didSaveVerifyNotice = false
-        lastRewindError = nil
     }
 
     public func save(using coordinator: AppCoordinator) {
         let lang = coordinator.language
+        let outcome: SaveOutcome
         do {
             try coordinator.saveCredentials(memosURL: urlDraft, token: tokenDraft)
             urlDraft = coordinator.connectionSettings.memosURL
             tokenDraft = ""
-            saveFailed = false
-            didSaveVerifyNotice = true
-            lastRewindError = nil
-            saveMessage = AppStrings.connectionSavedVerifyHint(in: lang)
+            outcome = .savedVerified
         } catch {
-            saveFailed = true
-            didSaveVerifyNotice = false
             if let rewindError = error as? RewindError {
-                lastRewindError = rewindError
-                saveMessage = rewindError.localizedDescription(in: lang)
+                outcome = .rewindError(rewindError)
             } else {
-                lastRewindError = nil
-                saveMessage = error.localizedDescription
+                outcome = .otherError(error.localizedDescription)
             }
         }
+        lastOutcome = outcome
+        saveFailed = outcome.isError
+        saveMessage = outcome.message(in: lang)
     }
 
     public func updateLanguage(_ language: AppLanguage) {
-        if didSaveVerifyNotice {
-            saveMessage = AppStrings.connectionSavedVerifyHint(in: language)
-        } else if let lastRewindError {
-            saveMessage = lastRewindError.localizedDescription(in: language)
-        }
+        guard let lastOutcome else { return }
+        saveFailed = lastOutcome.isError
+        saveMessage = lastOutcome.message(in: language)
     }
 }
 

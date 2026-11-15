@@ -213,7 +213,22 @@ extension AppShortcutsTests {
             bundleURL: URL(fileURLWithPath: "/Applications/CodingRewind.app"),
             language: .en
         )
-        #expect(qaIsolated.state == .disabled)
+        #expect(qaIsolated.state == .unavailable(.qaIsolated))
+
+        for relocatedPath in [
+            "/private/var/folders/xx/yy/T/AppTranslocation/ABCD/d/CodingRewind.app",
+            "/Volumes/CodingRewindInstaller/CodingRewind.app",
+            "/Users/tester/Projects/coding-rewind/.build/CodingRewind.app"
+        ] {
+            let relocated = LoginItemController.live(
+                environment: [:],
+                bundleURL: URL(fileURLWithPath: relocatedPath),
+                language: .en
+            )
+            #expect(relocated.state == .unavailable(.relocatedBundle))
+        }
+        #expect(AppStrings.launchAtLoginHelp(.unavailable(.relocatedBundle), in: .zhHans).contains("应用程序"))
+        #expect(AppStrings.launchAtLoginHelp(.unavailable(.relocatedBundle), in: .en).contains("Applications"))
     }
 
     @Test func updaterReportsUpToDateAndRejectsChecksumMismatchOrSignatureDowngradeWithoutLeakingStaging() async throws {
@@ -337,6 +352,38 @@ extension AppShortcutsTests {
                 Issue.record("Unexpected CodeSignatureInspectionError case: \(error)")
             }
         }
+
+        let mismatchedIDApp = root.appendingPathComponent("MismatchedID/CodingRewind.app", isDirectory: true)
+        defer { AppUpdater.unregisterBundleFromLaunchServices(mismatchedIDApp) }
+        try buildSignedDummyApp(at: mismatchedIDApp, version: "0.3.2", bundleID: AppBundleID.selfQAApp)
+        try runChecked(
+            "/usr/bin/codesign",
+            arguments: ["--force", "--sign", "-", "--identifier", "dev.other.signedid", mismatchedIDApp.path]
+        )
+        AppUpdater.unregisterBundleFromLaunchServices(mismatchedIDApp)
+        #expect(throws: CodeSignatureInspectionError.bundleIdentifierMismatch(
+            plist: AppBundleID.selfQAApp,
+            signed: "dev.other.signedid"
+        )) {
+            try inspector.inspect(bundleURL: mismatchedIDApp)
+        }
+
+        let symlinkApp = root.appendingPathComponent("Symlinked/CodingRewind.app", isDirectory: true)
+        defer { AppUpdater.unregisterBundleFromLaunchServices(symlinkApp) }
+        try buildSignedDummyApp(at: symlinkApp, version: "0.3.2", bundleID: AppBundleID.selfQAApp)
+        let outsideTarget = root.appendingPathComponent("outside.txt")
+        try Data("outside".utf8).write(to: outsideTarget)
+        let resourcesDir = symlinkApp.appendingPathComponent("Contents/Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resourcesDir, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: resourcesDir.appendingPathComponent("escape.txt"),
+            withDestinationURL: outsideTarget
+        )
+        do {
+            _ = try inspector.inspect(bundleURL: symlinkApp)
+            Issue.record("Expected symlink inside bundle to fail strict SecStaticCode validation")
+        } catch is CodeSignatureInspectionError {
+        }
     }
 
     @Test func updaterPerformsAtomicSwapRefreshesSidecarCapturesRelaunchArgsAndPrunesRollbacks() async throws {
@@ -433,13 +480,258 @@ extension AppShortcutsTests {
         #expect(refreshedSidecar.contains("sidecar-v0.3.3"))
 
         let recordedArgs = try String(contentsOf: relaunchArgsFile, encoding: .utf8)
-        #expect(recordedArgs == "\(installedURL.path)\n--args\n--restarted-after-update\n")
+        #expect(recordedArgs == "\(installedURL.path)/Contents/MacOS/CodingRewindApp\n--restarted-after-update\n")
         #expect(stagingDirectories(in: paths.updatesDirectoryURL).isEmpty)
 
         let staleRollback = paths.updatesDirectoryURL.appendingPathComponent("rollback-CodingRewind.app", isDirectory: true)
         try FileManager.default.createDirectory(at: staleRollback, withIntermediateDirectories: true)
         updater.pruneStaleStagingDirectories()
         #expect(!FileManager.default.fileExists(atPath: staleRollback.path))
+    }
+
+    @Test func updaterHardensStagedDiscoveryInstallTimeRecheckCrossVolumeCopyAndRollbackRelaunch() async throws {
+        let root = makeTestRoot()
+        let installedURL = root.appendingPathComponent("Installed/CodingRewind.app", isDirectory: true)
+        let newBuildURL = root.appendingPathComponent("NewBuild/CodingRewind.app", isDirectory: true)
+        defer {
+            _ = chmod(installedURL.deletingLastPathComponent().path, 0o755)
+            AppUpdater.unregisterBundleFromLaunchServices(installedURL)
+            AppUpdater.unregisterBundleFromLaunchServices(newBuildURL)
+            try? FileManager.default.removeItem(at: root)
+            Self.cleanUpdaterSuite()
+        }
+
+        let unpackedProbe = root.appendingPathComponent("UnpackedProbe", isDirectory: true)
+        let decoyReal = unpackedProbe.appendingPathComponent("AlphaHelper.app", isDirectory: true)
+        let expectedReal = unpackedProbe.appendingPathComponent("CodingRewind.app", isDirectory: true)
+        let symlinkBundle = unpackedProbe.appendingPathComponent("CodingRewindLink.app", isDirectory: false)
+        try FileManager.default.createDirectory(at: decoyReal, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: expectedReal, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: symlinkBundle, withDestinationURL: decoyReal)
+        #expect(AppUpdater.findStagedAppBundle(in: unpackedProbe, expectedName: "CodingRewind.app") == expectedReal.standardizedFileURL)
+        #expect(AppUpdater.findStagedAppBundle(in: unpackedProbe, expectedName: "CodingRewindLink.app") == decoyReal.standardizedFileURL)
+
+        try buildSignedDummyApp(at: installedURL, version: "0.3.2", bundleID: AppBundleID.selfQAApp)
+        try buildSignedDummyApp(at: newBuildURL, version: "0.3.3", bundleID: AppBundleID.selfQAApp, sidecarMarker: "sidecar-xvol")
+        let archiveURL = root.appendingPathComponent("Artifacts/CodingRewind-v0.3.3-macos-arm64.zip")
+        try zipAppBundle(at: newBuildURL, to: archiveURL)
+        let digest = try SHA256Digest.compute(fileAt: archiveURL)
+        let checksums = "\(digest.hexValue)  CodingRewind-v0.3.3-macos-arm64.zip\n"
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true)
+        )
+        let defaults = try #require(UserDefaults(suiteName: Self.updaterSuite))
+
+        var terminatedOnTamper = false
+        let tamperUpdater = AppUpdater(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 3, patch: 2),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfQAApp,
+            language: .en,
+            transport: MockReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.3.3"),
+                checksumsText: checksums,
+                archiveSourceURL: archiveURL
+            ),
+            signatureInspector: SecStaticCodeSignatureInspector(),
+            onTerminate: { terminatedOnTamper = true }
+        )
+        await tamperUpdater.checkForUpdates(userInitiated: true)
+        guard case .readyToInstall(let stagedForTamper) = tamperUpdater.state else {
+            Issue.record("Expected readyToInstall before tamper test, got \(tamperUpdater.state)")
+            return
+        }
+        let stagedBinary = stagedForTamper.stagedAppURL.appendingPathComponent("Contents/MacOS/CodingRewindApp")
+        var bytes = try Data(contentsOf: stagedBinary)
+        bytes[bytes.count / 2] ^= 0xFF
+        try bytes.write(to: stagedBinary)
+        let tamperInstalled = await tamperUpdater.installReadyUpdateAndRelaunch(waitForSwapCompletionInTests: true)
+        #expect(!tamperInstalled)
+        #expect(!terminatedOnTamper)
+        #expect(tamperUpdater.state == .failed("Code signature verification failed; update was rejected."))
+        #expect(!FileManager.default.fileExists(atPath: stagedForTamper.stagingDirectoryURL.path))
+
+        var terminatedOnReadOnly = false
+        let readOnlyUpdater = AppUpdater(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 3, patch: 2),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfQAApp,
+            transport: MockReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.3.3"),
+                checksumsText: checksums,
+                archiveSourceURL: archiveURL
+            ),
+            signatureInspector: SecStaticCodeSignatureInspector(),
+            onTerminate: { terminatedOnReadOnly = true }
+        )
+        await readOnlyUpdater.checkForUpdates(userInitiated: true)
+        _ = chmod(installedURL.deletingLastPathComponent().path, 0o555)
+        let readOnlyInstalled = await readOnlyUpdater.installReadyUpdateAndRelaunch(waitForSwapCompletionInTests: true)
+        _ = chmod(installedURL.deletingLastPathComponent().path, 0o755)
+        #expect(!readOnlyInstalled)
+        #expect(!terminatedOnReadOnly)
+        if case .manualDownloadRequired(_, let reason) = readOnlyUpdater.state {
+            #expect(reason == .installLocationNotWritable)
+        } else {
+            Issue.record("Expected manualDownloadRequired(.installLocationNotWritable), got \(readOnlyUpdater.state)")
+        }
+
+        let relaunchArgsFile = root.appendingPathComponent("xvol-relaunch.txt")
+        let fakeOpenScript = root.appendingPathComponent("xvol-open.sh")
+        try AtomicFile.writeUTF8(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(relaunchArgsFile.path)\"\n",
+            to: fakeOpenScript,
+            permissions: 0o755
+        )
+        let installedSidecarURL = AntigravityIntegration.stableSidecarBinaryURL(in: paths.dataDirectoryURL)
+        try AtomicFile.writeUTF8("#!/bin/sh\necho old\n", to: installedSidecarURL, permissions: 0o755)
+        let crossVolumeUpdater = AppUpdater(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 3, patch: 2),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfQAApp,
+            transport: MockReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.3.3"),
+                checksumsText: checksums,
+                archiveSourceURL: archiveURL
+            ),
+            signatureInspector: SecStaticCodeSignatureInspector(),
+            sameVolumeCheck: { lhs, rhs in
+                lhs.path.contains("/Installed") && rhs.path.contains("/Installed")
+            },
+            relaunchExecutablePath: fakeOpenScript.path,
+            waitProcessIDProvider: { 999_999 },
+            onTerminate: {}
+        )
+        await crossVolumeUpdater.checkForUpdates(userInitiated: true)
+        let xvolSwapped = await crossVolumeUpdater.installReadyUpdateAndRelaunch(waitForSwapCompletionInTests: true)
+        AppUpdater.unregisterBundleFromLaunchServices(installedURL)
+        #expect(xvolSwapped)
+        #expect(try String(contentsOf: installedSidecarURL, encoding: .utf8).contains("sidecar-xvol"))
+
+        let rescueSwapDir = installedURL.deletingLastPathComponent().appendingPathComponent(".CodingRewind-swap-stale", isDirectory: true)
+        try FileManager.default.createDirectory(at: rescueSwapDir, withIntermediateDirectories: true)
+        let rollbackURL = rescueSwapDir.appendingPathComponent("rollback.app", isDirectory: true)
+        try FileManager.default.moveItem(at: installedURL, to: rollbackURL)
+        crossVolumeUpdater.pruneStaleStagingDirectories()
+        #expect(FileManager.default.fileExists(atPath: installedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: rescueSwapDir.path))
+
+        let rollbackRelaunchFile = root.appendingPathComponent("rollback-relaunch.txt")
+        let rollbackOpenScript = root.appendingPathComponent("rollback-open.sh")
+        try AtomicFile.writeUTF8(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(rollbackRelaunchFile.path)\"\n",
+            to: rollbackOpenScript,
+            permissions: 0o755
+        )
+        let brokenSwapDir = installedURL.deletingLastPathComponent().appendingPathComponent(".CodingRewind-swap-broken", isDirectory: true)
+        try FileManager.default.createDirectory(at: brokenSwapDir, withIntermediateDirectories: true)
+        let swapScriptURL = paths.updatesDirectoryURL.appendingPathComponent("apply-update.sh")
+        let rollbackProc = Process()
+        rollbackProc.executableURL = URL(fileURLWithPath: "/bin/sh")
+        rollbackProc.arguments = [
+            swapScriptURL.path,
+            "999999",
+            installedURL.path,
+            brokenSwapDir.path,
+            paths.updatesDirectoryURL.appendingPathComponent("nonexistent-staging").path,
+            installedSidecarURL.path,
+            "",
+            rollbackOpenScript.path
+        ]
+        try rollbackProc.run()
+        rollbackProc.waitUntilExit()
+        #expect(rollbackProc.terminationStatus != 0)
+        #expect(FileManager.default.fileExists(atPath: installedURL.path))
+        #expect(!FileManager.default.fileExists(atPath: brokenSwapDir.path))
+        let rollbackRelaunchArgs = try String(contentsOf: rollbackRelaunchFile, encoding: .utf8)
+        #expect(rollbackRelaunchArgs == "\(installedURL.path)/Contents/MacOS/CodingRewindApp\n--restarted-after-update\n")
+    }
+
+    @Test func updaterErrorRelocalizationAvoidsMemosCopyAndSettingsConnectionDraftRelocalizesAllOutcomes() async throws {
+        let root = makeTestRoot()
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            Self.cleanUpdaterSuite()
+        }
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true)
+        )
+        let defaults = try #require(UserDefaults(suiteName: Self.updaterSuite))
+
+        struct FailingHTTPTransport: ReleaseTransport {
+            func fetchLatestReleaseJSON() async throws -> Data {
+                throw ReleaseTransportError.httpStatus(502, "Bad Gateway")
+            }
+            func fetchText(from url: URL) async throws -> String { "" }
+            func downloadArchive(from url: URL, to destinationURL: URL) async throws {}
+        }
+
+        let updater = AppUpdater(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 3, patch: 2),
+            installedBundleURL: root.appendingPathComponent("CodingRewind.app", isDirectory: true),
+            installedBundleIdentifier: AppBundleID.selfQAApp,
+            language: .zhHans,
+            transport: FailingHTTPTransport()
+        )
+        await updater.checkForUpdates(userInitiated: true)
+        if case .failed(let zhMsg) = updater.state {
+            #expect(zhMsg.contains("GitHub Releases"))
+            #expect(!zhMsg.contains("Memos"))
+        } else {
+            Issue.record("Expected failed state, got \(updater.state)")
+        }
+
+        updater.language = .en
+        if case .failed(let enMsg) = updater.state {
+            #expect(enMsg.contains("GitHub Releases"))
+            #expect(enMsg.contains("HTTP 502"))
+            #expect(!enMsg.contains("Memos"))
+        } else {
+            Issue.record("Expected failed state in English, got \(updater.state)")
+        }
+
+        struct NoopCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection {
+                throw RewindError.emptySelection
+            }
+        }
+        let qaEnv = [
+            StoragePaths.qaEnvironmentKey: "1",
+            StoragePaths.dataDirEnvironmentKey: paths.dataDirectoryURL.path,
+            StoragePaths.antigravityConfigEnvironmentKey: paths.antigravityConfigDirectoryURL.path
+        ]
+        let coord = try AppCoordinator(paths: paths, environment: qaEnv, capturer: NoopCapturer(), language: .zhHans)
+        let draft = SettingsConnectionDraft(memosURL: "not-a-valid-url")
+        draft.save(using: coord)
+        #expect(draft.saveFailed)
+        #expect(draft.saveMessage == RewindError.invalidMemosURL("not-a-valid-url").localizedDescription(in: .zhHans))
+        draft.updateLanguage(.en)
+        #expect(draft.saveFailed)
+        #expect(draft.saveMessage == RewindError.invalidMemosURL("not-a-valid-url").localizedDescription(in: .en))
+
+        draft.urlDraft = "https://memos.example.com"
+        draft.tokenDraft = ""
+        draft.save(using: coord)
+        #expect(!draft.saveFailed)
+        #expect(draft.saveMessage == AppStrings.connectionSavedVerifyHint(in: .zhHans))
+        draft.updateLanguage(.en)
+        #expect(!draft.saveFailed)
+        #expect(draft.saveMessage == AppStrings.connectionSavedVerifyHint(in: .en))
     }
 
     private func makeTestRoot() -> URL {
@@ -574,7 +866,7 @@ private struct StubSignatureInspector: CodeSignatureInspecting {
     let staged: InspectedCodeSignature
 
     func inspect(bundleURL: URL) throws -> InspectedCodeSignature {
-        if bundleURL.path.contains("/staging-") {
+        if bundleURL.path.contains("/staging-") || bundleURL.path.contains("/.CodingRewind-swap-") {
             return staged
         }
         return installed

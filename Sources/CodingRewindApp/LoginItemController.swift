@@ -54,6 +54,7 @@ public struct LaunchContext: Equatable, Sendable {
 public enum LoginItemUnavailableReason: Equatable, Sendable {
     case qaIsolated
     case unbundledExecutable
+    case relocatedBundle
 }
 
 public enum LoginItemState: Equatable, Sendable {
@@ -183,13 +184,22 @@ public final class LoginItemController {
     ) -> LoginItemController {
         if environment[StoragePaths.qaEnvironmentKey] == "1" {
             return LoginItemController(
-                backend: InMemoryLoginItemBackend(initialState: .disabled),
+                backend: InMemoryLoginItemBackend(initialState: .unavailable(.qaIsolated)),
                 language: language
             )
         }
-        if bundleURL.pathExtension.lowercased() != "app" {
+        if bundleURL.pathExtension != "app" {
             return LoginItemController(
                 backend: InMemoryLoginItemBackend(initialState: .unavailable(.unbundledExecutable)),
+                language: language
+            )
+        }
+        let standardizedPath = bundleURL.standardizedFileURL.path
+        if standardizedPath.contains("/AppTranslocation/")
+            || standardizedPath.hasPrefix("/Volumes/")
+            || standardizedPath.contains("/.build/") {
+            return LoginItemController(
+                backend: InMemoryLoginItemBackend(initialState: .unavailable(.relocatedBundle)),
                 language: language
             )
         }
