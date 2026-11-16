@@ -2,11 +2,11 @@
 
 本仓库是 **Coding-Rewind** 的产品规范与统一全栈实现，采用 [MIT License](LICENSE)。
 
-当前发布版本为 `v0.4.0`，同步更新 macOS 桌面应用与 Chrome 网页扩展，包含应用内自动更新、中英双语界面、全网划词暂存胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获快捷键以及单二进制 `coding-rewind`（CLI + 内嵌领域 MCP 服务）。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14。公开包不包含个人 Memos 地址、令牌或 1Password 配置。桌面端无须配置即可在本机暂存片段并开始对话，首次桌面捕获需授予辅助功能权限；如需跨设备同步、网页剪藏持久化与自动 AI 摘要，可在“云端同步”按需配置自托管 Memos 服务。
+当前发布版本为 `v0.5.0`，同步更新 macOS 桌面应用与 Chrome 网页扩展，包含应用内自动更新、中英双语界面、全网划词暂存胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获快捷键、浮窗片段归档与删除管理，以及单二进制 `coding-rewind`（CLI + 7 工具读写领域 MCP 服务与权限开关）。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14。公开包不包含个人 Memos 地址、令牌或 1Password 配置。桌面端无须配置即可在本机暂存片段并开始对话，首次桌面捕获需授予辅助功能权限；如需跨设备同步、网页剪藏持久化与自动 AI 摘要，可在“云端同步”按需配置自托管 Memos 服务。
 
 当前版本仍有 Antigravity 会话归属、Chrome 扩展生命周期、多卡接聊和引用成文的实机覆盖待完成，见 [issue #14](https://github.com/semantic-craft/coding-rewind/issues/14)。当前状态见 [开发进度](progress/index.html)。修复和后续验收遵循 [代码质量标准](docs/code-quality.md)。
 
-桌面应用版本为 0.4.0，build 7；Chrome 扩展显示版本为 0.4.0，内部版本为 0.4.0.0。扩展继续通过解压文件加载，未发布到 Chrome 应用商店。升级时解压新版扩展包，用其中的文件覆盖原扩展目录，在 `chrome://extensions/` 中点击“重新加载”，再刷新已打开的聊天网页。沿用原目录可保留扩展 ID 与已保存的配置；不要移除后重新添加。
+桌面应用版本为 0.5.0，build 8；Chrome 扩展显示版本为 0.5.0，内部版本为 0.5.0.0。扩展继续通过解压文件加载，未发布到 Chrome 应用商店。升级时解压新版扩展包，用其中的文件覆盖原扩展目录，在 `chrome://extensions/` 中点击“重新加载”，再刷新已打开的聊天网页。沿用原目录可保留扩展 ID 与已保存的配置；不要移除后重新添加。
 
 ## 这是什么
 
