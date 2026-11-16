@@ -771,4 +771,184 @@ struct SnippetRepositoryTests {
         }
         #expect(!FileManager.default.fileExists(atPath: opArgsURL.path))
     }
+
+    @Test("deleteSnippet handles remote 200, 404 idempotence, and refuses offline or 500 errors preserving HotCache")
+    func deleteSnippetRemoteIdempotenceAndErrorPreservation() async throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-snippet-del-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let now = Date(timeIntervalSince1970: 1_763_200_000)
+        let hotCache = HotCache(fileURL: paths.hotCacheFileURL)
+
+        let card200 = try #require(MemosWireFormat.parseMemo(id: "rw-del-200", rawContent: "#rewind/ready #source/macos\n\nDelete 200", createdAt: now, now: now))
+        let card404 = try #require(MemosWireFormat.parseMemo(id: "rw-del-404-cached", rawContent: "#rewind/ready #source/macos\n\nDelete 404 cached", createdAt: now, now: now))
+        let card500 = try #require(MemosWireFormat.parseMemo(id: "rw-del-500", rawContent: "#rewind/ready #source/macos\n\nDelete 500", createdAt: now, now: now))
+        let cardNetFail = try #require(MemosWireFormat.parseMemo(id: "rw-del-net", rawContent: "#rewind/ready #source/macos\n\nDelete net fail", createdAt: now, now: now))
+        let cardKeep = try #require(MemosWireFormat.parseMemo(id: "rw-keep", rawContent: "#rewind/ready #source/macos\n\nKeep me", createdAt: now, now: now))
+        try hotCache.saveCards([card200, card404, card500, cardNetFail, cardKeep], now: now)
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { SnippetMockURLProtocol.unregister(suiteID: suiteID) }
+
+        SnippetMockURLProtocol.register(suiteID: suiteID) { req, _ in
+            guard req.httpMethod == "DELETE" else { return (405, Data()) }
+            switch req.url?.path {
+            case "/api/memos/rw-del-200":
+                return (200, Data("{}".utf8))
+            case "/api/memos/rw-del-404-cached", "/api/memos/rw-del-404-absent":
+                return (404, Data("{\"message\":\"not found\"}".utf8))
+            case "/api/memos/rw-del-500":
+                return (500, Data("server boom".utf8))
+            case "/api/memos/rw-del-net":
+                return (-1, Data())
+            default:
+                return (404, Data())
+            }
+        }
+
+        let env = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local",
+            StoragePaths.memosTokenEnvironmentKey: "token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+        let repo = SnippetRepository(paths: paths, environment: env, client: makeMockClient())
+
+        let res200 = try await repo.deleteSnippet(id: "memos/rw-del-200")
+        #expect(res200 == SnippetDeletionResult(id: "rw-del-200", deleted: true, disposition: .remoteAndLocal))
+        #expect(!hotCache.loadCards(now: now).contains { $0.id == "rw-del-200" })
+
+        let res404Cached = try await repo.deleteSnippet(id: "rw-del-404-cached")
+        #expect(res404Cached == SnippetDeletionResult(id: "rw-del-404-cached", deleted: true, disposition: .alreadyAbsent))
+        #expect(!hotCache.loadCards(now: now).contains { $0.id == "rw-del-404-cached" })
+
+        let res404Absent = try await repo.deleteSnippet(id: "rw-del-404-absent")
+        #expect(res404Absent == SnippetDeletionResult(id: "rw-del-404-absent", deleted: false, disposition: .alreadyAbsent))
+
+        await #expect(throws: RewindError.httpError(statusCode: 500, body: "server boom")) {
+            _ = try await repo.deleteSnippet(id: "rw-del-500")
+        }
+        await #expect(throws: (any Error).self) {
+            _ = try await repo.deleteSnippet(id: "rw-del-net")
+        }
+
+        let unconfiguredRepo = SnippetRepository(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], client: makeMockClient())
+        await #expect(throws: RewindError.missingCredentials) {
+            _ = try await unconfiguredRepo.deleteSnippet(id: "rw-keep")
+        }
+
+        #expect(Set(hotCache.loadCards(now: now).map(\.id)) == Set(["rw-del-500", "rw-del-net", "rw-keep"]))
+    }
+
+    @Test("deleteSnippet handles outbox offline/online/404/network failure, HTTP 500 refusal, QA missing-token fast fail, and invalid IDs")
+    func deleteSnippetOutboxQAIsolationAndInvalidIDs() async throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-snippet-outbox-del-\(UUID().uuidString.lowercased())", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let now = Date(timeIntervalSince1970: 1_763_200_000)
+        let outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
+        let hotCache = HotCache(fileURL: paths.hotCacheFileURL)
+
+        func addPending(_ id: String) throws -> RewindCard {
+            let raw = "#rewind/pending #source/macos\n\nPending \(id)"
+            try outbox.enqueue(OutboxEntry(clientClipId: id, memoContent: raw, commentContent: nil, createdAt: now))
+            return try #require(MemosWireFormat.parseMemo(id: id, rawContent: raw, createdAt: now, now: now, isOfflinePending: true))
+        }
+
+        let offlineCard = try addPending("rw-outbox-offline")
+        let nonQACard = try addPending("rw-outbox-nonqa")
+        let online200Card = try addPending("rw-outbox-200")
+        let online404Card = try addPending("rw-outbox-404")
+        let onlineNetCard = try addPending("rw-outbox-net")
+        let online500Card = try addPending("rw-outbox-500")
+        let qaBlockedCard = try addPending("rw-outbox-qa")
+        try hotCache.saveCards([offlineCard, nonQACard, online200Card, online404Card, onlineNetCard, online500Card, qaBlockedCard], now: now)
+
+        let offlineRepo = SnippetRepository(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], client: makeMockClient())
+        #expect(try await offlineRepo.deleteSnippet(id: "rw-outbox-offline") == SnippetDeletionResult(id: "rw-outbox-offline", deleted: true, disposition: .localPendingOnly))
+        #expect(!outbox.loadEntries().contains { $0.clientClipId == "rw-outbox-offline" })
+        #expect(!hotCache.loadCards(now: now).contains { $0.id == "rw-outbox-offline" })
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { SnippetMockURLProtocol.unregister(suiteID: suiteID) }
+
+        SnippetMockURLProtocol.register(suiteID: suiteID) { req, _ in
+            guard req.httpMethod == "DELETE" else { return (405, Data()) }
+            switch req.url?.path {
+            case "/api/memos/rw-outbox-200":
+                return (200, Data("{}".utf8))
+            case "/api/memos/rw-outbox-404":
+                return (404, Data())
+            case "/api/memos/rw-outbox-net":
+                return (-1, Data())
+            case "/api/memos/rw-outbox-500":
+                return (500, Data("db error".utf8))
+            default:
+                return (404, Data())
+            }
+        }
+
+        let nonQAMissingTokenEnv = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local",
+            KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
+        ]
+        let nonQARepo = SnippetRepository(paths: paths, environment: nonQAMissingTokenEnv, client: makeMockClient())
+        #expect(try await nonQARepo.deleteSnippet(id: "rw-outbox-nonqa") == SnippetDeletionResult(id: "rw-outbox-nonqa", deleted: true, disposition: .localPendingOnly))
+        #expect(SnippetMockURLProtocol.recordedRequests(suiteID: suiteID).isEmpty)
+
+        let onlineEnv = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local",
+            StoragePaths.memosTokenEnvironmentKey: "token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+        let onlineRepo = SnippetRepository(paths: paths, environment: onlineEnv, client: makeMockClient())
+
+        #expect(try await onlineRepo.deleteSnippet(id: "memos/rw-outbox-200") == SnippetDeletionResult(id: "rw-outbox-200", deleted: true, disposition: .remoteAndLocal))
+        #expect(try await onlineRepo.deleteSnippet(id: "rw-outbox-404") == SnippetDeletionResult(id: "rw-outbox-404", deleted: true, disposition: .localPendingOnly))
+        #expect(try await onlineRepo.deleteSnippet(id: "rw-outbox-net") == SnippetDeletionResult(id: "rw-outbox-net", deleted: true, disposition: .localPendingOnly))
+
+        await #expect(throws: RewindError.httpError(statusCode: 500, body: "db error")) {
+            _ = try await onlineRepo.deleteSnippet(id: "rw-outbox-500")
+        }
+        #expect(outbox.loadEntries().contains { $0.clientClipId == "rw-outbox-500" })
+        #expect(hotCache.loadCards(now: now).contains { $0.id == "rw-outbox-500" })
+
+        let emptyQAKeychain = "com.codingrewind.memos.qa.empty.\(UUID().uuidString.lowercased())"
+        let qaMissingTokenEnv = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local",
+            StoragePaths.qaEnvironmentKey: "1",
+            KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1",
+            "CODING_REWIND_KEYCHAIN_SERVICE": emptyQAKeychain
+        ]
+        let qaMissingRepo = SnippetRepository(paths: paths, environment: qaMissingTokenEnv, client: makeMockClient())
+        await #expect(throws: RewindError.missingCredentials) {
+            _ = try await qaMissingRepo.deleteSnippet(id: "rw-outbox-qa")
+        }
+        #expect(outbox.loadEntries().contains { $0.clientClipId == "rw-outbox-qa" })
+        #expect(hotCache.loadCards(now: now).contains { $0.id == "rw-outbox-qa" })
+
+        try Data("invalid-plist".utf8).write(to: paths.developerCredentialsFileURL)
+        let failingDevRepo = SnippetRepository(
+            paths: paths,
+            environment: [StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local"],
+            client: makeMockClient()
+        )
+        await #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            _ = try await failingDevRepo.deleteSnippet(id: "rw-outbox-500")
+        }
+        await #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            _ = try await failingDevRepo.deleteSnippet(id: "rw-remote-only")
+        }
+
+        for badID in ["", "   ", "../escape", "memos/", "a/b", "rw space"] {
+            await #expect(throws: RewindError.invalidClipID(badID)) {
+                _ = try await onlineRepo.deleteSnippet(id: badID)
+            }
+        }
+    }
 }

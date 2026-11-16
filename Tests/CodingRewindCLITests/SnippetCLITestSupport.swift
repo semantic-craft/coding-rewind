@@ -12,6 +12,7 @@ actor FakeSnippetBackend: SnippetQuerying {
     private(set) var recordedListQueries: [SnippetQuery] = []
     private(set) var recordedGetCalls: [(id: String, includeContext: Bool)] = []
     private(set) var recordedArchiveIDs: [String] = []
+    private(set) var recordedDeleteIDs: [String] = []
 
     init(
         records: [SnippetRecord],
@@ -102,6 +103,19 @@ actor FakeSnippetBackend: SnippetQuerying {
         )
         records[idx] = updated
         return updated
+    }
+
+    func deleteSnippet(id: String) async throws -> SnippetDeletionResult {
+        recordedDeleteIDs.append(id)
+        let cleanID = try MemosWireFormat.normalizeSnippetID(id)
+        guard let idx = records.firstIndex(where: { $0.id == cleanID }) else {
+            return SnippetDeletionResult(id: cleanID, deleted: false, disposition: .alreadyAbsent)
+        }
+        let existing = records.remove(at: idx)
+        let disposition: SnippetDeletionDisposition = existing.dataOrigin == .offlinePending
+            ? .localPendingOnly
+            : .remoteAndLocal
+        return SnippetDeletionResult(id: cleanID, deleted: true, disposition: disposition)
     }
 }
 

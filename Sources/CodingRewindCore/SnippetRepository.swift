@@ -126,10 +126,29 @@ public struct SnippetQueryResult: Codable, Equatable, Sendable {
     }
 }
 
+public enum SnippetDeletionDisposition: String, Codable, Equatable, Sendable {
+    case remoteAndLocal
+    case localPendingOnly
+    case alreadyAbsent
+}
+
+public struct SnippetDeletionResult: Codable, Equatable, Sendable {
+    public let id: String
+    public let deleted: Bool
+    public let disposition: SnippetDeletionDisposition
+
+    public init(id: String, deleted: Bool, disposition: SnippetDeletionDisposition) {
+        self.id = id
+        self.deleted = deleted
+        self.disposition = disposition
+    }
+}
+
 public protocol SnippetQuerying: Sendable {
     func listSnippets(_ query: SnippetQuery, now: Date) async throws -> SnippetQueryResult
     func getSnippet(id: String, includeContext: Bool, now: Date) async throws -> SnippetRecord
     func archiveSnippet(id: String) async throws -> SnippetRecord
+    func deleteSnippet(id: String) async throws -> SnippetDeletionResult
 }
 
 public struct SnippetRepository: SnippetQuerying, Sendable {
@@ -422,8 +441,8 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         let finalCreatedAt = patchedDTO?.createTime.flatMap(MemosWireFormat.parseISO8601) ?? createdAt
         let finalName = (patchedDTO?.name.isEmpty == false) ? patchedDTO!.name : resolvedName
 
-        try? outbox.removeEntry(clientClipId: normalizedID)
-        try? hotCache.removeCard(id: normalizedID)
+        _ = try? outbox.removeEntry(clientClipId: normalizedID)
+        _ = try? hotCache.removeCard(id: normalizedID)
 
         guard let updatedRecord = MemosWireFormat.parseSnippetRecord(
             id: finalName,
@@ -434,6 +453,72 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             throw RewindError.invalidServerResponse
         }
         return updatedRecord
+    }
+
+    public func deleteSnippet(id: String) async throws -> SnippetDeletionResult {
+        let normalizedID = try MemosWireFormat.normalizeSnippetID(id)
+        let hadOutbox = outbox.loadEntries().contains { $0.clientClipId == normalizedID }
+
+        if hadOutbox {
+            guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+                return try finalizePendingDeletion(id: normalizedID)
+            }
+
+            let token: String
+            switch resolveToken() {
+            case .resolved(let resolvedToken):
+                token = resolvedToken
+            case .developerCredentialsFailed(let failure):
+                throw failure
+            case .missing:
+                if isQAMode {
+                    throw RewindError.missingCredentials
+                }
+                return try finalizePendingDeletion(id: normalizedID)
+            }
+
+            do {
+                let existedRemote = try await client.deleteMemo(id: normalizedID, baseURL: baseURL, token: token)
+                return try finalizePendingDeletion(
+                    id: normalizedID,
+                    disposition: existedRemote ? .remoteAndLocal : .localPendingOnly
+                )
+            } catch RewindError.networkFailure {
+                return try finalizePendingDeletion(id: normalizedID)
+            }
+        }
+
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+            throw RewindError.missingCredentials
+        }
+
+        let token: String
+        switch resolveToken() {
+        case .resolved(let resolvedToken):
+            token = resolvedToken
+        case .developerCredentialsFailed(let failure):
+            throw failure
+        case .missing:
+            throw RewindError.missingCredentials
+        }
+
+        let existedRemote = try await client.deleteMemo(id: normalizedID, baseURL: baseURL, token: token)
+        _ = try? outbox.removeEntry(clientClipId: normalizedID)
+        let removedCache = (try? hotCache.removeCard(id: normalizedID)) ?? false
+        return SnippetDeletionResult(
+            id: normalizedID,
+            deleted: existedRemote || removedCache,
+            disposition: existedRemote ? .remoteAndLocal : .alreadyAbsent
+        )
+    }
+
+    private func finalizePendingDeletion(
+        id normalizedID: String,
+        disposition: SnippetDeletionDisposition = .localPendingOnly
+    ) throws -> SnippetDeletionResult {
+        try outbox.removeEntry(clientClipId: normalizedID)
+        _ = try? hotCache.removeCard(id: normalizedID)
+        return SnippetDeletionResult(id: normalizedID, deleted: true, disposition: disposition)
     }
 
     private func buildLocalQueryResult(

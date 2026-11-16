@@ -358,6 +358,24 @@ public struct MemosClient: Sendable {
         return try? JSONDecoder().decode(MemoWireDTO.self, from: data)
     }
 
+    @discardableResult
+    public func deleteMemo(
+        id: String,
+        baseURL: URL,
+        token: String
+    ) async throws -> Bool {
+        let encodedID = try Self.encodedMemoPathComponent(from: id)
+        let deleteURL = try endpointURL(baseURL: baseURL, path: "/api/memos/\(encodedID)", queryItems: [])
+        let (data, status) = try await performCheckedRequest(url: deleteURL, method: "DELETE", token: token, body: nil)
+        if (200..<300).contains(status) {
+            return true
+        }
+        if status == 404 {
+            return false
+        }
+        throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+    }
+
     private func performCheckedRequest(
         url: URL,
         method: String,

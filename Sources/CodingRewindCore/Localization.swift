@@ -83,6 +83,12 @@ public enum BannerNotice: Equatable, Sendable {
     case resumeUnarchivedStartup
     case resumePendingStartup
     case archiveCardBlockedOfflineOrUnconfigured
+    case archivedClips(count: Int)
+    case partialArchiveClipsFailure(succeeded: Int, failed: Int)
+    case deletedClips(count: Int)
+    case partialDeleteClipsFailure(succeeded: Int, failed: Int)
+    case deleteCardBlockedOfflineOrUnconfigured
+    case cardsLockedByActiveConversation
     case savedConnectionSettings
     case pluginInstalled
     case pluginNeedsRepair(PluginRepairReason?)
@@ -482,6 +488,46 @@ public enum L10n {
             switch language {
             case .zhHans: return "片段尚未同步或云端同步尚未配置，暂时无法归档"
             case .en: return "Clip is not synced yet or Cloud Sync is not configured; cannot archive right now."
+            }
+        case .archivedClips(let count):
+            switch language {
+            case .zhHans: return "已归档 \(count) 条片段，原文仍保留在 Memos 中"
+            case .en:
+                let noun = count == 1 ? "clip" : "clips"
+                return "Archived \(count) \(noun); originals remain in Memos."
+            }
+        case .partialArchiveClipsFailure(let succeeded, let failed):
+            switch language {
+            case .zhHans: return "已归档 \(succeeded) 条片段，另有 \(failed) 条归档失败，已保留在列表中"
+            case .en:
+                let succeededNoun = succeeded == 1 ? "clip" : "clips"
+                let failedNoun = failed == 1 ? "clip" : "clips"
+                return "Archived \(succeeded) \(succeededNoun), but \(failed) \(failedNoun) failed and remain in the list."
+            }
+        case .deletedClips(let count):
+            switch language {
+            case .zhHans: return "已删除 \(count) 条片段"
+            case .en:
+                let noun = count == 1 ? "clip" : "clips"
+                return "Deleted \(count) \(noun)."
+            }
+        case .partialDeleteClipsFailure(let succeeded, let failed):
+            switch language {
+            case .zhHans: return "已删除 \(succeeded) 条片段，另有 \(failed) 条删除失败，已保留在列表中"
+            case .en:
+                let succeededNoun = succeeded == 1 ? "clip" : "clips"
+                let failedNoun = failed == 1 ? "clip" : "clips"
+                return "Deleted \(succeeded) \(succeededNoun), but \(failed) \(failedNoun) failed and remain in the list."
+            }
+        case .deleteCardBlockedOfflineOrUnconfigured:
+            switch language {
+            case .zhHans: return "已同步片段需要连接已配置的 Memos 后才能删除"
+            case .en: return "Synced clips require a configured Memos connection to delete."
+            }
+        case .cardsLockedByActiveConversation:
+            switch language {
+            case .zhHans: return "当前仍有未结束的对话请求关联这些片段，请先完成或结束该请求"
+            case .en: return "These clips are locked by an active chat handoff. Finish or clear that request first."
             }
         case .savedConnectionSettings:
             switch language {

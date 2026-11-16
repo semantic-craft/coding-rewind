@@ -2366,6 +2366,528 @@ struct CodingRewindCoreTests {
         #expect(try crashedCodexStore.current() == nil)
     }
 
+    @Test("MemosClient.deleteMemo handles 200, 404, 500, network failure, and invalid IDs")
+    func memosClientDeleteMemoResponses() async throws {
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let baseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local"))
+        let client = MemosClient(session: makeMockSession())
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            guard req.httpMethod == "DELETE" else { return (405, Data()) }
+            switch req.url?.path {
+            case "/api/memos/rw-ok":
+                return (200, Data("{}".utf8))
+            case "/api/memos/rw-missing":
+                return (404, Data("{\"message\":\"not found\"}".utf8))
+            case "/api/memos/rw-err":
+                return (500, Data("internal failure".utf8))
+            case "/api/memos/rw-net":
+                return (-1, Data())
+            default:
+                return (404, Data())
+            }
+        }
+
+        #expect(try await client.deleteMemo(id: "memos/rw-ok", baseURL: baseURL, token: "tok-del") == true)
+        #expect(try await client.deleteMemo(id: "rw-missing", baseURL: baseURL, token: "tok-del") == false)
+
+        await #expect(throws: RewindError.httpError(statusCode: 500, body: "internal failure")) {
+            _ = try await client.deleteMemo(id: "rw-err", baseURL: baseURL, token: "tok-del")
+        }
+
+        do {
+            _ = try await client.deleteMemo(id: "rw-net", baseURL: baseURL, token: "tok-del")
+            Issue.record("Expected networkFailure")
+        } catch RewindError.networkFailure {
+        } catch {
+            Issue.record("Expected networkFailure, got \(error)")
+        }
+
+        await #expect(throws: RewindError.invalidClipID("../bad")) {
+            _ = try await client.deleteMemo(id: "../bad", baseURL: baseURL, token: "tok-del")
+        }
+
+        let recorded = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(recorded.count == 4)
+        #expect(recorded[0].method == "DELETE")
+        #expect(recorded[0].url.path == "/api/memos/rw-ok")
+        #expect(recorded[0].authHeader == "Bearer tok-del")
+    }
+
+    @Test("OfflineOutbox.removeEntry and HotCache.removeCard return removal status without 72h pruning on removeCard")
+    func outboxAndHotCacheRemoveReturnBooleans() throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-storage-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let outbox = OfflineOutbox(fileURL: dir.appendingPathComponent("outbox.jsonl"))
+        #expect(try outbox.removeEntry(clientClipId: "absent") == false)
+        try outbox.enqueue(OutboxEntry(clientClipId: "c1", memoContent: "#rewind/pending\n\nbody", commentContent: nil))
+        #expect(try outbox.removeEntry(clientClipId: "c1") == true)
+        #expect(try outbox.removeEntry(clientClipId: "c1") == false)
+
+        let cache = HotCache(fileURL: dir.appendingPathComponent("hot_cache.json"))
+        #expect(try cache.removeCard(id: "absent") == false)
+        let now = Date()
+        let oldCard = RewindCard(
+            id: "old-raw",
+            rawContent: "#rewind/ready #source/macos\n\nold",
+            status: .ready,
+            sourcePlatform: "macos",
+            sourceTitle: "macos",
+            verbatimText: "old",
+            createdAt: now.addingTimeInterval(-RewindCard.hotWindowSeconds - 120)
+        )
+        let freshCard = RewindCard(
+            id: "fresh-raw",
+            rawContent: "#rewind/ready #source/macos\n\nfresh",
+            status: .ready,
+            sourcePlatform: "macos",
+            sourceTitle: "macos",
+            verbatimText: "fresh",
+            createdAt: now
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([oldCard, freshCard]).write(to: cache.fileURL)
+
+        #expect(try cache.removeCard(id: "fresh-raw") == true)
+        #expect(try cache.removeCard(id: "fresh-raw") == false)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let rawRemaining = try decoder.decode([RewindCard].self, from: Data(contentsOf: cache.fileURL))
+        #expect(rawRemaining.map(\.id) == ["old-raw"])
+    }
+
+    @Test("AppCoordinator.archiveCards handles single, batch, isOfflinePending, partial failure, unconfigured blocking, and focus shifting")
+    @MainActor
+    func coordinatorArchiveCardsBatchPendingAndFocusShift() async throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-archive-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let now = Date()
+        let c1 = try #require(MemosWireFormat.parseMemo(id: "c1", rawContent: "#rewind/ready #source/macos\n\nCard 1", createdAt: now.addingTimeInterval(-10), now: now))
+        let c2 = try #require(MemosWireFormat.parseMemo(id: "c2", rawContent: "#rewind/pending #source/macos\n\nCard 2", createdAt: now.addingTimeInterval(-20), now: now))
+        let c3 = try #require(MemosWireFormat.parseMemo(id: "c3", rawContent: "#rewind/ready #source/macos\n\nCard 3", createdAt: now.addingTimeInterval(-30), now: now))
+        let pendingRaw = "#rewind/pending #rewind/has-ctx #source/antigravity\n\nPending flush archive"
+        let pendingCtx = CaptureContext(sessionTitle: "S", prompt: "P", recentTurns: [ConversationTurn(role: "User", text: "P")])
+        try OfflineOutbox(fileURL: paths.outboxFileURL).enqueue(
+            OutboxEntry(
+                clientClipId: "c-pending",
+                memoContent: pendingRaw,
+                commentContent: pendingCtx.formattedCommentMarkdown(),
+                createdAt: now
+            )
+        )
+        let cPending = try #require(MemosWireFormat.parseMemo(id: "c-pending", rawContent: pendingRaw, createdAt: now, now: now, isOfflinePending: true))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([cPending, c1, c2, c3], now: now)
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let unconfiguredCoord = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+        unconfiguredCoord.focusedCardID = "c1"
+        await unconfiguredCoord.archiveTargetCards()
+        #expect(unconfiguredCoord.bannerMessage == L10n.banner(.archiveCardBlockedOfflineOrUnconfigured, in: .zhHans))
+        #expect(unconfiguredCoord.isErrorBanner)
+        #expect(unconfiguredCoord.cards.count == 4)
+
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, bodyData in
+            let path = req.url?.path ?? ""
+            if req.httpMethod == "POST" && path == "/api/memos" {
+                let obj = (try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any]) ?? [:]
+                let resp: [String: Any] = [
+                    "name": "memos/srv-pending",
+                    "content": obj["content"] as? String ?? "",
+                    "createTime": MemosWireFormat.formatISO8601UTC(now)
+                ]
+                return (200, try! JSONSerialization.data(withJSONObject: resp))
+            }
+            if req.httpMethod == "POST" && path == "/api/memos/srv-pending/comments" {
+                return (200, Data("{\"name\":\"memos/srv-pending-ctx\",\"content\":\"ok\"}".utf8))
+            }
+            if req.httpMethod == "PATCH" && path == "/api/memos/srv-pending" {
+                return (200, Data("{\"name\":\"memos/srv-pending\",\"content\":\"#rewind/synthesized\"}".utf8))
+            }
+            if req.httpMethod == "PATCH" && path == "/api/memos/c1" {
+                return (200, Data("{\"name\":\"memos/c1\",\"content\":\"#rewind/synthesized\"}".utf8))
+            }
+            if req.httpMethod == "PATCH" && path == "/api/memos/c2" {
+                return (500, Data("patch failed".utf8))
+            }
+            if req.httpMethod == "PATCH" && path == "/api/memos/c3" {
+                return (200, Data("{\"name\":\"memos/c3\",\"content\":\"#rewind/synthesized\"}".utf8))
+            }
+            return (404, Data())
+        }
+
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+                StoragePaths.memosTokenEnvironmentKey: "tok-arch",
+                StoragePaths.qaEnvironmentKey: "1"
+            ],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+
+        coordinator.focusedCardID = "c1"
+        coordinator.checkedCardIDs = ["c-pending"]
+        await coordinator.archiveTargetCards()
+        #expect(coordinator.bannerMessage == L10n.banner(.archivedClips(count: 1), in: .zhHans))
+        #expect(!coordinator.isErrorBanner)
+        #expect(coordinator.cards.map(\.id) == ["c1", "c2", "c3"])
+        #expect(coordinator.outbox.loadEntries().isEmpty)
+        #expect(coordinator.checkedCardIDs.isEmpty)
+        #expect(coordinator.focusedCardID == "c1")
+
+        let recordedAfterPending = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(recordedAfterPending.contains { $0.method == "POST" && $0.url.path == "/api/memos" })
+        #expect(recordedAfterPending.contains { $0.method == "POST" && $0.url.path == "/api/memos/srv-pending/comments" })
+        #expect(recordedAfterPending.contains { $0.method == "PATCH" && $0.url.path == "/api/memos/srv-pending" })
+
+        coordinator.checkedCardIDs = ["c1", "c2"]
+        coordinator.focusedCardID = "c1"
+        await coordinator.archiveCards(ids: ["c2", "c1", "c1", "nonexistent"])
+        #expect(coordinator.bannerMessage == L10n.banner(.partialArchiveClipsFailure(succeeded: 1, failed: 1), in: .zhHans))
+        #expect(coordinator.isErrorBanner)
+        #expect(coordinator.cards.map(\.id) == ["c2", "c3"])
+        #expect(coordinator.checkedCardIDs == Set(["c2"]))
+        #expect(coordinator.focusedCardID == "c2")
+
+        coordinator.checkedCardIDs.removeAll()
+        coordinator.focusedCardID = "c3"
+        await coordinator.markCardSynthesized(c3)
+        #expect(coordinator.bannerMessage == L10n.banner(.archivedClips(count: 1), in: .zhHans))
+        #expect(coordinator.cards.map(\.id) == ["c2"])
+        #expect(coordinator.focusedCardID == "c2")
+        #expect(coordinator.hotCache.loadCards(now: now).map(\.id) == ["c2"])
+    }
+
+    @Test("AppCoordinator.requestDeleteCards covers confirmation vs bypass, offline refusal, error handling, and adjacent focus shift")
+    @MainActor
+    func coordinatorRequestDeleteConfirmationExecutionAndRefusal() async throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-delete-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let now = Date()
+        let p1Raw = "#rewind/pending #source/macos\n\nPending 1"
+        let p2Raw = "#rewind/pending #source/macos\n\nPending 2"
+        try OfflineOutbox(fileURL: paths.outboxFileURL).enqueue(OutboxEntry(clientClipId: "p1", memoContent: p1Raw, commentContent: nil, createdAt: now))
+        try OfflineOutbox(fileURL: paths.outboxFileURL).enqueue(OutboxEntry(clientClipId: "p2", memoContent: p2Raw, commentContent: nil, createdAt: now.addingTimeInterval(-5)))
+
+        let p1 = try #require(MemosWireFormat.parseMemo(id: "p1", rawContent: p1Raw, createdAt: now, now: now, isOfflinePending: true))
+        let p2 = try #require(MemosWireFormat.parseMemo(id: "p2", rawContent: p2Raw, createdAt: now.addingTimeInterval(-5), now: now, isOfflinePending: true))
+        let s1 = try #require(MemosWireFormat.parseMemo(id: "s1", rawContent: "#rewind/ready #source/macos\n\nSynced 1", createdAt: now.addingTimeInterval(-10), now: now))
+        let s2 = try #require(MemosWireFormat.parseMemo(id: "s2", rawContent: "#rewind/ready #source/macos\n\nSynced 2", createdAt: now.addingTimeInterval(-20), now: now))
+        let s3 = try #require(MemosWireFormat.parseMemo(id: "s3", rawContent: "#rewind/ready #source/macos\n\nSynced 3", createdAt: now.addingTimeInterval(-30), now: now))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([p1, p2, s1, s2, s3], now: now)
+
+        let offlineCoord = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+        offlineCoord.focusedCardID = "s1"
+        await offlineCoord.requestDeleteTargetCards()
+        #expect(offlineCoord.pendingDeleteConfirmation == PendingDeleteConfirmation(cardIDs: ["s1"], allOfflinePending: false))
+        #expect(offlineCoord.cards.count == 5)
+        offlineCoord.cancelDeleteConfirmation()
+        #expect(offlineCoord.pendingDeleteConfirmation == nil)
+
+        await offlineCoord.requestDeleteCards(ids: ["s1"], bypassConfirmation: true)
+        #expect(offlineCoord.bannerMessage == L10n.banner(.deleteCardBlockedOfflineOrUnconfigured, in: .zhHans))
+        #expect(offlineCoord.isErrorBanner)
+        #expect(offlineCoord.cards.contains { $0.id == "s1" })
+        #expect(offlineCoord.hotCache.loadCards(now: now).contains { $0.id == "s1" })
+
+        await offlineCoord.requestDeleteCards(ids: ["p1", "p1", "ghost"])
+        #expect(offlineCoord.pendingDeleteConfirmation == PendingDeleteConfirmation(cardIDs: ["p1"], allOfflinePending: true))
+        await offlineCoord.confirmPendingDelete()
+        #expect(offlineCoord.pendingDeleteConfirmation == nil)
+        #expect(offlineCoord.bannerMessage == L10n.banner(.deletedClips(count: 1), in: .zhHans))
+        #expect(!offlineCoord.isErrorBanner)
+        #expect(!offlineCoord.cards.contains { $0.id == "p1" })
+        #expect(!offlineCoord.outbox.loadEntries().contains { $0.clientClipId == "p1" })
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            guard req.httpMethod == "DELETE" else { return (405, Data()) }
+            switch req.url?.path {
+            case "/api/memos/p2":
+                return (-1, Data())
+            case "/api/memos/s1":
+                return (200, Data("{}".utf8))
+            case "/api/memos/s2":
+                return (500, Data("db busy".utf8))
+            case "/api/memos/s3":
+                return (404, Data())
+            default:
+                return (404, Data())
+            }
+        }
+
+        let qaMissingTokenCoord = try AppCoordinator(
+            paths: paths,
+            environment: [
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+                StoragePaths.qaEnvironmentKey: "1",
+                KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
+            ],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+        await qaMissingTokenCoord.requestDeleteCards(ids: ["p2"], bypassConfirmation: true)
+        #expect(qaMissingTokenCoord.isErrorBanner)
+        #expect(qaMissingTokenCoord.bannerMessage == L10n.banner(.rewindError(.missingCredentials), in: .zhHans))
+        #expect(qaMissingTokenCoord.outbox.loadEntries().contains { $0.clientClipId == "p2" })
+
+        let onlineCoord = try AppCoordinator(
+            paths: paths,
+            environment: [
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+                StoragePaths.memosTokenEnvironmentKey: "tok-del",
+                StoragePaths.qaEnvironmentKey: "1"
+            ],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+        onlineCoord.checkedCardIDs = ["p2", "s2"]
+        onlineCoord.focusedCardID = "p2"
+        await onlineCoord.requestDeleteTargetCards(bypassConfirmation: true)
+        #expect(onlineCoord.bannerMessage == L10n.banner(.partialDeleteClipsFailure(succeeded: 1, failed: 1), in: .zhHans))
+        #expect(onlineCoord.isErrorBanner)
+        #expect(onlineCoord.cards.map(\.id) == ["s1", "s2", "s3"])
+        #expect(onlineCoord.checkedCardIDs == Set(["s2"]))
+        #expect(onlineCoord.focusedCardID == "s1")
+        #expect(onlineCoord.outbox.loadEntries().isEmpty)
+
+        onlineCoord.checkedCardIDs.removeAll()
+        onlineCoord.focusedCardID = "s1"
+        await onlineCoord.requestDeleteCards(ids: ["s1"], bypassConfirmation: true)
+        #expect(onlineCoord.focusedCardID == "s2")
+
+        onlineCoord.focusedCardID = "s3"
+        await onlineCoord.requestDeleteCards(ids: ["s3"], bypassConfirmation: true)
+        #expect(onlineCoord.focusedCardID == "s2")
+        #expect(onlineCoord.cards.map(\.id) == ["s2"])
+        #expect(onlineCoord.hotCache.loadCards(now: now).map(\.id) == ["s2"])
+    }
+
+    @Test("Active conversation locks participating cards against archive and delete until cleared")
+    @MainActor
+    func activeConversationLocksCardsAcrossLifecycleAndRecovery() async throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-locks-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let now = Date()
+        let c1 = try #require(MemosWireFormat.parseMemo(id: "c1", rawContent: "#rewind/ready #source/macos\n\nLocked card", createdAt: now, now: now))
+        let c2 = try #require(MemosWireFormat.parseMemo(id: "c2", rawContent: "#rewind/ready #source/macos\n\nFree card", createdAt: now.addingTimeInterval(-10), now: now))
+        try HotCache(fileURL: paths.hotCacheFileURL).saveCards([c1, c2], now: now)
+
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            if req.httpMethod == "DELETE" && req.url?.path == "/api/memos/c2" {
+                return (200, Data("{}".utf8))
+            }
+            return (500, Data())
+        }
+
+        let env = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "tok-lock",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: env,
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
+            codexDelivery: { _ in (.unknown, nil) }
+        )
+        coordinator.checkedCardIDs = ["c1"]
+        #expect(await coordinator.launchChecked(in: .codex, waitSeconds: 0) == .failed(state: .unknown))
+        #expect(coordinator.isCardLocked("c1"))
+        #expect(!coordinator.isCardLocked("c2"))
+
+        await coordinator.requestDeleteCards(ids: ["c1"])
+        #expect(coordinator.pendingDeleteConfirmation == nil)
+        #expect(coordinator.bannerMessage == L10n.banner(.cardsLockedByActiveConversation, in: .zhHans))
+        #expect(coordinator.isErrorBanner)
+
+        await coordinator.archiveCards(ids: ["c1"])
+        #expect(coordinator.bannerMessage == L10n.banner(.cardsLockedByActiveConversation, in: .zhHans))
+        #expect(coordinator.isErrorBanner)
+        #expect(coordinator.cards.map(\.id) == ["c1", "c2"])
+
+        let restored = try AppCoordinator(
+            paths: paths,
+            environment: env,
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
+            codexDelivery: { _ in (.unknown, nil) }
+        )
+        #expect(restored.lockedConversationCardIDs == Set(["c1"]))
+
+        await restored.requestDeleteCards(ids: ["c2"], bypassConfirmation: true)
+        #expect(restored.cards.map(\.id) == ["c1"])
+
+        restored.endUnconfirmedConversation()
+        #expect(restored.lockedConversationCardIDs.isEmpty)
+        #expect(!restored.isCardLocked("c1"))
+
+        let store = restored.handoffStore(for: .codex)
+        let pending = try store.submit(prompt: "partial", cardIDs: ["c1", "c2"], markSynthesized: true)
+        try store.recordArchivedCard("c2", requestId: pending.requestId)
+        try store.saveReceipt(ConversationReceipt(requestId: pending.requestId, state: .succeeded, conversationId: UUID().uuidString))
+        try store.removeRequest(pending.requestId)
+
+        let partialRestored = try AppCoordinator(
+            paths: paths,
+            environment: env,
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+        #expect(partialRestored.lockedConversationCardIDs == Set(["c1"]))
+        partialRestored.endUnarchivedConversation()
+        #expect(partialRestored.lockedConversationCardIDs.isEmpty)
+    }
+
+    @Test("Local delete during concurrent refresh outbox flush prevents resurrection and deletes server copy")
+    @MainActor
+    func concurrentRefreshFlushVsDeletePreventsResurrection() async throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/test-core-race-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [StoragePaths.qaEnvironmentKey: "1"],
+            memosClient: MemosClient(session: makeMockSession()),
+            capturer: StubCapturer(selection: CapturedSelection(text: "Race body", bundleIdentifier: "fixture", appName: "Fixture"))
+        )
+        guard case .queuedOffline(let localID) = await coordinator.captureSelection() else {
+            Issue.record("Expected queuedOffline")
+            return
+        }
+
+        let postGate = MemosResponseGate()
+        let now = Date()
+        let rawContent = coordinator.outbox.loadEntries()[0].memoContent
+        MockMemosURLProtocol.register(suiteID: suiteID) { req, _ in
+            let path = req.url?.path ?? ""
+            if req.httpMethod == "POST" && path == "/api/memos" {
+                let memoID = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "memoId" })?.value ?? ""
+                if memoID == localID {
+                    let (status, _) = await postGate.response()
+                    let dto: [String: Any] = [
+                        "name": "memos/srv-race-1",
+                        "content": rawContent,
+                        "createTime": MemosWireFormat.formatISO8601UTC(now)
+                    ]
+                    return (status, try! JSONSerialization.data(withJSONObject: dto))
+                }
+                let dto: [String: Any] = [
+                    "name": "memos/srv-race-1",
+                    "content": rawContent,
+                    "createTime": MemosWireFormat.formatISO8601UTC(now)
+                ]
+                return (200, try! JSONSerialization.data(withJSONObject: dto))
+            }
+            if req.httpMethod == "DELETE" && path == "/api/memos/\(localID)" {
+                return (404, Data())
+            }
+            if req.httpMethod == "DELETE" && path == "/api/memos/srv-race-1" {
+                return (200, Data("{}".utf8))
+            }
+            if req.httpMethod == "GET" && path == "/api/memos" {
+                let listPayload: [String: Any] = [
+                    "memos": [[
+                        "name": "memos/srv-race-1",
+                        "content": rawContent,
+                        "createTime": MemosWireFormat.formatISO8601UTC(now)
+                    ]]
+                ]
+                return (200, try! JSONSerialization.data(withJSONObject: listPayload))
+            }
+            return (404, Data())
+        }
+
+        coordinator.environment = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).mock.memos.local",
+            StoragePaths.memosTokenEnvironmentKey: "tok-race",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+
+        let refreshTask = Task { await coordinator.refresh() }
+        await postGate.waitForRequests(1)
+
+        await coordinator.requestDeleteCards(ids: [localID], bypassConfirmation: true)
+        #expect(coordinator.cards.isEmpty)
+        #expect(coordinator.outbox.loadEntries().isEmpty)
+
+        await postGate.release(0, status: 200)
+        await refreshTask.value
+
+        #expect(coordinator.cards.isEmpty)
+        #expect(coordinator.hotCache.loadCards(now: now).isEmpty)
+        #expect(coordinator.checkedCardIDs.isEmpty)
+
+        await coordinator.refresh()
+        #expect(coordinator.cards.isEmpty)
+        #expect(coordinator.hotCache.loadCards(now: now).isEmpty)
+
+        let requests = MockMemosURLProtocol.recordedRequests(suiteID: suiteID)
+        #expect(requests.contains { $0.method == "DELETE" && $0.url.path == "/api/memos/srv-race-1" })
+
+        let nextOutcome = await coordinator.captureSelection()
+        if case .saved(let newID, _) = nextOutcome {
+            #expect(newID == "srv-race-1")
+            #expect(coordinator.cards.map(\.id) == ["srv-race-1"])
+        } else {
+            Issue.record("Expected .saved on fresh capture after deletion, got \(nextOutcome)")
+        }
+    }
+
 }
 
 private struct ClosureSelectionCapturer: SelectionCapturing {
