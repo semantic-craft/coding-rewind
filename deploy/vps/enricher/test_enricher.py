@@ -726,6 +726,125 @@ class EnricherUnitTests(unittest.TestCase):
             srv.shutdown()
             srv.server_close()
 
+    def test_web_page_lead_enrichment_and_cjk_detection_immunity_to_session_id_uuids(self) -> None:
+        self.assertIn("历史对话或页面导语上下文", enricher.SYSTEM_PROMPT)
+        self.assertIn("historical conversation or source page lead", enricher.SYSTEM_PROMPT_EN)
+
+        code_excerpt = "```swift\nactor FrameRingBuffer { var head = 0 }\n```"
+        zh_ctx_with_ascii_session_id = (
+            "<!-- rewind-context-v1 -->\n"
+            "Session Title: 并发整理\n"
+            "Session ID: deadbeef-cafe-babe-abcd-efgh-ijkl-mnop-qrst-uvwx-swift-actor-session\n"
+            "Prompt: 示例\n\n"
+            "### Session Opening\n"
+            "隔离共享状态\n\n"
+            "### Recent Turns\n"
+            "User: 示例\n"
+            "Assistant: ```swift\nactor FrameRingBuffer {}\n```"
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(code_excerpt, zh_ctx_with_ascii_session_id),
+            "zh-Hans",
+        )
+
+        zh_page_lead_ctx = (
+            "<!-- rewind-context-v1 -->\n"
+            "Session Title: 零拷贝环形队列\n\n"
+            "### Page Lead\n"
+            "理解共享内存通道\n"
+            "§ 环形描述符布局"
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(code_excerpt, zh_page_lead_ctx),
+            "zh-Hans",
+        )
+
+        en_code_only_with_session_id = (
+            "<!-- rewind-context-v1 -->\n"
+            "Session Title: \n"
+            "Session ID: abcdef-ghijkl-mnopqr-stuvwx\n\n"
+            "### Session Opening\n"
+            "```python\nx = 1\n```\n\n"
+            "### Page Lead\n"
+            "```python\ny = 2\n```\n\n"
+            "### Prompt\n"
+            "```python\nz = 3\n```"
+        )
+        self.assertEqual(
+            enricher.detect_clip_language("```python\ndef compute_hash(buf: bytes) -> str:\n    return buf.hex()\n```", en_code_only_with_session_id),
+            "en",
+        )
+        self.assertEqual(
+            enricher.detect_clip_language("```\nx = 1\n```", en_code_only_with_session_id),
+            "zh-Hans",
+        )
+
+        state = MockBackendState()
+        state.ai_response = {
+            "title": "Zero-Copy Scatter-Gather Framing",
+            "session_topic": "Zero-Copy Framing",
+            "context_summary": "Explains using mmap(2) and writev(2) for framed ring-buffer batches.",
+            "keywords": ["mmap", "writev", "IPC"],
+        }
+        srv, base_url = _start_mock_upstream(state)
+        try:
+            source_url = (
+                "https://blog.example.org/systems/zero-copy#intro:~:text="
+                "allocations%3A-,use%20mmap%282%29%20%26%20writev%282%29,-for%20framed"
+            )
+            verbatim = "use `mmap(2)` & `writev(2)`"
+            page_lead_body = (
+                "Session Title: Zero-Copy Framing\n\n"
+                "### Page Lead\n"
+                "Zero-Copy Ring Buffers\n"
+                "§ Scatter-Gather Descriptors\n"
+                "Designing zero-copy ring buffers for framed IPC."
+            )
+            state.memos["rw-web-lead"] = {
+                "name": "memos/rw-web-lead",
+                "createTime": "2026-11-16T12:00:00Z",
+                "content": (
+                    "#rewind/pending #rewind/has-ctx #source/web\n\n"
+                    f"> **Source:** [Zero-Copy Framing]({source_url}) · 2026-11-16T12:00:00Z\n\n"
+                    + verbatim
+                ),
+            }
+            state.comments["rw-web-lead"] = [
+                {
+                    "name": "memos/rw-web-lead-ctx",
+                    "content": "<!-- rewind-context-v1 -->\n" + page_lead_body,
+                }
+            ]
+
+            svc = enricher.EnricherService(
+                memos_url=base_url,
+                memos_token="memos-tok",
+                ai_base_url=f"{base_url}/v1",
+                ai_api_key="ai-tok",
+                ai_model="qwen-plus",
+            )
+            self.assertEqual(svc.reconcile_once(), 1)
+            self.assertEqual(len(state.ai_calls), 1)
+            self.assertEqual(state.ai_calls[0]["messages"][0]["content"], enricher.SYSTEM_PROMPT_EN)
+            sent_user_payload = json.loads(state.ai_calls[0]["messages"][1]["content"])
+            self.assertEqual(sent_user_payload["selected_excerpt"], verbatim)
+            self.assertEqual(sent_user_payload["captured_chat_context"], page_lead_body)
+
+            patched = state.memos["rw-web-lead"]["content"]
+            expected_prefix = (
+                "#rewind/ready #source/web\n\n"
+                "> **Title:** Zero-Copy Scatter-Gather Framing\n"
+                "> **Session:** Zero-Copy Framing\n"
+                "> **Context:** Explains using mmap(2) and writev(2) for framed ring-buffer batches.\n"
+                "> **Keywords:** mmap, writev, IPC\n"
+                f"> **Source:** [Zero-Copy Framing]({source_url}) · 2026-11-16T12:00:00Z\n\n"
+            )
+            self.assertTrue(patched.startswith(expected_prefix))
+            self.assertEqual(patched[len(expected_prefix) :], verbatim)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()

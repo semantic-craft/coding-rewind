@@ -187,6 +187,35 @@ export function detectPlatform(url) {
   return "web";
 }
 
+const CHAT_SESSION_ID_PATTERNS = Object.freeze({
+  chatgpt: /^\/(?:g\/[^/?#]+\/)?c\/([^/?#]+)(?:\/|$)/,
+  claude: /^\/chat\/([^/?#]+)(?:\/|$)/,
+  gemini: /^\/(?:u\/\d+\/)?app\/([^/?#]+)(?:\/|$)/
+});
+
+export function extractChatSessionId(url, platform = detectPlatform(url)) {
+  if (!url || typeof url !== "string") return "";
+  let parsed;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return "";
+  }
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== "http:" && proto !== "https:") return "";
+  const detected = detectPlatform(parsed.href);
+  if (detected === "web" || (platform && detected !== platform)) return "";
+  const pattern = CHAT_SESSION_ID_PATTERNS[detected];
+  if (!pattern) return "";
+  const match = parsed.pathname.match(pattern);
+  if (!match || !match[1]) return "";
+  try {
+    return stripAsciiControls(decodeURIComponent(match[1]));
+  } catch {
+    return stripAsciiControls(match[1]);
+  }
+}
+
 function escapeRegExp(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -221,7 +250,7 @@ function queryFirstText(doc, selectors, siteName = "") {
   for (const selector of selectors) {
     let nodes;
     try {
-      nodes = doc.querySelectorAll(selector);
+      nodes = Array.from(doc.querySelectorAll(selector) || []);
     } catch {
       continue;
     }
@@ -285,7 +314,7 @@ function getVisibleText(node) {
   if (SKIP_TAGS.has(tag)) return "";
   if (getAttr(node, "aria-hidden") === "true") return "";
   let out = "";
-  for (const child of node.childNodes || []) {
+  for (const child of Array.from(node.childNodes || [])) {
     out += getVisibleText(child);
   }
   return out;
@@ -349,7 +378,7 @@ function extractLanguageFromSingleNode(node) {
 }
 
 function findLanguageInSubtree(root) {
-  for (const child of (root && root.childNodes) || []) {
+  for (const child of Array.from((root && root.childNodes) || [])) {
     if (child.nodeType !== ELEMENT_NODE || isCodeGutterElement(child)) continue;
     const tag = getTagName(child);
     if (tag === "code" || tag === "pre" || getAttr(child, "data-language") || getAttr(child, "data-lang")) {
@@ -363,7 +392,7 @@ function findLanguageInSubtree(root) {
 }
 
 function inferPreHeaderLanguage(preNode, codeNode) {
-  for (const child of preNode.childNodes || []) {
+  for (const child of Array.from(preNode.childNodes || [])) {
     if (child === codeNode) break;
     if (child.nodeType === ELEMENT_NODE && !nodeContains(child, codeNode)) {
       const label = getVisibleText(child).trim().toLowerCase();
@@ -420,7 +449,7 @@ export function extractCodeLanguage(primaryNode, preNode = null) {
 function findPrimaryCodeElement(preNode) {
   const codes = [];
   const visit = (cur) => {
-    for (const child of cur.childNodes || []) {
+    for (const child of Array.from(cur.childNodes || [])) {
       if (child.nodeType !== ELEMENT_NODE) continue;
       if (isCodeGutterElement(child) || SKIP_TAGS.has(getTagName(child))) continue;
       if (isCodeLineElement(child)) return;
@@ -508,7 +537,7 @@ function extractCodeText(node) {
 }
 
 function collectElements(root, predicate, acc = []) {
-  for (const child of (root && root.childNodes) || []) {
+  for (const child of Array.from((root && root.childNodes) || [])) {
     if (child.nodeType !== ELEMENT_NODE) continue;
     if (predicate(child)) {
       acc.push(child);
@@ -717,12 +746,12 @@ function renderTable(tableEl, ctx) {
 
   const rows = [];
   const collectRows = (node) => {
-    for (const child of node.childNodes || []) {
+    for (const child of Array.from(node.childNodes || [])) {
       if (child.nodeType !== ELEMENT_NODE) continue;
       const t = getTagName(child);
       if (t === "tr") {
         const cells = [];
-        for (const c of child.childNodes || []) {
+        for (const c of Array.from(child.childNodes || [])) {
           if (c.nodeType === ELEMENT_NODE && (getTagName(c) === "th" || getTagName(c) === "td")) {
             const cellMd = convertChildren(c, { ...ctx, inline: true })
               .replace(/\s*\n+\s*/g, " ")
@@ -752,7 +781,7 @@ function renderTable(tableEl, ctx) {
 }
 
 function firstNonWhitespaceChild(node) {
-  for (const child of (node && node.childNodes) || []) {
+  for (const child of Array.from((node && node.childNodes) || [])) {
     if (child.nodeType === TEXT_NODE && !(child.nodeValue || "").trim()) continue;
     return child;
   }
@@ -785,14 +814,14 @@ function renderList(listEl, ordered, ctx) {
   let index = Number.isFinite(startAttr) && startAttr > 0 ? startAttr : 1;
   const lines = [];
 
-  for (const child of listEl.childNodes || []) {
+  for (const child of Array.from(listEl.childNodes || [])) {
     if (child.nodeType !== ELEMENT_NODE) continue;
     if (getTagName(child) !== "li") continue;
 
     const task = extractTaskCheckbox(child);
     let itemInline = "";
     let nestedBlocks = "";
-    for (const liChild of child.childNodes || []) {
+    for (const liChild of Array.from(child.childNodes || [])) {
       if (liChild.nodeType === ELEMENT_NODE) {
         const liChildTag = getTagName(liChild);
         if (liChildTag === "ul" || liChildTag === "ol") {
@@ -821,7 +850,7 @@ function renderList(listEl, ordered, ctx) {
 
 function convertChildren(node, ctx) {
   let out = "";
-  for (const child of node.childNodes || []) {
+  for (const child of Array.from(node.childNodes || [])) {
     out += convertNode(child, ctx);
   }
   return out;
@@ -839,7 +868,7 @@ function* nonemptyTextNodes(node) {
     if (node.nodeValue) yield node;
     return;
   }
-  for (const child of node.childNodes || []) yield* nonemptyTextNodes(child);
+  for (const child of Array.from(node.childNodes || [])) yield* nonemptyTextNodes(child);
 }
 
 function selectedLineBreakModes(range, fragment) {
@@ -1078,7 +1107,7 @@ function hasMarkdownStructure(node) {
       return true;
     }
   }
-  for (const child of node.childNodes || []) {
+  for (const child of Array.from(node.childNodes || [])) {
     if (hasMarkdownStructure(child)) return true;
   }
   return false;
@@ -1270,12 +1299,666 @@ export function formatRecentTurns(turnsSlice, maxChars = 4000) {
   return truncateCleanly(joinEntries(trimmed), maxChars);
 }
 
+export function extractSessionOpening(messages, maxChars = 300) {
+  if (!Array.isArray(messages)) return "";
+  for (const entry of messages) {
+    if (!entry || entry.role !== "user") continue;
+    const trimmed = String(entry.text || "").trim();
+    if (trimmed) return truncateCleanly(trimmed, maxChars);
+  }
+  return "";
+}
+
+const LEAD_PROSE_SKIP_TAGS = new Set([
+  "nav", "header", "footer", "aside", "script", "style", "noscript",
+  "form", "button", "svg", "textarea", "select", "input", "pre", "dialog"
+]);
+
+const LEAD_HEADING_SKIP_TAGS = new Set([
+  "nav", "footer", "aside", "script", "style", "noscript",
+  "form", "button", "svg", "textarea", "select", "dialog"
+]);
+
+const FRAGMENT_SKIP_TAGS = new Set([
+  "script", "style", "noscript", "svg", "button", "nav", "form",
+  "textarea", "select", "input", "iframe", "template", "head", "title", "meta", "link"
+]);
+
+const FRAGMENT_BLOCK_TAGS = new Set([
+  "address", "article", "aside", "blockquote", "dd", "details", "dialog",
+  "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
+  "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "li", "main", "nav",
+  "ol", "p", "pre", "section", "summary", "table", "tbody", "td", "tfoot",
+  "th", "thead", "tr", "ul"
+]);
+
+function isExcludedOverlayOrHidden(el) {
+  return (
+    getAttr(el, "data-coding-rewind-ui") === "1" ||
+    getAttr(el, "data-markdown-copy") === "exclude" ||
+    getAttr(el, "aria-hidden") === "true" ||
+    getAttr(el, "hidden") !== null ||
+    hasClass(el, "screen-reader-user-query-label") ||
+    isCodeGutterElement(el)
+  );
+}
+
+function normalizeComparableText(text) {
+  return String(text || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function extractCleanDomText(node, { stopAtNestedLists = false } = {}) {
+  if (!node) return "";
+  if (node.nodeType === TEXT_NODE) return node.nodeValue ?? node.textContent ?? "";
+  if (node.nodeType !== ELEMENT_NODE && node.nodeType !== DOCUMENT_FRAGMENT_NODE && node.nodeType !== DOCUMENT_NODE) {
+    return "";
+  }
+  if (node.nodeType === ELEMENT_NODE) {
+    const tag = getTagName(node);
+    if (tag === "br") return " ";
+    if (SKIP_TAGS.has(tag) || tag === "input" || isExcludedOverlayOrHidden(node)) return "";
+    if (stopAtNestedLists && (tag === "ul" || tag === "ol")) return "";
+  }
+  let out = "";
+  for (const child of Array.from(node.childNodes || [])) {
+    out += extractCleanDomText(child, { stopAtNestedLists });
+  }
+  return out;
+}
+
+function cleanSingleLineLeadText(node, options) {
+  return extractCleanDomText(node, options).replace(/\s+/g, " ").trim();
+}
+
+function isInsideSemanticMain(node) {
+  return Boolean(
+    findAncestorElement(node?.parentNode || node?.parentElement, (anc) => {
+      const t = getTagName(anc);
+      return t === "article" || t === "main" || getAttr(anc, "role") === "main";
+    })
+  );
+}
+
+function isDisallowedHeadingElement(el, hasSemanticMain) {
+  let cur = el;
+  while (cur && cur.nodeType === ELEMENT_NODE) {
+    const tag = getTagName(cur);
+    if (LEAD_HEADING_SKIP_TAGS.has(tag) || isExcludedOverlayOrHidden(cur)) return true;
+    if (tag === "header" && hasSemanticMain && !isInsideSemanticMain(cur)) return true;
+    cur = cur.parentNode || cur.parentElement;
+  }
+  return false;
+}
+
+function isNodeStrictlyBefore(nodeA, nodeB, rootNode) {
+  if (!nodeA || !nodeB || nodeA === nodeB) return false;
+  if (nodeContains(nodeA, nodeB) || nodeContains(nodeB, nodeA)) return false;
+  if (typeof nodeA.compareDocumentPosition === "function") {
+    const pos = nodeA.compareDocumentPosition(nodeB);
+    if ((pos & 1) === 0) return (pos & 4) !== 0;
+  }
+  if (!rootNode) return false;
+  let seenA = false;
+  let result = null;
+  const walk = (cur) => {
+    if (result !== null || !cur) return;
+    if (cur === nodeA) {
+      seenA = true;
+      return;
+    }
+    if (cur === nodeB) {
+      result = seenA;
+      return;
+    }
+    for (const child of Array.from(cur.childNodes || [])) {
+      walk(child);
+      if (result !== null) return;
+    }
+  };
+  walk(rootNode);
+  return Boolean(result);
+}
+
+function readLeadMetaDescription(doc) {
+  if (!doc || typeof doc.querySelectorAll !== "function") return "";
+  let metas = [];
+  try {
+    metas = Array.from(doc.querySelectorAll("meta") || []);
+  } catch {
+    return "";
+  }
+  for (const key of ["description", "og:description", "twitter:description"]) {
+    for (const meta of metas) {
+      const nameAttr = String(getAttr(meta, "name") || "").trim().toLowerCase();
+      const propAttr = String(getAttr(meta, "property") || "").trim().toLowerCase();
+      if (nameAttr === key || propAttr === key) {
+        const content = String(getAttr(meta, "content") || "").replace(/\s+/g, " ").trim();
+        if (content) return content;
+      }
+    }
+  }
+  return "";
+}
+
+function hasDirectChildProseContainers(el) {
+  for (const child of Array.from(el.childNodes || [])) {
+    if (child.nodeType !== ELEMENT_NODE) continue;
+    if (LEAD_PROSE_SKIP_TAGS.has(getTagName(child)) || isExcludedOverlayOrHidden(child)) continue;
+    const t = getTagName(child);
+    if (t === "p" || t === "blockquote") return true;
+    if (hasDirectChildProseContainers(child)) return true;
+  }
+  return false;
+}
+
+function collectProseBlocks(root, maxBlocks = 5) {
+  const blocks = [];
+  const visit = (node) => {
+    if (!node || blocks.length >= maxBlocks) return;
+    if (node.nodeType === ELEMENT_NODE) {
+      const tag = getTagName(node);
+      if (LEAD_PROSE_SKIP_TAGS.has(tag) || isExcludedOverlayOrHidden(node)) return;
+      if (tag === "p") {
+        const text = cleanSingleLineLeadText(node);
+        if (text) blocks.push(text);
+        return;
+      }
+      if (tag === "blockquote") {
+        if (!hasDirectChildProseContainers(node)) {
+          const text = cleanSingleLineLeadText(node);
+          if (text) blocks.push(text);
+          return;
+        }
+      } else if (tag === "li") {
+        if (!hasDirectChildProseContainers(node)) {
+          const direct = cleanSingleLineLeadText(node, { stopAtNestedLists: true });
+          if (direct) blocks.push(direct);
+        }
+      }
+    }
+    for (const child of Array.from(node.childNodes || [])) {
+      if (blocks.length >= maxBlocks) break;
+      visit(child);
+    }
+  };
+  visit(root);
+  return blocks;
+}
+
+export function extractPageLead(doc, selectionRange = null, sessionTitle = "", maxChars = 300) {
+  if (!doc) return "";
+
+  const seen = new Set();
+  const normalizedTitle = normalizeComparableText(sessionTitle);
+  if (normalizedTitle) seen.add(normalizedTitle);
+  const cleanedDocTitle = normalizeComparableText(cleanSessionTitle(doc.title || ""));
+  if (cleanedDocTitle) seen.add(cleanedDocTitle);
+
+  const pieces = [];
+  const addPiece = (rawText, prefix = "") => {
+    const clean = String(rawText || "").replace(/\s+/g, " ").trim();
+    if (!clean) return false;
+    const key = normalizeComparableText(clean);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    pieces.push(prefix ? `${prefix}${clean}` : clean);
+    return true;
+  };
+
+  let hasSemanticMain = false;
+  if (typeof doc.querySelector === "function") {
+    try {
+      hasSemanticMain = Boolean(doc.querySelector("article, main, [role='main']"));
+    } catch {
+      hasSemanticMain = false;
+    }
+  }
+
+  if (typeof doc.querySelectorAll === "function") {
+    for (const sel of ["article h1", "main h1", "[role='main'] h1", "h1"]) {
+      let candidates = [];
+      try {
+        candidates = Array.from(doc.querySelectorAll(sel) || []);
+      } catch {
+        continue;
+      }
+      let addedH1 = false;
+      for (const h1 of candidates) {
+        if (isDisallowedHeadingElement(h1, hasSemanticMain)) continue;
+        const h1Text = cleanSingleLineLeadText(h1);
+        if (h1Text) {
+          addPiece(h1Text);
+          addedH1 = true;
+          break;
+        }
+      }
+      if (addedH1) break;
+    }
+
+    const rangeAnchor = selectionRange?.startContainer || selectionRange?.commonAncestorContainer || null;
+    if (rangeAnchor) {
+      let sectionHeadings = [];
+      try {
+        sectionHeadings = Array.from(doc.querySelectorAll("h2, h3, h4") || []);
+      } catch {
+        sectionHeadings = [];
+      }
+      const orderRoot =
+        (typeof doc.querySelector === "function" && doc.querySelector("body")) || doc.body || doc;
+      let nearestSection = "";
+      for (const heading of sectionHeadings) {
+        if (isDisallowedHeadingElement(heading, hasSemanticMain)) continue;
+        if (!isNodeStrictlyBefore(heading, rangeAnchor, orderRoot)) continue;
+        const text = cleanSingleLineLeadText(heading);
+        if (text) nearestSection = text;
+      }
+      if (nearestSection) {
+        addPiece(nearestSection, "§ ");
+      }
+    }
+  }
+
+  const metaDescription = readLeadMetaDescription(doc);
+  if (metaDescription) {
+    addPiece(metaDescription);
+  }
+
+  const candidateRoots = [];
+  if (typeof doc.querySelector === "function") {
+    for (const sel of ["article", "main", "[role='main']", "body"]) {
+      try {
+        const found = doc.querySelector(sel);
+        if (found && !candidateRoots.includes(found)) candidateRoots.push(found);
+      } catch {}
+    }
+  }
+  if (doc.body && !candidateRoots.includes(doc.body)) candidateRoots.push(doc.body);
+  if (!candidateRoots.includes(doc)) candidateRoots.push(doc);
+
+  for (const root of candidateRoots) {
+    const rawBlocks = collectProseBlocks(root, 8);
+    if (rawBlocks.length === 0) continue;
+    let addedBlocks = 0;
+    for (const block of rawBlocks) {
+      if (addPiece(block)) {
+        addedBlocks += 1;
+        if (addedBlocks >= 5) break;
+      }
+    }
+    break;
+  }
+
+  if (pieces.length === 0) return "";
+  return truncateCleanly(pieces.join("\n"), maxChars);
+}
+
+function isCjkCodePoint(ch) {
+  if (!ch) return false;
+  const cp = ch.codePointAt(0);
+  return (
+    (cp >= 0x3400 && cp <= 0x9fff) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0x3040 && cp <= 0x30ff) ||
+    (cp >= 0xac00 && cp <= 0xd7af)
+  );
+}
+
+function truncateAtCodePointEnd(str, maxLen) {
+  if (str.length <= maxLen) return str;
+  let cut = str.slice(0, maxLen);
+  if (cut.length > 0) {
+    const last = cut.charCodeAt(cut.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+  }
+  return cut.trimEnd();
+}
+
+function sliceFromCodePointStart(str, startIdx) {
+  let idx = Math.max(0, startIdx);
+  if (idx > 0 && idx < str.length) {
+    const code = str.charCodeAt(idx);
+    if (code >= 0xdc00 && code <= 0xdfff) idx += 1;
+  }
+  return str.slice(idx).trimStart();
+}
+
+function snapFragmentPrefix(rawBefore, maxChars = 30) {
+  const trimmed = String(rawBefore || "").replace(/\s+/g, " ").trim();
+  if (!trimmed || !/[\p{L}\p{N}]/u.test(trimmed)) return "";
+  if (trimmed.length <= maxChars) return trimmed;
+  const startIdx = trimmed.length - maxChars;
+  let candidate = "";
+  if (trimmed[startIdx - 1] === " ") {
+    candidate = trimmed.slice(startIdx).trimStart();
+  } else if (isCjkCodePoint(trimmed[startIdx]) || isCjkCodePoint(trimmed[startIdx - 1])) {
+    candidate = sliceFromCodePointStart(trimmed, startIdx);
+  } else {
+    const nextSpace = trimmed.indexOf(" ", startIdx);
+    if (nextSpace >= 0 && nextSpace + 1 < trimmed.length) {
+      candidate = trimmed.slice(nextSpace + 1).trimStart();
+    } else {
+      const prevSpace = trimmed.lastIndexOf(" ", startIdx);
+      if (prevSpace >= 0 && trimmed.length - (prevSpace + 1) <= 45) {
+        candidate = trimmed.slice(prevSpace + 1).trimStart();
+      }
+    }
+  }
+  return /[\p{L}\p{N}]/u.test(candidate) ? candidate : "";
+}
+
+function snapFragmentSuffix(rawAfter, maxChars = 30) {
+  const trimmed = String(rawAfter || "").replace(/\s+/g, " ").trim();
+  if (!trimmed || !/[\p{L}\p{N}]/u.test(trimmed)) return "";
+  if (trimmed.length <= maxChars) return trimmed;
+  let candidate = "";
+  if (trimmed[maxChars] === " ") {
+    candidate = trimmed.slice(0, maxChars).trimEnd();
+  } else if (isCjkCodePoint(trimmed[maxChars - 1]) || isCjkCodePoint(trimmed[maxChars])) {
+    candidate = truncateAtCodePointEnd(trimmed, maxChars);
+  } else {
+    const lastSpace = trimmed.lastIndexOf(" ", maxChars);
+    if (lastSpace > 0) {
+      candidate = trimmed.slice(0, lastSpace).trimEnd();
+    } else {
+      const nextSpace = trimmed.indexOf(" ", maxChars);
+      if (nextSpace > 0 && nextSpace <= 45) {
+        candidate = trimmed.slice(0, nextSpace).trimEnd();
+      }
+    }
+  }
+  return /[\p{L}\p{N}]/u.test(candidate) ? candidate : "";
+}
+
+function snapFragmentStart(text, minChars = 40, maxChars = 55) {
+  const trimmed = String(text || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxChars) return trimmed;
+  for (let i = maxChars; i >= minChars; i -= 1) {
+    if (trimmed[i] === " ") return trimmed.slice(0, i).trimEnd();
+  }
+  if (isCjkCodePoint(trimmed[47]) || isCjkCodePoint(trimmed[46])) {
+    return truncateAtCodePointEnd(trimmed, 48);
+  }
+  const earlierSpace = trimmed.lastIndexOf(" ", minChars);
+  if (earlierSpace >= 12) return trimmed.slice(0, earlierSpace).trimEnd();
+  const laterSpace = trimmed.indexOf(" ", maxChars + 1);
+  if (laterSpace > 0 && laterSpace <= 75) return trimmed.slice(0, laterSpace).trimEnd();
+  return truncateAtCodePointEnd(trimmed, maxChars);
+}
+
+function snapFragmentEnd(text, minChars = 40, maxChars = 55) {
+  const trimmed = String(text || "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= maxChars) return trimmed;
+  const len = trimmed.length;
+  const earliestStart = Math.max(0, len - maxChars);
+  const latestStart = Math.max(0, len - minChars);
+  for (let i = earliestStart; i <= latestStart; i += 1) {
+    if (trimmed[i] === " " && i + 1 < len) {
+      return trimmed.slice(i + 1).trimStart();
+    }
+  }
+  const cjkStart = len - 48;
+  if (cjkStart > 0 && (isCjkCodePoint(trimmed[cjkStart]) || isCjkCodePoint(trimmed[cjkStart - 1]))) {
+    return sliceFromCodePointStart(trimmed, cjkStart);
+  }
+  const laterSpace = trimmed.indexOf(" ", latestStart + 1);
+  if (laterSpace > 0 && len - (laterSpace + 1) >= 12) {
+    return trimmed.slice(laterSpace + 1).trimStart();
+  }
+  const earlierSpace = trimmed.lastIndexOf(" ", earliestStart - 1);
+  if (earlierSpace >= 0 && len - (earlierSpace + 1) <= 75) {
+    return trimmed.slice(earlierSpace + 1).trimStart();
+  }
+  return sliceFromCodePointStart(trimmed, len - maxChars);
+}
+
+function encodeFragmentAtom(atom) {
+  const safe = typeof atom.toWellFormed === "function" ? atom.toWellFormed() : atom;
+  return encodeURIComponent(safe)
+    .replace(/-/g, "%2D")
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29");
+}
+
+function shouldSkipFragmentElement(el) {
+  return FRAGMENT_SKIP_TAGS.has(getTagName(el)) || isExcludedOverlayOrHidden(el);
+}
+
+function clampRangeOffset(offset, maxLen) {
+  const num = Number(offset);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Math.min(Math.floor(num), maxLen);
+}
+
+function resolveFragmentWalkRoot(selectionRange, doc) {
+  const { startContainer, endContainer, commonAncestorContainer } = selectionRange;
+  const candidates = [];
+  if (doc && typeof doc.querySelector === "function") {
+    for (const sel of ["article", "main", "[role='main']", "body"]) {
+      try {
+        const found = doc.querySelector(sel);
+        if (found) candidates.push(found);
+      } catch {}
+    }
+  }
+  if (doc?.body) candidates.push(doc.body);
+  if (doc) candidates.push(doc);
+
+  for (const candidate of candidates) {
+    if (
+      startContainer &&
+      endContainer &&
+      (candidate === startContainer || nodeContains(candidate, startContainer)) &&
+      (candidate === endContainer || nodeContains(candidate, endContainer))
+    ) {
+      return candidate;
+    }
+  }
+
+  let cur = commonAncestorContainer || startContainer || null;
+  let top = cur;
+  while (cur) {
+    if (
+      (!startContainer || cur === startContainer || nodeContains(cur, startContainer)) &&
+      (!endContainer || cur === endContainer || nodeContains(cur, endContainer))
+    ) {
+      top = cur;
+    }
+    const next = cur.parentNode || cur.parentElement;
+    if (!next || next.nodeType === DOCUMENT_NODE) break;
+    cur = next;
+  }
+  return top;
+}
+
+function collectRangeBlockRuns(selectionRange, doc) {
+  if (!selectionRange) return [];
+  const hasEndpoints = Boolean(selectionRange.startContainer && selectionRange.endContainer);
+  const startContainer = hasEndpoints ? selectionRange.startContainer : null;
+  const endContainer = hasEndpoints ? selectionRange.endContainer : null;
+  const startOffset = selectionRange.startOffset ?? 0;
+  const endOffset = selectionRange.endOffset ?? 0;
+
+  if (hasEndpoints && startContainer === endContainer && startOffset === endOffset) {
+    return [];
+  }
+
+  const walkRoot = hasEndpoints
+    ? resolveFragmentWalkRoot(selectionRange, doc)
+    : (typeof selectionRange.cloneContents === "function" ? selectionRange.cloneContents() : null);
+  if (!walkRoot) return [];
+
+  const blocks = new Map();
+  let currentBlockId = 0;
+  let phase = hasEndpoints ? "before" : "selected";
+
+  const appendBucket = (bucket, text) => {
+    if (!text) return;
+    let entry = blocks.get(currentBlockId);
+    if (!entry) {
+      entry = { before: "", selected: "", after: "" };
+      blocks.set(currentBlockId, entry);
+    }
+    entry[bucket] += text;
+  };
+
+  const visit = (node) => {
+    if (!node) return;
+    if (node.nodeType === TEXT_NODE) {
+      const val = node.nodeValue ?? node.textContent ?? "";
+      if (node === startContainer && node === endContainer) {
+        const s = clampRangeOffset(startOffset, val.length);
+        const e = Math.max(s, clampRangeOffset(endOffset, val.length));
+        appendBucket("before", val.slice(0, s));
+        appendBucket("selected", val.slice(s, e));
+        appendBucket("after", val.slice(e));
+        phase = "after";
+        return;
+      }
+      if (node === startContainer) {
+        const s = clampRangeOffset(startOffset, val.length);
+        appendBucket("before", val.slice(0, s));
+        phase = "selected";
+        appendBucket("selected", val.slice(s));
+        return;
+      }
+      if (node === endContainer) {
+        const e = clampRangeOffset(endOffset, val.length);
+        appendBucket("selected", val.slice(0, e));
+        phase = "after";
+        appendBucket("after", val.slice(e));
+        return;
+      }
+      appendBucket(phase, val);
+      return;
+    }
+
+    if (
+      node.nodeType !== ELEMENT_NODE &&
+      node.nodeType !== DOCUMENT_FRAGMENT_NODE &&
+      node.nodeType !== DOCUMENT_NODE
+    ) {
+      return;
+    }
+
+    if (node.nodeType === ELEMENT_NODE) {
+      if (shouldSkipFragmentElement(node)) {
+        if (phase === "before" && startContainer && (node === startContainer || nodeContains(node, startContainer))) {
+          phase = "selected";
+        }
+        if (phase === "selected" && endContainer && (node === endContainer || nodeContains(node, endContainer))) {
+          phase = "after";
+        }
+        return;
+      }
+      if (getTagName(node) === "br") {
+        if (node === startContainer && startOffset === 0 && phase === "before") phase = "selected";
+        if (node === endContainer && endOffset === 0 && phase === "selected") phase = "after";
+        appendBucket(phase, "\n");
+        if (node === startContainer && startOffset > 0 && phase === "before") phase = "selected";
+        if (node === endContainer && endOffset > 0 && phase === "selected") phase = "after";
+        return;
+      }
+    }
+
+    const isBlock = node.nodeType === ELEMENT_NODE && FRAGMENT_BLOCK_TAGS.has(getTagName(node));
+    if (isBlock) currentBlockId += 1;
+
+    const children = Array.from(node.childNodes || []);
+    for (let i = 0; i < children.length; i += 1) {
+      if (node === startContainer && i === startOffset && phase === "before") phase = "selected";
+      if (node === endContainer && i === endOffset && phase === "selected") phase = "after";
+      visit(children[i]);
+    }
+    if (node === startContainer && startOffset >= children.length && phase === "before") phase = "selected";
+    if (node === endContainer && endOffset >= children.length && phase === "selected") phase = "after";
+
+    if (isBlock) currentBlockId += 1;
+  };
+
+  visit(walkRoot);
+  return Array.from(blocks.values()).filter((b) => b.selected.trim().length > 0);
+}
+
+export function buildTextFragmentUrl(rawUrl, selectionRange, doc) {
+  const originalUrl = String(rawUrl || "").trim();
+  if (!originalUrl || !selectionRange) return originalUrl;
+
+  let parsed;
+  try {
+    parsed = new URL(originalUrl);
+  } catch {
+    return originalUrl;
+  }
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== "http:" && proto !== "https:") return originalUrl;
+
+  const selectedBlocks = collectRangeBlockRuns(selectionRange, doc);
+  if (selectedBlocks.length === 0) return originalUrl;
+
+  let prefix = "";
+  let suffix = "";
+  let coreDirective = "";
+
+  if (selectedBlocks.length === 1) {
+    const block = selectedBlocks[0];
+    const exact = block.selected.replace(/\s+/g, " ").trim();
+    if (!exact) return originalUrl;
+    prefix = snapFragmentPrefix(block.before, 30);
+    suffix = snapFragmentSuffix(block.after, 30);
+    if (exact.length <= 120) {
+      coreDirective = encodeFragmentAtom(exact);
+    } else {
+      const startAtom = snapFragmentStart(exact, 40, 55);
+      const endAtom = snapFragmentEnd(exact, 40, 55);
+      if (startAtom && endAtom && startAtom.length + endAtom.length < exact.length) {
+        coreDirective = `${encodeFragmentAtom(startAtom)},${encodeFragmentAtom(endAtom)}`;
+      } else {
+        coreDirective = encodeFragmentAtom(exact);
+      }
+    }
+  } else {
+    const firstBlock = selectedBlocks[0];
+    const lastBlock = selectedBlocks[selectedBlocks.length - 1];
+    const firstSelected = firstBlock.selected.replace(/\s+/g, " ").trim();
+    const lastSelected = lastBlock.selected.replace(/\s+/g, " ").trim();
+    const startAtom = snapFragmentStart(firstSelected, 40, 55);
+    const endAtom = snapFragmentEnd(lastSelected, 40, 55);
+    if (!startAtom || !endAtom) return originalUrl;
+    prefix = snapFragmentPrefix(firstBlock.before, 30);
+    suffix = snapFragmentSuffix(lastBlock.after, 30);
+    coreDirective = `${encodeFragmentAtom(startAtom)},${encodeFragmentAtom(endAtom)}`;
+  }
+
+  if (!coreDirective) return originalUrl;
+
+  const prefixPart = prefix ? `${encodeFragmentAtom(prefix)}-,` : "";
+  const suffixPart = suffix ? `,-${encodeFragmentAtom(suffix)}` : "";
+  const textDirective = `text=${prefixPart}${coreDirective}${suffixPart}`;
+
+  const hashIdx = originalUrl.indexOf("#");
+  if (hashIdx === -1) {
+    return `${originalUrl}#:~:${textDirective}`;
+  }
+  const baseWithoutHash = originalUrl.slice(0, hashIdx);
+  const rawFragment = originalUrl.slice(hashIdx + 1);
+  const directiveIdx = rawFragment.indexOf(":~:");
+  const preservedHash = directiveIdx >= 0 ? rawFragment.slice(0, directiveIdx) : rawFragment;
+  return preservedHash
+    ? `${baseWithoutHash}#${preservedHash}:~:${textDirective}`
+    : `${baseWithoutHash}#:~:${textDirective}`;
+}
+
 export function buildFallbackClip({ selectedMarkdown, sourceUrl = "", title = "" } = {}) {
   const normalizedUrl = String(sourceUrl || "").trim();
   return {
     selectedMarkdown: String(selectedMarkdown ?? ""),
     sourcePlatform: detectPlatform(normalizedUrl),
     sessionTitle: cleanSessionTitle(title),
+    sessionId: "",
+    sessionOpening: "",
+    pageLead: "",
     prompt: "",
     recentTurns: "",
     sourceUrl: normalizedUrl
@@ -1296,12 +1979,23 @@ export function extractClipContext({
   if (!doc) return base;
 
   const sessionTitle = extractSessionTitle(doc, sourceUrl, base.sourcePlatform);
+  if (base.sourcePlatform === "web") {
+    return {
+      ...base,
+      sessionTitle,
+      pageLead: extractPageLead(doc, selectionRange, sessionTitle, 300),
+      sourceUrl: buildTextFragmentUrl(sourceUrl, selectionRange, doc)
+    };
+  }
+
   const messages = extractConversationTurns(doc, base.sourcePlatform, sourceUrl);
   const context = contextThroughSelection(messages, selectionRange, maxRecentRounds);
 
   return {
     ...base,
     sessionTitle,
+    sessionId: extractChatSessionId(sourceUrl, base.sourcePlatform),
+    sessionOpening: extractSessionOpening(messages, 300),
     prompt: context ? truncateCleanly(context.prompt.trim(), 1500) : "",
     recentTurns: context ? formatRecentTurns(context.messages, maxRecentChars) : ""
   };

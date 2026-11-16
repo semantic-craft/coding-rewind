@@ -59,6 +59,9 @@ export function normalizePlatform(rawPlatform) {
 
 export function hasClipContext(clip = {}) {
   return Boolean(
+    (clip.sessionId && String(clip.sessionId).trim()) ||
+    (clip.sessionOpening && String(clip.sessionOpening).trim()) ||
+    (clip.pageLead && String(clip.pageLead).trim()) ||
     (clip.prompt && String(clip.prompt).trim()) ||
     (clip.recentTurns && String(clip.recentTurns).trim())
   );
@@ -120,12 +123,17 @@ export function buildMemosWirePayloads(clip, options = {}) {
 
   const platform = normalizePlatform(clip?.sourcePlatform);
   const sessionTitle = cleanSingleLine(clip?.sessionTitle);
+  const sessionId = cleanSingleLine(clip?.sessionId);
   const prompt = String(clip?.prompt || "").trim();
+  const rawSessionOpening = String(clip?.sessionOpening || "").trim();
+  const rawPageLead = String(clip?.pageLead || "").trim();
+  const pageLead = platform === "web" ? rawPageLead : (rawSessionOpening ? "" : rawPageLead);
+  const sessionOpening = pageLead ? "" : rawSessionOpening;
   const recentTurns = String(clip?.recentTurns || "").trim();
   const sourceUrl = sanitizeMarkdownUrl(clip?.sourceUrl);
   const createdAtIso = formatUtcIso(options.createdAt ?? clip?.createdAt);
 
-  const hasContext = hasClipContext({ prompt, recentTurns });
+  const hasContext = hasClipContext({ sessionId, sessionOpening, pageLead, prompt, recentTurns });
   const tagsLine = hasContext
     ? `#rewind/pending #rewind/has-ctx #source/${platform}`
     : `#rewind/pending #source/${platform}`;
@@ -143,12 +151,21 @@ export function buildMemosWirePayloads(clip, options = {}) {
     visibility: "PRIVATE"
   };
 
-  const commentBody = hasContext
-    ? {
-        content: `<!-- rewind-context-v1 -->\nSession Title: ${sessionTitle}\nPrompt: ${prompt}\n\n### Recent Turns\n${recentTurns}`,
-        visibility: "PRIVATE"
-      }
-    : null;
+  let commentBody = null;
+  if (hasContext) {
+    const headerLines = ["<!-- rewind-context-v1 -->"];
+    if (sessionTitle) headerLines.push(`Session Title: ${sessionTitle}`);
+    if (sessionId) headerLines.push(`Session ID: ${sessionId}`);
+    if (prompt) headerLines.push(`Prompt: ${prompt}`);
+    const sections = [headerLines.join("\n")];
+    if (sessionOpening) sections.push(`### Session Opening\n${sessionOpening}`);
+    else if (pageLead) sections.push(`### Page Lead\n${pageLead}`);
+    if (recentTurns) sections.push(`### Recent Turns\n${recentTurns}`);
+    commentBody = {
+      content: sections.join("\n\n"),
+      visibility: "PRIVATE"
+    };
+  }
 
   return {
     clipId,

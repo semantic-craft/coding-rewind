@@ -11,12 +11,16 @@ import { parseHtmlDocument } from "./test_dom_shim.mjs";
 
 import {
   detectPlatform,
+  extractChatSessionId,
   cleanSessionTitle,
   buildFallbackClip,
   htmlToMarkdown,
   selectionToMarkdown,
   extractSessionTitle,
   extractConversationTurns,
+  extractSessionOpening,
+  extractPageLead,
+  buildTextFragmentUrl,
   extractClipContext
 } from "./extractors.mjs";
 
@@ -83,6 +87,9 @@ test("detectPlatform and cleanSessionTitle strip provider boilerplate", () => {
       selectedMarkdown: "  exact fallback  ",
       sourcePlatform: "chatgpt",
       sessionTitle: "Swift Concurrency Actor Isolation",
+      sessionId: "",
+      sessionOpening: "",
+      pageLead: "",
       prompt: "",
       recentTurns: "",
       sourceUrl: "https://chatgpt.com/c/abc-123"
@@ -94,6 +101,9 @@ test("detectPlatform and cleanSessionTitle strip provider boilerplate", () => {
       selectedMarkdown: "docless selection",
       sourcePlatform: "claude",
       sessionTitle: "",
+      sessionId: "",
+      sessionOpening: "",
+      pageLead: "",
       prompt: "",
       recentTurns: "",
       sourceUrl: "https://claude.ai/chat/1"
@@ -3697,4 +3707,328 @@ test("initOptionsPage handles dynamic token placeholders, blank save preservatio
   assert.deepEqual(fallbackOpened, [
     { u: "https://memos.example.com/notes", target: "_blank", rel: "noopener,noreferrer" }
   ]);
+});
+
+test("extractChatSessionId and extractSessionOpening capture session provenance across >4-round AI chats", () => {
+  assert.equal(extractChatSessionId("https://chatgpt.com/c/67f0a1b2-3344"), "67f0a1b2-3344");
+  assert.equal(extractChatSessionId("https://chat.openai.com/g/g-swift-expert/c/gpt-sess-99?model=o3#bottom"), "gpt-sess-99");
+  assert.equal(extractChatSessionId("https://chatgpt.com/g/g-swift-expert"), "");
+  assert.equal(extractChatSessionId("https://claude.ai/chat/9b8c7d6e-1122-3344"), "9b8c7d6e-1122-3344");
+  assert.equal(extractChatSessionId("https://claude.ai/new"), "");
+  assert.equal(extractChatSessionId("https://gemini.google.com/app/4f5e6d7c"), "4f5e6d7c");
+  assert.equal(extractChatSessionId("https://gemini.google.com/u/2/app/8a9b0c1d/"), "8a9b0c1d");
+  assert.equal(extractChatSessionId("https://gemini.google.com/app"), "");
+  assert.equal(extractChatSessionId("https://example.com/c/not-chatgpt"), "");
+  assert.equal(extractChatSessionId("https://chatgpt.com/c/123", "claude"), "");
+
+  assert.equal(
+    extractSessionOpening([
+      { role: "assistant", text: "Welcome banner" },
+      { role: "user", text: "   " },
+      { role: "user", text: `  ${"Design a non-activating NSPanel HUD. ".repeat(12)}  ` }
+    ], 300).length,
+    300
+  );
+  assert.equal(extractSessionOpening([{ role: "assistant", text: "Only assistant" }]), "");
+
+  const openingGoal =
+    "Build a zero-interruption macOS clip inspector that keeps the card list visible while inspecting long code excerpts and original session goals.";
+  const url = "https://chatgpt.com/g/g-macos-appkit/c/sess-uuid-7788";
+  const doc = parseHtmlDocument(
+    `<html><head><title>Docked HUD Inspector - ChatGPT</title></head><body><main>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">${openingGoal}</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p>Round 1 answer</p></div></div>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Round 2 question</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p>Round 2 answer</p></div></div>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Round 3 question</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p>Round 3 answer</p></div></div>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Round 4 question</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p>Round 4 answer</p></div></div>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">Round 5 question</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p>Round 5 answer</p></div></div>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">How should Esc behave in Round 6?</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p id="r6-pick">Dismiss delete confirmation first, then close the inspector, then hide the panel.</p></div></div>
+    </main></body></html>`,
+    { url }
+  );
+
+  const clip = extractClipContext({
+    doc,
+    selectionRange: doc.createRangeFromNode(doc.querySelector("#r6-pick")),
+    url
+  });
+
+  assert.equal(clip.sourcePlatform, "chatgpt");
+  assert.equal(clip.sessionId, "sess-uuid-7788");
+  assert.equal(clip.sessionOpening, openingGoal);
+  assert.equal(clip.pageLead, "");
+  assert.equal(clip.prompt, "How should Esc behave in Round 6?");
+  assert.doesNotMatch(clip.recentTurns, /Round 1 answer/);
+  assert.doesNotMatch(clip.recentTurns, /Round 2 answer/);
+  assert.match(clip.recentTurns, /^User: Round 3 question/);
+
+  const built = buildMemosWirePayloads(clip, {
+    clipId: "rw-1794366666123-chatopen1",
+    createdAt: "2026-11-16T10:00:00Z"
+  });
+  assert.equal(built.hasContext, true);
+  assert.match(built.memoBody.content, /^#rewind\/pending #rewind\/has-ctx #source\/chatgpt\n\n/);
+  assert.equal(
+    built.commentBody.content,
+    [
+      "<!-- rewind-context-v1 -->",
+      "Session Title: Docked HUD Inspector",
+      "Session ID: sess-uuid-7788",
+      "Prompt: How should Esc behave in Round 6?",
+      "",
+      "### Session Opening",
+      openingGoal,
+      "",
+      "### Recent Turns",
+      clip.recentTurns
+    ].join("\n")
+  );
+});
+
+test("extractPageLead composes distinct h1, preceding § section heading, meta description, and deduplicated prose blocks", () => {
+  const url = "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html";
+  const doc = parseHtmlDocument(
+    `<html>
+      <head>
+        <title>Understanding Ownership - The Rust Book</title>
+        <meta property="og:site_name" content="The Rust Book">
+        <meta name="description" content="How Rust guarantees memory safety without garbage collection.">
+      </head>
+      <body>
+        <header><h1>Rust Documentation Masthead</h1><nav><p>Navigation item</p></nav></header>
+        <aside><p>Sidebar promo text</p></aside>
+        <article>
+          <h1>What Is Ownership?</h1>
+          <p>How Rust guarantees memory safety without garbage collection.</p>
+          <p>Ownership is a set of rules that govern how a Rust program manages memory.</p>
+          <h2>The Stack and the Heap</h2>
+          <p>Both the stack and the heap are parts of memory available to your code at runtime.</p>
+          <h3>Ownership Rules</h3>
+          <ul>
+            <li>Each value in Rust has an owner.</li>
+            <li id="selected-rule">There can only be one owner at a time.</li>
+          </ul>
+          <h2>Memory and Allocation</h2>
+          <p>Later section below the selection must not become the preceding heading.</p>
+        </article>
+        <footer><p>Footer copyright</p></footer>
+        <div data-coding-rewind-ui="1"><p>Stash pill overlay</p></div>
+      </body>
+    </html>`,
+    { url }
+  );
+
+  const sessionTitle = extractSessionTitle(doc, url, "web");
+  assert.equal(sessionTitle, "Understanding Ownership");
+
+  const range = doc.createRangeFromNode(doc.querySelector("#selected-rule"));
+  const lead = extractPageLead(doc, range, sessionTitle, 300);
+
+  assert.ok(lead.length <= 300);
+  const lines = lead.split("\n");
+  assert.equal(lines[0], "What Is Ownership?");
+  assert.equal(lines[1], "§ Ownership Rules");
+  assert.equal(lines[2], "How Rust guarantees memory safety without garbage collection.");
+  assert.equal(lines[3], "Ownership is a set of rules that govern how a Rust program manages memory.");
+  assert.equal(
+    lead.split("How Rust guarantees memory safety without garbage collection.").length - 1,
+    1,
+    "prose block identical to meta description is deduplicated"
+  );
+  assert.doesNotMatch(lead, /Masthead|Navigation item|Sidebar promo|Footer copyright|Stash pill|Memory and Allocation/);
+
+  const sameH1Doc = parseHtmlDocument(
+    `<html><head><title>Exact Same Title</title></head><body><main>
+      <h1>Exact Same Title</h1>
+      <blockquote>Quoted opening insight for readers.</blockquote>
+    </main></body></html>`,
+    { url: "https://example.com/same-h1" }
+  );
+  const sameH1Lead = extractPageLead(sameH1Doc, null, "Exact Same Title", 300);
+  assert.equal(sameH1Lead, "Quoted opening insight for readers.");
+});
+
+test("buildTextFragmentUrl encodes W3C short, >120-char, and multi-block selections, preserves #hash, and stays idempotent", () => {
+  const doc = parseHtmlDocument(
+    `<html><body>
+      <div data-coding-rewind-ui="1">Overlay noise before</div>
+      <article>
+        <p id="p-short">Introductory clause with enough words before target: <span id="short-sel">borrow-checking &amp; lifetimes (v1, v2)</span> prevent use-after-free bugs in safe systems code today.</p>
+        <p id="p-long">Context lead-in words here. <span id="long-sel">Ownership is a compile-time set of rules that govern how a Rust program allocates and frees memory across stack frames and heap buffers without needing a tracing garbage collector.</span> Trailing words after long selection.</p>
+        <div id="multi-sel">
+          <p>First paragraph starts the multi-block selection cleanly with extra words so start snapping engages properly.</p>
+          <p>Second paragraph concludes the multi-block selection cleanly with extra words at the tail end.</p>
+        </div>
+      </article>
+      <div data-coding-rewind-ui="1">Overlay noise after</div>
+    </body></html>`,
+    { url: "https://example.com/spec" }
+  );
+
+  const shortRange = doc.createRangeFromNode(doc.querySelector("#short-sel"));
+  const shortUrl = buildTextFragmentUrl("https://example.com/spec", shortRange, doc);
+  assert.match(shortUrl, /^https:\/\/example\.com\/spec#:~:text=/);
+  const shortDirective = shortUrl.split("#:~:text=")[1];
+  assert.match(
+    shortDirective,
+    /^[^,]+-,borrow%2Dchecking%20%26%20lifetimes%20%28v1%2C%20v2%29,-[^,]+$/
+  );
+  assert.doesNotMatch(shortUrl, /Overlay%20noise/);
+
+  const withHash = buildTextFragmentUrl("https://example.com/spec#memory-model", shortRange, doc);
+  assert.equal(withHash, `https://example.com/spec#memory-model:~:text=${shortDirective}`);
+
+  const reclippedSame = buildTextFragmentUrl(withHash, shortRange, doc);
+  assert.equal(reclippedSame, withHash);
+
+  const longRange = doc.createRangeFromNode(doc.querySelector("#long-sel"));
+  const reclippedNew = buildTextFragmentUrl(withHash, longRange, doc);
+  assert.match(reclippedNew, /^https:\/\/example\.com\/spec#memory-model:~:text=/);
+  assert.doesNotMatch(reclippedNew, /borrow%2Dchecking/);
+  const longDirective = reclippedNew.split(":~:text=")[1];
+  const longParts = longDirective.split(",");
+  assert.equal(longParts.length, 4, "expected prefix-, textStart, textEnd, -suffix");
+  assert.ok(longParts[0].endsWith("-"));
+  assert.ok(longParts[3].startsWith("-"));
+  const decodedStart = decodeURIComponent(longParts[1]);
+  const decodedEnd = decodeURIComponent(longParts[2]);
+  assert.ok(decodedStart.length >= 40 && decodedStart.length <= 55, `textStart length ${decodedStart.length}`);
+  assert.ok(decodedEnd.length >= 40 && decodedEnd.length <= 55, `textEnd length ${decodedEnd.length}`);
+  assert.ok(decodedStart.startsWith("Ownership is a compile-time"));
+  assert.ok(decodedEnd.endsWith("tracing garbage collector."));
+
+  const reclippedPlainFragment = buildTextFragmentUrl(shortUrl, longRange, doc);
+  assert.equal(reclippedPlainFragment, `https://example.com/spec#:~:text=${longDirective}`);
+
+  const multiRange = doc.createRangeFromNode(doc.querySelector("#multi-sel"));
+  const multiUrl = buildTextFragmentUrl("https://example.com/spec", multiRange, doc);
+  const multiParts = multiUrl.split("#:~:text=")[1].split(",");
+  assert.equal(multiParts.length, 2);
+  assert.ok(decodeURIComponent(multiParts[0]).startsWith("First paragraph starts"));
+  assert.ok(decodeURIComponent(multiParts[1]).endsWith("words at the tail end."));
+
+  assert.equal(buildTextFragmentUrl("file:///Users/demo/notes.html", shortRange, doc), "file:///Users/demo/notes.html");
+  assert.equal(buildTextFragmentUrl("https://example.com/spec#", null, doc), "https://example.com/spec#");
+  const collapsedRange = {
+    startContainer: doc.querySelector("#short-sel").childNodes[0],
+    startOffset: 3,
+    endContainer: doc.querySelector("#short-sel").childNodes[0],
+    endOffset: 3
+  };
+  assert.equal(
+    buildTextFragmentUrl("https://example.com/spec#broken-empty", collapsedRange, doc),
+    "https://example.com/spec#broken-empty"
+  );
+});
+
+test("prototype-less NodeList web clip populates pageLead, W3C text fragment URL, #rewind/has-ctx, and Page Lead comment", () => {
+  function toNullProtoNodeList(node) {
+    if (!node || typeof node !== "object") return node;
+    const kids = Array.from(node.childNodes || []);
+    for (const k of kids) toNullProtoNodeList(k);
+    const list = Object.create(null);
+    list.length = kids.length;
+    kids.forEach((k, i) => {
+      list[i] = k;
+    });
+    node.childNodes = Object.freeze(list);
+    const origClone = typeof node.cloneNode === "function" ? node.cloneNode.bind(node) : null;
+    if (origClone) {
+      node.cloneNode = (deep = false) => toNullProtoNodeList(origClone(deep));
+    }
+    return node;
+  }
+
+  const baseUrl = "https://blog.example.org/systems/zero-copy#intro";
+  const doc = parseHtmlDocument(
+    `<html>
+      <head>
+        <title>Zero-Copy Framing | Example Systems Blog</title>
+        <meta property="og:site_name" content="Example Systems Blog">
+        <meta property="og:description" content="Designing zero-copy ring buffers for framed IPC.">
+      </head>
+      <body>
+        <article>
+          <h1>Zero-Copy Ring Buffers</h1>
+          <h2> Scatter-Gather Descriptors </h2>
+          <p>Ring buffers avoid per-message heap allocations: <span id="pick">use mmap(2) &amp; writev(2)</span> for framed batches.</p>
+        </article>
+      </body>
+    </html>`,
+    { url: baseUrl }
+  );
+
+  const pickEl = doc.querySelector("#pick");
+  const rawRange = doc.createRangeFromNode(pickEl);
+  const cloned = toNullProtoNodeList(rawRange.cloneContents());
+  toNullProtoNodeList(doc);
+
+  const range = {
+    ...rawRange,
+    cloneContents() {
+      return cloned;
+    }
+  };
+
+  const clip = extractClipContext({ doc, selectionRange: range, url: baseUrl });
+  assert.equal(clip.sourcePlatform, "web");
+  assert.equal(clip.sessionTitle, "Zero-Copy Framing");
+  assert.equal(clip.sessionId, "");
+  assert.equal(clip.sessionOpening, "");
+  assert.match(clip.pageLead, /^Zero-Copy Ring Buffers\n§ Scatter-Gather Descriptors\nDesigning zero-copy ring buffers for framed IPC\./);
+  assert.match(
+    clip.sourceUrl,
+    /^https:\/\/blog\.example\.org\/systems\/zero-copy#intro:~:text=.*use%20mmap%282%29%20%26%20writev%282%29.*$/
+  );
+
+  assert.equal(hasClipContext(clip), true);
+  const wire = buildMemosWirePayloads(clip, {
+    clipId: "rw-1794366666123-webctx01",
+    createdAt: "2026-11-16T11:00:00Z"
+  });
+  assert.equal(wire.hasContext, true);
+  assert.equal(
+    wire.memoBody.content,
+    `#rewind/pending #rewind/has-ctx #source/web\n\n` +
+      `> **Source:** [Zero-Copy Framing](${clip.sourceUrl}) · 2026-11-16T11:00:00Z\n\n` +
+      `use mmap(2) & writev(2)`
+  );
+  assert.equal(
+    wire.commentBody.content,
+    `<!-- rewind-context-v1 -->\nSession Title: Zero-Copy Framing\n\n### Page Lead\n${clip.pageLead}`
+  );
+  assert.doesNotMatch(wire.commentBody.content, /### Session Opening/);
+
+  const textNodeDoc = parseHtmlDocument(`<article><p id="p">Prefix words before target, item#1, item#2, and trailing words after.</p></article>`, {
+    url: "https://example.org/hash-comma"
+  });
+  const pText = textNodeDoc.querySelector("#p").childNodes[0];
+  const subStart = pText.nodeValue.indexOf("item#1, item#2");
+  const subRange = {
+    startContainer: pText,
+    startOffset: subStart,
+    endContainer: pText,
+    endOffset: subStart + "item#1, item#2".length,
+    commonAncestorContainer: pText
+  };
+  const subUrl = buildTextFragmentUrl("https://example.org/hash-comma", subRange, textNodeDoc);
+  assert.match(subUrl, /-,item%231%2C%20item%232,-/);
+
+  const mutualWeb = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Body",
+      sourcePlatform: "web",
+      sessionTitle: "Article",
+      sessionOpening: "Should be suppressed on web when pageLead exists",
+      pageLead: "Authoritative web page lead"
+    },
+    { clipId: "rw-1794366666123-mutual01", createdAt: "2026-11-16T11:05:00Z" }
+  );
+  assert.match(mutualWeb.commentBody.content, /### Page Lead\nAuthoritative web page lead$/);
+  assert.doesNotMatch(mutualWeb.commentBody.content, /### Session Opening/);
 });
