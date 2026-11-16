@@ -37,10 +37,22 @@ struct SnippetCLITests {
             json: false
         ))
 
+        #expect(CLIParser.usageText.contains("coding-rewind delete <id> [--json]"))
+
         let getNoCtx = try CLIParser.parse(arguments: ["coding-rewind", "get", "memos/rw-1", "--no-context", "--json"])
         #expect(getNoCtx == .get(id: "rw-1", includeContext: false, dataDir: nil, json: true))
 
+        let deleteDefault = try CLIParser.parse(arguments: ["coding-rewind", "delete", "rw-1"])
+        #expect(deleteDefault == .delete(id: "rw-1", dataDir: nil, json: false))
+
+        let deleteWithFlags = try CLIParser.parse(arguments: [
+            "coding-rewind", "delete", "memos/rw-1", "--json", "--data-dir", "/Users/shared/cr-data"
+        ])
+        #expect(deleteWithFlags == .delete(id: "rw-1", dataDir: "/Users/shared/cr-data", json: true))
+
         for badArgs in [
+            ["coding-rewind"],
+            ["coding-rewind", "unknown-cmd"],
             ["coding-rewind", "list", "--limit", "0"],
             ["coding-rewind", "list", "--limit", "501"],
             ["coding-rewind", "list", "--window", "invalid"],
@@ -49,11 +61,32 @@ struct SnippetCLITests {
             ["coding-rewind", "get", "memos/../foo"],
             ["coding-rewind", "get", "memos/ foo"],
             ["coding-rewind", "get", ".."],
-            ["coding-rewind", "archive", "memos/../foo"]
+            ["coding-rewind", "archive", "memos/../foo"],
+            ["coding-rewind", "delete"],
+            ["coding-rewind", "delete", "rw-1", "extra"],
+            ["coding-rewind", "delete", "rw-1", "--unknown"],
+            ["coding-rewind", "delete", "rw-1", "-x"],
+            ["coding-rewind", "delete", "memos/../foo"],
+            ["coding-rewind", "delete", "memos/ foo"],
+            ["coding-rewind", "delete", ".."]
         ] {
             #expect(throws: CLIValidationError.self) {
                 _ = try CLIParser.parse(arguments: badArgs)
             }
+        }
+
+        do {
+            _ = try CLIParser.parse(arguments: ["coding-rewind"])
+            Issue.record("Expected CLIValidationError for missing subcommand")
+        } catch let error as CLIValidationError {
+            #expect(error.message.contains("list, search, get, archive, delete, mcp"))
+        }
+
+        do {
+            _ = try CLIParser.parse(arguments: ["coding-rewind", "unknown-cmd"])
+            Issue.record("Expected CLIValidationError for unknown subcommand")
+        } catch let error as CLIValidationError {
+            #expect(error.message.contains("list, search, get, archive, delete, mcp"))
         }
     }
 
@@ -148,6 +181,89 @@ struct SnippetCLITests {
         )
         #expect(codeBadID == 64)
         #expect(errBadID.value().contains("Invalid snippet id"))
+
+        let outDelete1 = OutputCollector()
+        let errDelete1 = OutputCollector()
+        let codeDelete1 = await CLIRunner.run(
+            arguments: ["coding-rewind", "delete", "memos/rw-recent-ready", "--data-dir", dir.path, "--json"],
+            environment: [:],
+            now: { SnippetCLIFixtures.fixedNow },
+            writeStdout: outDelete1.append,
+            writeStderr: errDelete1.append,
+            repositoryFactory: { _, _, _ in backend }
+        )
+        #expect(codeDelete1 == 0)
+        #expect(errDelete1.value().isEmpty)
+        let deleted1 = try decoder.decode(SnippetDeletionResult.self, from: Data(outDelete1.value().utf8))
+        #expect(deleted1 == SnippetDeletionResult(id: "rw-recent-ready", deleted: true, disposition: .remoteAndLocal))
+
+        let outDelete2 = OutputCollector()
+        let codeDelete2 = await CLIRunner.run(
+            arguments: ["coding-rewind", "delete", "rw-recent-ready", "--data-dir", dir.path, "--json"],
+            environment: [:],
+            now: { SnippetCLIFixtures.fixedNow },
+            writeStdout: outDelete2.append,
+            writeStderr: { _ in },
+            repositoryFactory: { _, _, _ in backend }
+        )
+        #expect(codeDelete2 == 0)
+        let deleted2 = try decoder.decode(SnippetDeletionResult.self, from: Data(outDelete2.value().utf8))
+        #expect(deleted2 == SnippetDeletionResult(id: "rw-recent-ready", deleted: false, disposition: .alreadyAbsent))
+
+        let errAfterDelete = OutputCollector()
+        let codeAfterDelete = await CLIRunner.run(
+            arguments: ["coding-rewind", "get", "rw-recent-ready", "--data-dir", dir.path],
+            environment: [:],
+            now: { SnippetCLIFixtures.fixedNow },
+            writeStdout: { _ in },
+            writeStderr: errAfterDelete.append,
+            repositoryFactory: { _, _, _ in backend }
+        )
+        #expect(codeAfterDelete == 1)
+        #expect(errAfterDelete.value().contains("未找到片段：rw-recent-ready"))
+
+        let outDeleteHuman = OutputCollector()
+        let codeDeleteHuman = await CLIRunner.run(
+            arguments: ["coding-rewind", "delete", "rw-old-120h", "--data-dir", dir.path],
+            environment: [:],
+            now: { SnippetCLIFixtures.fixedNow },
+            writeStdout: outDeleteHuman.append,
+            writeStderr: { _ in },
+            repositoryFactory: { _, _, _ in backend }
+        )
+        #expect(codeDeleteHuman == 0)
+        #expect(outDeleteHuman.value() == "Deleted snippet rw-old-120h (remote and local cache).\n")
+
+        let outDeleteAbsentHuman = OutputCollector()
+        let codeDeleteAbsentHuman = await CLIRunner.run(
+            arguments: ["coding-rewind", "delete", "rw-old-120h", "--data-dir", dir.path],
+            environment: [:],
+            now: { SnippetCLIFixtures.fixedNow },
+            writeStdout: outDeleteAbsentHuman.append,
+            writeStderr: { _ in },
+            repositoryFactory: { _, _, _ in backend }
+        )
+        #expect(codeDeleteAbsentHuman == 0)
+        #expect(outDeleteAbsentHuman.value() == "Snippet rw-old-120h was already absent.\n")
+
+        let errDeleteBadID = OutputCollector()
+        let codeDeleteBadID = await CLIRunner.run(
+            arguments: ["coding-rewind", "delete", "memos/../foo", "--data-dir", dir.path],
+            environment: [:],
+            now: { SnippetCLIFixtures.fixedNow },
+            writeStdout: { _ in },
+            writeStderr: errDeleteBadID.append,
+            repositoryFactory: { _, _, _ in backend }
+        )
+        #expect(codeDeleteBadID == 64)
+        #expect(errDeleteBadID.value().contains("Invalid snippet id"))
+
+        #expect(SnippetFormatter.formatDeletedMarkdown(
+            SnippetDeletionResult(id: "rw-pend", deleted: true, disposition: .localPendingOnly)
+        ) == "Deleted offline pending snippet rw-pend.")
+        #expect(SnippetFormatter.formatDeletedMarkdown(
+            SnippetDeletionResult(id: "rw-cache", deleted: true, disposition: .alreadyAbsent)
+        ) == "Removed cached snippet rw-cache (already absent on Memos).")
     }
 
     @Test("Bare executablePath falls back to Bundle.main.executableURL and never resolves DeveloperCredentials.plist relative to PWD")
@@ -288,5 +404,166 @@ struct SnippetCLITests {
         #expect(cliDecoded.snippets.map(\.id) == ["rw-cached-1"])
         #expect(cliDecoded.snippets.first?.verbatimText == "Exact cached body line 1\nExact cached body line 2")
         #expect(try Data(contentsOf: paths.hotCacheFileURL) == cacheBefore)
+    }
+
+    @Test("Real coding-rewind delete subprocess handles remote 200/404, offline outbox removal, and synced HotCache refusal")
+    func subprocessCLIDeleteRemoteAndOfflineBehavior() throws {
+        let dir = try SnippetCLIFixtures.makeIsolatedDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        final class DeleteServerState: @unchecked Sendable {
+            private let lock = NSLock()
+            private var liveIDs: Set<String>
+            private var requests: [(method: String, path: String)] = []
+
+            init(liveIDs: Set<String>) {
+                self.liveIDs = liveIDs
+            }
+
+            func handle(_ req: LoopbackMemosHTTPServer.Request) -> (Int, Data) {
+                guard req.authorization == "Bearer qa-delete-token" else {
+                    return (401, Data(#"{"message":"unauthorized"}"#.utf8))
+                }
+                guard let comps = URLComponents(string: "http://localhost\(req.target)") else {
+                    return (400, Data())
+                }
+                let path = comps.path
+                lock.lock()
+                defer { lock.unlock() }
+                requests.append((req.method, path))
+                if req.method == "DELETE", path.hasPrefix("/api/memos/") {
+                    let mid = String(path.dropFirst("/api/memos/".count))
+                    if liveIDs.remove(mid) != nil {
+                        return (200, Data("{}".utf8))
+                    }
+                    return (404, Data(#"{"message":"not found"}"#.utf8))
+                }
+                return (404, Data(#"{"message":"unknown route"}"#.utf8))
+            }
+
+            func recordedRequests() -> [(method: String, path: String)] {
+                lock.lock()
+                defer { lock.unlock() }
+                return requests
+            }
+        }
+
+        let state = DeleteServerState(liveIDs: ["rw-del-online"])
+        let server = try LoopbackMemosHTTPServer { state.handle($0) }
+        defer { server.shutdown() }
+
+        let binary = try SnippetCLIFixtures.builtExecutableURL(named: "coding-rewind")
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        func runDeleteSubprocess(_ args: [String], env: [String: String]) throws -> (Int32, Data, Data) {
+            let outPipe = Pipe()
+            let errPipe = Pipe()
+            let proc = Process()
+            proc.executableURL = binary
+            proc.arguments = args
+            proc.environment = env
+            proc.standardInput = FileHandle.nullDevice
+            proc.standardOutput = outPipe
+            proc.standardError = errPipe
+            try proc.run()
+            let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+            let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+            proc.waitUntilExit()
+            return (proc.terminationStatus, outData, errData)
+        }
+
+        let now = Date()
+        let isoNow = MemosWireFormat.formatISO8601UTC(now.addingTimeInterval(-120))
+        func makeCard(id: String, body: String, offlinePending: Bool) throws -> RewindCard {
+            let tag = offlinePending ? "#rewind/pending" : "#rewind/ready"
+            let raw = """
+                \(tag) #source/antigravity
+                > **Title:** \(id)
+                > **Source:** [AGY](conversation://\(id)) · \(isoNow)
+
+                \(body)
+                """
+            return try #require(MemosWireFormat.parseMemo(
+                id: id,
+                rawContent: raw,
+                createdAt: now.addingTimeInterval(-120),
+                now: now,
+                isOfflinePending: offlinePending
+            ))
+        }
+
+        let onlineDir = dir.appendingPathComponent("OnlineData", isDirectory: true)
+        let onlinePaths = try StoragePaths(dataDirectoryURL: onlineDir)
+        try onlinePaths.saveMemosURLString(server.baseURLString)
+        let onlineDelCard = try makeCard(id: "rw-del-online", body: "Online card to delete", offlinePending: false)
+        let onlineKeepCard = try makeCard(id: "rw-keep-online", body: "Online card to keep", offlinePending: false)
+        try HotCache(fileURL: onlinePaths.hotCacheFileURL).saveCards([onlineDelCard, onlineKeepCard], now: now)
+
+        let onlineEnv = [
+            "PATH": "/usr/bin:/bin",
+            "CODING_REWIND_QA": "1",
+            "CODING_REWIND_MEMOS_TOKEN": "qa-delete-token"
+        ]
+        let (stOnline1, outOnline1, errOnline1) = try runDeleteSubprocess(
+            ["delete", "memos/rw-del-online", "--data-dir", onlineDir.path, "--json"],
+            env: onlineEnv
+        )
+        #expect(stOnline1 == 0)
+        #expect(errOnline1.isEmpty)
+        let resOnline1 = try decoder.decode(SnippetDeletionResult.self, from: outOnline1)
+        #expect(resOnline1 == SnippetDeletionResult(id: "rw-del-online", deleted: true, disposition: .remoteAndLocal))
+        #expect(HotCache(fileURL: onlinePaths.hotCacheFileURL).loadCards(now: now).map(\.id) == ["rw-keep-online"])
+
+        let (stOnline2, outOnline2, errOnline2) = try runDeleteSubprocess(
+            ["delete", "rw-del-online", "--data-dir", onlineDir.path, "--json"],
+            env: onlineEnv
+        )
+        #expect(stOnline2 == 0)
+        #expect(errOnline2.isEmpty)
+        let resOnline2 = try decoder.decode(SnippetDeletionResult.self, from: outOnline2)
+        #expect(resOnline2 == SnippetDeletionResult(id: "rw-del-online", deleted: false, disposition: .alreadyAbsent))
+        #expect(state.recordedRequests().map { "\($0.method) \($0.path)" } == [
+            "DELETE /api/memos/rw-del-online",
+            "DELETE /api/memos/rw-del-online"
+        ])
+
+        let (stBadID, _, errBadID) = try runDeleteSubprocess(
+            ["delete", "memos/../foo", "--data-dir", onlineDir.path],
+            env: onlineEnv
+        )
+        #expect(stBadID == 64)
+        #expect(!errBadID.isEmpty)
+
+        let offlineDir = dir.appendingPathComponent("OfflineData", isDirectory: true)
+        let offlinePaths = try StoragePaths(dataDirectoryURL: offlineDir)
+        let pendingCard = try makeCard(id: "rw-outbox-1", body: "Pending offline body", offlinePending: true)
+        let syncedCard = try makeCard(id: "rw-synced-1", body: "Synced cached body", offlinePending: false)
+        try OfflineOutbox(fileURL: offlinePaths.outboxFileURL).enqueue(
+            OutboxEntry(clientClipId: "rw-outbox-1", memoContent: pendingCard.rawContent, commentContent: nil, createdAt: pendingCard.createdAt)
+        )
+        try HotCache(fileURL: offlinePaths.hotCacheFileURL).saveCards([pendingCard, syncedCard], now: now)
+
+        let qaOfflineEnv = ["PATH": "/usr/bin:/bin", "CODING_REWIND_QA": "1"]
+        let (stOfflinePending, outOfflinePending, errOfflinePending) = try runDeleteSubprocess(
+            ["delete", "rw-outbox-1", "--data-dir", offlineDir.path, "--json"],
+            env: qaOfflineEnv
+        )
+        #expect(stOfflinePending == 0)
+        #expect(errOfflinePending.isEmpty)
+        let resOfflinePending = try decoder.decode(SnippetDeletionResult.self, from: outOfflinePending)
+        #expect(resOfflinePending == SnippetDeletionResult(id: "rw-outbox-1", deleted: true, disposition: .localPendingOnly))
+        #expect(OfflineOutbox(fileURL: offlinePaths.outboxFileURL).loadEntries().isEmpty)
+        #expect(HotCache(fileURL: offlinePaths.hotCacheFileURL).loadCards(now: now).map(\.id) == ["rw-synced-1"])
+
+        let cacheBeforeRefusal = try Data(contentsOf: offlinePaths.hotCacheFileURL)
+        let (stOfflineSynced, _, errOfflineSynced) = try runDeleteSubprocess(
+            ["delete", "rw-synced-1", "--data-dir", offlineDir.path, "--json"],
+            env: qaOfflineEnv
+        )
+        #expect(stOfflineSynced != 0)
+        #expect(!errOfflineSynced.isEmpty)
+        #expect(try Data(contentsOf: offlinePaths.hotCacheFileURL) == cacheBeforeRefusal)
+        #expect(HotCache(fileURL: offlinePaths.hotCacheFileURL).loadCards(now: now).map(\.id) == ["rw-synced-1"])
     }
 }

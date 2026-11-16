@@ -98,6 +98,7 @@ public enum CLICommand: Equatable, Sendable {
     case search(query: SnippetQuery, dataDir: String?, json: Bool)
     case get(id: String, includeContext: Bool, dataDir: String?, json: Bool)
     case archive(id: String, dataDir: String?, json: Bool)
+    case delete(id: String, dataDir: String?, json: Bool)
     case mcp(dataDir: String?)
 }
 
@@ -112,6 +113,7 @@ public enum CLIParser {
           coding-rewind search <query> [--window <72h|all|Nh>] [--window-hours <N>] [--status <active|ready|pending|synthesized|all>] [--source <platform>] [--limit <1..500>] [--json]
           coding-rewind get <id> [--no-context | --with-context] [--json]
           coding-rewind archive <id> [--json]
+          coding-rewind delete <id> [--json]
           coding-rewind mcp
 
         GLOBAL OPTIONS:
@@ -239,7 +241,7 @@ public enum CLIParser {
         }
 
         guard let subcommand = parsed.subcommand else {
-            throw CLIValidationError("Missing subcommand. Expected one of: list, search, get, archive, mcp.")
+            throw CLIValidationError("Missing subcommand. Expected one of: list, search, get, archive, delete, mcp.")
         }
 
         switch subcommand {
@@ -290,17 +292,11 @@ public enum CLIParser {
             }
             return .get(id: id, includeContext: includeContext, dataDir: parsed.dataDir, json: parsed.json)
         case "archive":
-            guard let rawID = parsed.positionals.first else {
-                throw CLIValidationError("Missing required <id> argument for 'archive'.")
-            }
-            guard parsed.positionals.count == 1 else {
-                throw CLIValidationError("Unexpected extra argument '\(parsed.positionals[1])' for 'archive'.")
-            }
-            guard parsed.options.isEmpty else {
-                throw CLIValidationError("Unknown option '\(parsed.options[0].name)' for 'archive'.")
-            }
-            let id = try SnippetFilterParser.normalizeSnippetID(rawID)
+            let id = try parseSingleIDArguments(parsed, subcommand: "archive")
             return .archive(id: id, dataDir: parsed.dataDir, json: parsed.json)
+        case "delete":
+            let id = try parseSingleIDArguments(parsed, subcommand: "delete")
+            return .delete(id: id, dataDir: parsed.dataDir, json: parsed.json)
         case "mcp":
             guard parsed.positionals.isEmpty else {
                 throw CLIValidationError("Unexpected argument '\(parsed.positionals[0])' for 'mcp'.")
@@ -311,9 +307,22 @@ public enum CLIParser {
             return .mcp(dataDir: parsed.dataDir)
         default:
             throw CLIValidationError(
-                "Unknown subcommand '\(subcommand)'. Expected one of: list, search, get, archive, mcp."
+                "Unknown subcommand '\(subcommand)'. Expected one of: list, search, get, archive, delete, mcp."
             )
         }
+    }
+
+    private static func parseSingleIDArguments(_ parsed: TokenizedArgs, subcommand: String) throws -> String {
+        guard let rawID = parsed.positionals.first else {
+            throw CLIValidationError("Missing required <id> argument for '\(subcommand)'.")
+        }
+        guard parsed.positionals.count == 1 else {
+            throw CLIValidationError("Unexpected extra argument '\(parsed.positionals[1])' for '\(subcommand)'.")
+        }
+        guard parsed.options.isEmpty else {
+            throw CLIValidationError("Unknown option '\(parsed.options[0].name)' for '\(subcommand)'.")
+        }
+        return try SnippetFilterParser.normalizeSnippetID(rawID)
     }
 
     private static func parseListOrSearchOptions(

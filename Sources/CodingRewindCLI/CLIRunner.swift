@@ -133,6 +133,26 @@ public enum CLIRunner {
                 return 1
             }
 
+        case .delete(let id, let dataDir, let json):
+            do {
+                let repo = try makeRepository(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath,
+                    factory: factory
+                )
+                let result = try await repo.deleteSnippet(id: id)
+                if json {
+                    writeStdout(try SnippetFormatter.encodePrettyJSON(result) + "\n")
+                } else {
+                    writeStdout(SnippetFormatter.formatDeletedMarkdown(result) + "\n")
+                }
+                return 0
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+
         case .mcp(let dataDir):
             let sessionTokenBox = MCPSessionTokenBox()
             let server = MCPServer(

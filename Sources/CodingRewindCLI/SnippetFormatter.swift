@@ -37,6 +37,19 @@ public enum SnippetFormatter {
             + formatSnippetBlock(record, includeContextSection: false)
     }
 
+    public static func formatDeletedMarkdown(_ result: SnippetDeletionResult) -> String {
+        switch result.disposition {
+        case .remoteAndLocal:
+            return "Deleted snippet \(result.id) (remote and local cache)."
+        case .localPendingOnly:
+            return "Deleted offline pending snippet \(result.id)."
+        case .alreadyAbsent:
+            return result.deleted
+                ? "Removed cached snippet \(result.id) (already absent on Memos)."
+                : "Snippet \(result.id) was already absent."
+        }
+    }
+
     private static func describeResolution(_ mode: SnippetResolutionMode) -> String {
         switch mode {
         case .online:
