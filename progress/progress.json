@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "32ee0a95ce22ed01d48c8df7441930fcc4b8f481",
+    "main": "79c0867ed20a8b6a604d49dfba3eac6a001da02c",
     "open_pulls": [],
     "pulls": [
       {
@@ -291,9 +291,24 @@
         "merged": true,
         "number": 37,
         "state": "closed"
+      },
+      {
+        "base": "fac2ee95188632e1723a28473005c9cb6c0288dc",
+        "head": "042b0c3fcb903e3b095eea8a6a4e814a6c6b1a8d",
+        "merge_commit": "79c0867ed20a8b6a604d49dfba3eac6a001da02c",
+        "merged": true,
+        "number": 38,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 446872768,
+        "prerelease": false,
+        "published_at": "2026-11-16T10:13:02Z",
+        "tag": "v0.5.0"
+      },
       {
         "draft": false,
         "id": 446460644,
@@ -342,7 +357,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-16T09:51:06.055244Z",
+  "observed_at": "2026-11-16T10:15:07.602406Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -355,6 +370,65 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "release-050",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "全端表面版本号提升至 0.5.0（macOS build 8、CLI/MCP 0.5.0、插件 0.5.0、Web Clipper 0.5.0 / 0.5.0.0），全仓 ./scripts/check 六道门禁通过并 squash 合并至 main。",
+              "ref": 38
+            },
+            {
+              "kind": "commit",
+              "note": "PR #38 合并提交并打标 v0.5.0，归入 PR #35（浮窗离屏卸载）、PR #36（浮窗归档/删除与 CLI delete）及 PR #37（三层 AI 写入入口与里程碑对齐）。",
+              "ref": "79c0867ed20a8b6a604d49dfba3eac6a001da02c"
+            },
+            {
+              "kind": "release",
+              "note": "正式发布 Coding Rewind v0.5.0 双端压缩包与 SHA256SUMS.txt，公开包零个人凭据泄露且通过 Developer ID 严格签名校验。",
+              "ref": "v0.5.0"
+            },
+            {
+              "kind": "note",
+              "note": "CodingRewind-v0.5.0-macos-arm64.zip（3936271 字节，SHA-256 7afa9dcf8b67d99e5fdd023db09ae2f1b305c00b07effdf405637e2cc5f05cae）解包确认不含 DeveloperCredentials.plist，Info.plist 为 0.5.0 build 8，Developer ID Application: Xianwei Zhang (LQAVR62TK2) 通过 codesign --verify --deep --strict；CodingRewind-WebClipper-v0.5.0.zip（59300 字节，SHA-256 5bf4cfde3f1469302a91b22537ff77dfe684278230186788c59a8632dd03a249）；SHA256SUMS.txt（203 字节，SHA-256 33547886dd7cb0a8d668f6218e51900e83f133fb4daf3927eac5558b75cb5cf5）。",
+              "ref": "2026-11-16 v0.5.0 公开构建产物拆包与校验"
+            },
+            {
+              "kind": "issue",
+              "note": "跨浏览器生命周期与剩余实机覆盖继续单列跟踪。",
+              "ref": 14
+            }
+          ],
+          "id": "release-050-publication",
+          "next": "",
+          "status": "done",
+          "summary": "清理已合并的旧本地分支与过期 worktree，仓库仅保留干净 main 与 origin/main。经 PR #38（合并提交 79c0867ed20a8b6a604d49dfba3eac6a001da02c）统一提升桌面应用（0.5.0 build 8）、单二进制 coding-rewind CLI/MCP（0.5.0）、Antigravity 插件清单（0.5.0）与 Chrome 网页扩展（0.5.0 / 内部 0.5.0.0）版本号并通过全仓 ./scripts/check 六道门禁。基于 tag v0.5.0 运行 package-release.sh 构建公开产物并在 .build/ 隔离目录拆包核验：确认不存在 Contents/Resources/DeveloperCredentials.plist，Developer ID Application（TeamIdentifier LQAVR62TK2）通过 codesign --verify --deep --strict，随后公开发布 GitHub Release v0.5.0 并上传双端压缩包与 SHA256SUMS.txt。",
+          "title": "v0.5.0 公开发布、公开包零凭据与签名校验及分支收敛"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "commit",
+              "note": "基于 v0.5.0 发布提交执行 ./scripts/build-app-bundle.sh /Applications 原位重建签名包。",
+              "ref": "79c0867ed20a8b6a604d49dfba3eac6a001da02c"
+            },
+            {
+              "kind": "note",
+              "note": "/Applications/CodingRewind.app Info.plist 读回 0.5.0 build 8，CDHash 5d20b79a1f0f084266676efad5806aa7399e0b17，codesign --verify --deep --strict 通过；后台拉起 PID 88093 后固定目录 bin/coding-rewind --version 输出 coding-rewind 0.5.0，双辅助二进制与 Contents/Helpers 逐字节 cmp 一致，~/.gemini/config/plugins/coding-rewind/plugin.json 版本同步为 0.5.0。",
+              "ref": "2026-11-16 本机 /Applications 与固定 bin 0.5.0 覆盖升级核验"
+            }
+          ],
+          "id": "release-050-local-upgrade",
+          "next": "",
+          "status": "done",
+          "summary": "停止运行中的旧版进程后执行 ./scripts/build-app-bundle.sh /Applications 将本机 /Applications/CodingRewind.app 升级至 0.5.0（build 8，Developer ID Application TeamIdentifier LQAVR62TK2，CDHash 5d20b79a1f0f084266676efad5806aa7399e0b17）并通过严格签名校验。以 --background 静默重启后，应用自动将 Contents/Helpers 下的 coding-rewind 与 coding-rewind-sidecar 同步至 ~/Library/Application Support/CodingRewind/bin/（cmp 逐字节一致，coding-rewind --version 输出 coding-rewind 0.5.0），并将 ~/.gemini/config/plugins/coding-rewind/plugin.json 版本刷新为 0.5.0。",
+          "title": "本机 /Applications/CodingRewind.app 与固定 bin 升级至 0.5.0（build 8）"
+        }
+      ],
+      "title": "0.5.0 正式发布（三层 AI 写入入口、浮窗片段管理与离屏止血）"
+    },
     {
       "id": "ai-write-surface-and-docs",
       "items": [
@@ -2394,7 +2468,8 @@
       34,
       35,
       36,
-      37
+      37,
+      38
     ]
   }
 }

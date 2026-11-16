@@ -3,8 +3,21 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-16T09:51:06.055244Z</p>
-<p>Main: <code>main: 32ee0a95ce22ed01d48c8df7441930fcc4b8f481</code></p>
+<p>Observed: 2026-11-16T10:15:07.602406Z</p>
+<p>Main: <code>main: 79c0867ed20a8b6a604d49dfba3eac6a001da02c</code></p>
+<section id="release-050"><h2>0.5.0 正式发布（三层 AI 写入入口、浮窗片段管理与离屏止血）</h2>
+<article id="release-050-publication"><h3>v0.5.0 公开发布、公开包零凭据与签名校验及分支收敛</h3><span class="badge">done</span><p>清理已合并的旧本地分支与过期 worktree，仓库仅保留干净 main 与 origin/main。经 PR #38（合并提交 79c0867ed20a8b6a604d49dfba3eac6a001da02c）统一提升桌面应用（0.5.0 build 8）、单二进制 coding-rewind CLI/MCP（0.5.0）、Antigravity 插件清单（0.5.0）与 Chrome 网页扩展（0.5.0 / 内部 0.5.0.0）版本号并通过全仓 ./scripts/check 六道门禁。基于 tag v0.5.0 运行 package-release.sh 构建公开产物并在 .build/ 隔离目录拆包核验：确认不存在 Contents/Resources/DeveloperCredentials.plist，Developer ID Application（TeamIdentifier LQAVR62TK2）通过 codesign --verify --deep --strict，随后公开发布 GitHub Release v0.5.0 并上传双端压缩包与 SHA256SUMS.txt。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/38">pull 38: 全端表面版本号提升至 0.5.0（macOS build 8、CLI/MCP 0.5.0、插件 0.5.0、Web Clipper 0.5.0 / 0.5.0.0），全仓 ./scripts/check 六道门禁通过并 squash 合并至 main。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/79c0867ed20a8b6a604d49dfba3eac6a001da02c">commit 79c0867ed20a8b6a604d49dfba3eac6a001da02c: PR #38 合并提交并打标 v0.5.0，归入 PR #35（浮窗离屏卸载）、PR #36（浮窗归档/删除与 CLI delete）及 PR #37（三层 AI 写入入口与里程碑对齐）。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.5.0">release v0.5.0: 正式发布 Coding Rewind v0.5.0 双端压缩包与 SHA256SUMS.txt，公开包零个人凭据泄露且通过 Developer ID 严格签名校验。</a></li>
+<li>note 2026-11-16 v0.5.0 公开构建产物拆包与校验: CodingRewind-v0.5.0-macos-arm64.zip（3936271 字节，SHA-256 7afa9dcf8b67d99e5fdd023db09ae2f1b305c00b07effdf405637e2cc5f05cae）解包确认不含 DeveloperCredentials.plist，Info.plist 为 0.5.0 build 8，Developer ID Application: Xianwei Zhang (LQAVR62TK2) 通过 codesign --verify --deep --strict；CodingRewind-WebClipper-v0.5.0.zip（59300 字节，SHA-256 5bf4cfde3f1469302a91b22537ff77dfe684278230186788c59a8632dd03a249）；SHA256SUMS.txt（203 字节，SHA-256 33547886dd7cb0a8d668f6218e51900e83f133fb4daf3927eac5558b75cb5cf5）。</li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 跨浏览器生命周期与剩余实机覆盖继续单列跟踪。</a></li>
+</ul><p>Next: </p></article>
+<article id="release-050-local-upgrade"><h3>本机 /Applications/CodingRewind.app 与固定 bin 升级至 0.5.0（build 8）</h3><span class="badge">done</span><p>停止运行中的旧版进程后执行 ./scripts/build-app-bundle.sh /Applications 将本机 /Applications/CodingRewind.app 升级至 0.5.0（build 8，Developer ID Application TeamIdentifier LQAVR62TK2，CDHash 5d20b79a1f0f084266676efad5806aa7399e0b17）并通过严格签名校验。以 --background 静默重启后，应用自动将 Contents/Helpers 下的 coding-rewind 与 coding-rewind-sidecar 同步至 ~/Library/Application Support/CodingRewind/bin/（cmp 逐字节一致，coding-rewind --version 输出 coding-rewind 0.5.0），并将 ~/.gemini/config/plugins/coding-rewind/plugin.json 版本刷新为 0.5.0。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/79c0867ed20a8b6a604d49dfba3eac6a001da02c">commit 79c0867ed20a8b6a604d49dfba3eac6a001da02c: 基于 v0.5.0 发布提交执行 ./scripts/build-app-bundle.sh /Applications 原位重建签名包。</a></li>
+<li>note 2026-11-16 本机 /Applications 与固定 bin 0.5.0 覆盖升级核验: /Applications/CodingRewind.app Info.plist 读回 0.5.0 build 8，CDHash 5d20b79a1f0f084266676efad5806aa7399e0b17，codesign --verify --deep --strict 通过；后台拉起 PID 88093 后固定目录 bin/coding-rewind --version 输出 coding-rewind 0.5.0，双辅助二进制与 Contents/Helpers 逐字节 cmp 一致，~/.gemini/config/plugins/coding-rewind/plugin.json 版本同步为 0.5.0。</li>
+</ul><p>Next: </p></article>
+</section>
 <section id="ai-write-surface-and-docs"><h2>文档对齐与三层 AI 写入及回流入口（PR #37）</h2>
 <article id="docs-alignment-and-three-layer-contract"><h3>对齐里程碑文档并固化三层 AI 写入与回流契约</h3><span class="badge">done</span><p>对齐 docs/milestones.md 中 M2（补明 claude.ai 轮次适配器与当前实机覆盖边界）与 M4（同步 HUD 独立归档/删除及 CLI delete 仅限人工终端的权限边界），并在 AGENTS.md、README.md、docs/requirements.md、docs/architecture.md、docs/privacy.md、docs/code-quality.md 一致定义向 AI 开放的三层写入与回流契约（#source/agent 来源标签、rewind-note-v1 笔记评论隔离、local_notes.json 本地回退、ai_access_mode 与 CODING_REWIND_AI_ACCESS 权限门控及原文逐字节零篡改不变量）。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/37">pull 37: 包含文档对齐提交（原分支 4d97c6d）并 squash 合并至 main（32ee0a9），通过静态卫生与相对链接门禁。</a></li>
@@ -448,6 +461,7 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.5.0">v0.5.0</a> 2026-11-16T10:13:02Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.4.0">v0.4.0</a> 2026-11-15T23:55:24Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.2">v0.3.2</a> 2026-11-15T15:05:05Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.1">v0.3.1</a> 2026-11-14T17:53:47Z (draft: False, prerelease: False)</li>
