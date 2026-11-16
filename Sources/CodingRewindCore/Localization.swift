@@ -149,6 +149,10 @@ public enum L10n {
                 return "Memos 服务地址无效：\(raw)"
             case .missingCredentials:
                 return "尚未设置 Memos 服务地址或访问令牌。"
+            case .aiWriteDisabled:
+                return "AI 写入权限当前处于只读模式（read_only），请在 Coding Rewind 设置的“插件与权限”中切换为读写模式，或检查环境变量 CODING_REWIND_AI_ACCESS。"
+            case .invalidMetadataUpdate(let detail):
+                return "片段更新参数无效：\(detail)"
             case .httpError(let code, let body):
                 return "Memos 请求失败（HTTP \(code)）：\(body.prefix(120))"
             case .invalidServerResponse:
@@ -176,6 +180,10 @@ public enum L10n {
                 return "Invalid Memos server URL: \(raw)"
             case .missingCredentials:
                 return "Memos server URL or access token is not configured."
+            case .aiWriteDisabled:
+                return "AI write access is disabled in read-only mode (read_only). Switch to Read & Write in Coding Rewind Settings > Plugin & Permissions, or check CODING_REWIND_AI_ACCESS."
+            case .invalidMetadataUpdate(let detail):
+                return "Invalid snippet update: \(detail)"
             case .httpError(let code, let body):
                 return "Memos request failed (HTTP \(code)): \(body.prefix(120))"
             case .invalidServerResponse:

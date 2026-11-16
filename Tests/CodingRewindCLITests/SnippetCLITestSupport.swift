@@ -11,6 +11,9 @@ actor FakeSnippetBackend: SnippetQuerying {
     private let pendingOutboxCount: Int
     private(set) var recordedListQueries: [SnippetQuery] = []
     private(set) var recordedGetCalls: [(id: String, includeContext: Bool)] = []
+    private(set) var recordedCreateInputs: [SnippetCreateInput] = []
+    private(set) var recordedUpdateCalls: [(id: String, patch: SnippetMetadataPatch)] = []
+    private(set) var recordedNoteCalls: [(id: String, input: SnippetNoteInput)] = []
     private(set) var recordedArchiveIDs: [String] = []
     private(set) var recordedDeleteIDs: [String] = []
 
@@ -79,6 +82,97 @@ actor FakeSnippetBackend: SnippetQuerying {
         return includeContext ? found : found.withConversationContext(nil)
     }
 
+    func createSnippet(_ input: SnippetCreateInput, now: Date) async throws -> SnippetRecord {
+        recordedCreateInputs.append(input)
+        let id = MemosWireFormat.makeClientClipID(now: now)
+        let raw = try MemosWireFormat.formatAgentCreatedContent(
+            verbatimText: input.text,
+            sourcePlatform: input.sourcePlatform,
+            sourceTitle: input.sourceTitle ?? "AI Synthesis",
+            sourceURL: input.sourceURL,
+            capturedAt: now,
+            title: input.title,
+            sessionTopic: input.sessionTopic,
+            contextSummary: input.contextSummary,
+            keywords: input.keywords,
+            tags: input.tags
+        )
+        let record = MemosWireFormat.parseSnippetRecord(
+            id: id,
+            rawContent: raw,
+            createdAt: now,
+            dataOrigin: .remote
+        )!
+        records.insert(record, at: 0)
+        return record
+    }
+
+    func updateSnippetMetadata(id: String, patch: SnippetMetadataPatch, now: Date) async throws -> SnippetRecord {
+        recordedUpdateCalls.append((id: id, patch: patch))
+        let cleanID = try MemosWireFormat.normalizeSnippetID(id)
+        guard let idx = records.firstIndex(where: { $0.id == cleanID }) else {
+            throw RewindError.snippetNotFound(cleanID)
+        }
+        let existing = records[idx]
+        let existingRaw = try MemosWireFormat.formatAgentCreatedContent(
+            verbatimText: existing.verbatimText,
+            sourcePlatform: existing.sourcePlatform,
+            sourceTitle: existing.sourceTitle,
+            sourceURL: existing.sourceURL,
+            capturedAt: existing.createdAt,
+            title: existing.title,
+            sessionTopic: existing.sessionTopic,
+            contextSummary: existing.contextSummary,
+            keywords: existing.keywords,
+            tags: existing.tags
+        )
+        let baseRaw = existing.status == .synthesized
+            ? MemosWireFormat.replacingWithSynthesizedTag(existingRaw)
+            : existingRaw
+        let updatedRaw = MemosWireFormat.updatingSnippetMetadata(
+            rawContent: baseRaw,
+            title: patch.title,
+            sessionTopic: patch.sessionTopic,
+            contextSummary: patch.contextSummary,
+            keywords: patch.keywords,
+            addTags: patch.addTags,
+            removeTags: patch.removeTags,
+            archived: patch.archived
+        )
+        let parsed = MemosWireFormat.parseSnippetRecord(
+            id: existing.id,
+            rawContent: updatedRaw,
+            createdAt: existing.createdAt,
+            dataOrigin: existing.dataOrigin,
+            conversationContext: existing.conversationContext,
+            notes: existing.notes
+        )!
+        records[idx] = parsed
+        return parsed
+    }
+
+    func appendSnippetNote(id: String, input: SnippetNoteInput, now: Date) async throws -> SnippetRecord {
+        recordedNoteCalls.append((id: id, input: input))
+        let cleanID = try MemosWireFormat.normalizeSnippetID(id)
+        guard let idx = records.firstIndex(where: { $0.id == cleanID }) else {
+            throw RewindError.snippetNotFound(cleanID)
+        }
+        let existing = records[idx]
+        let commentRaw = try MemosWireFormat.formatNoteComment(
+            note: input.note,
+            author: input.author,
+            createdAt: now
+        )
+        let noteID = MemosWireFormat.makeNoteCommentID(snippetID: cleanID, now: now)
+        let parsedNote = MemosWireFormat.parseNoteComment(id: noteID, rawComment: commentRaw, fallbackCreatedAt: now)!
+        let updated = existing.withAttachments(
+            conversationContext: existing.conversationContext,
+            notes: existing.notes + [parsedNote]
+        )
+        records[idx] = updated
+        return updated
+    }
+
     func archiveSnippet(id: String) async throws -> SnippetRecord {
         recordedArchiveIDs.append(id)
         let cleanID = try MemosWireFormat.normalizeSnippetID(id)
@@ -99,7 +193,9 @@ actor FakeSnippetBackend: SnippetQuerying {
             verbatimText: existing.verbatimText,
             createdAt: existing.createdAt,
             dataOrigin: existing.dataOrigin,
-            conversationContext: existing.conversationContext
+            conversationContext: existing.conversationContext,
+            tags: existing.tags,
+            notes: existing.notes
         )
         records[idx] = updated
         return updated

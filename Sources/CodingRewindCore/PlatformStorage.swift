@@ -53,6 +53,7 @@ public struct StoragePaths: Equatable, Sendable {
     public static let memosTokenEnvironmentKey = "CODING_REWIND_MEMOS_TOKEN"
     public static let qaEnvironmentKey = "CODING_REWIND_QA"
     public static let antigravityConfigEnvironmentKey = "CODING_REWIND_ANTIGRAVITY_CONFIG"
+    public static let aiAccessEnvironmentKey = "CODING_REWIND_AI_ACCESS"
 
     public let dataDirectoryURL: URL
     public let antigravityConfigDirectoryURL: URL
@@ -60,6 +61,7 @@ public struct StoragePaths: Equatable, Sendable {
     public var configFileURL: URL { dataDirectoryURL.appendingPathComponent("config.json", isDirectory: false) }
     public var outboxFileURL: URL { dataDirectoryURL.appendingPathComponent("outbox.jsonl", isDirectory: false) }
     public var hotCacheFileURL: URL { dataDirectoryURL.appendingPathComponent("hot_cache.json", isDirectory: false) }
+    public var localNotesFileURL: URL { dataDirectoryURL.appendingPathComponent("local_notes.json", isDirectory: false) }
     public var binDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("bin", isDirectory: true) }
     public var developerCredentialsFileURL: URL { dataDirectoryURL.appendingPathComponent("DeveloperCredentials.plist", isDirectory: false) }
     public var updatesDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("updates", isDirectory: true) }
@@ -106,6 +108,46 @@ public struct StoragePaths: Equatable, Sendable {
 
     private struct DiskConfig: Codable {
         var memos_url: String?
+        var ai_access_mode: String?
+    }
+
+    private struct MCPServerEntryDTO: Encodable {
+        let command: String
+        let args: [String]
+    }
+
+    private struct MCPClientConfigurationDTO: Encodable {
+        let mcpServers: [String: MCPServerEntryDTO]
+    }
+
+    private func readDiskConfig() -> DiskConfig {
+        guard let data = try? Data(contentsOf: configFileURL),
+              let decoded = try? JSONDecoder().decode(DiskConfig.self, from: data) else {
+            return DiskConfig(memos_url: nil, ai_access_mode: nil)
+        }
+        return decoded
+    }
+
+    private func updateDiskConfig(_ mutate: (inout DiskConfig) -> Void) throws {
+        try FileManager.default.createDirectory(at: configFileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lockURL = configFileURL.appendingPathExtension("lock")
+        let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else {
+            throw RewindError.ioError("open(\(lockURL.lastPathComponent)) errno=\(errno)")
+        }
+        defer { close(fd) }
+        while flock(fd, LOCK_EX) != 0 {
+            if errno == EINTR { continue }
+            throw RewindError.ioError("flock errno=\(errno)")
+        }
+        defer { _ = flock(fd, LOCK_UN) }
+
+        var disk = readDiskConfig()
+        mutate(&disk)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(disk)
+        try AtomicFile.writeData(data, to: configFileURL, permissions: 0o600)
     }
 
     public func readConfiguredMemosURLString(
@@ -115,9 +157,7 @@ public struct StoragePaths: Equatable, Sendable {
            !envURL.isEmpty {
             return MemosWireFormat.normalizeBaseURLString(envURL)
         }
-        guard let data = try? Data(contentsOf: configFileURL),
-              let decoded = try? JSONDecoder().decode(DiskConfig.self, from: data),
-              let raw = decoded.memos_url?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let raw = readDiskConfig().memos_url?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else {
             return nil
         }
@@ -160,11 +200,62 @@ public struct StoragePaths: Equatable, Sendable {
             }
             normalized = MemosWireFormat.normalizeBaseURLString(trimmedInput)
         }
-        let payload = DiskConfig(memos_url: normalized.isEmpty ? nil : normalized)
+        try updateDiskConfig { disk in
+            disk.memos_url = normalized.isEmpty ? nil : normalized
+        }
+    }
+
+    public static func parseAIAccessMode(_ raw: String) -> AIAccessMode? {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "read_only", "readonly", "read-only":
+            return .readOnly
+        case "read_write", "readwrite", "read-write":
+            return .readWrite
+        default:
+            return nil
+        }
+    }
+
+    public func isAIAccessManagedByEnvironment(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        !(environment[Self.aiAccessEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+
+    public func resolveAIAccessMode(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> AIAccessMode {
+        if let envRaw = environment[Self.aiAccessEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !envRaw.isEmpty {
+            return Self.parseAIAccessMode(envRaw) ?? .readOnly
+        }
+        if let diskRaw = readDiskConfig().ai_access_mode?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !diskRaw.isEmpty {
+            return Self.parseAIAccessMode(diskRaw) ?? .readOnly
+        }
+        return .readWrite
+    }
+
+    public func saveAIAccessMode(_ mode: AIAccessMode) throws {
+        try updateDiskConfig { disk in
+            disk.ai_access_mode = mode.rawValue
+        }
+    }
+
+    public static func standardMCPConfigurationJSON(
+        executablePath: String = "${HOME}/Library/Application Support/CodingRewind/bin/coding-rewind"
+    ) -> String {
+        let payload = MCPClientConfigurationDTO(
+            mcpServers: [
+                "coding-rewind": MCPServerEntryDTO(command: executablePath, args: ["mcp"])
+            ]
+        )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(payload)
-        try AtomicFile.writeData(data, to: configFileURL, permissions: 0o600)
+        guard let data = try? encoder.encode(payload) else {
+            return "{}"
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 }
 
@@ -463,6 +554,12 @@ public struct HotCache: Sendable {
         try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
     }
 
+    public func upsertCard(_ card: RewindCard, now: Date = Date()) throws {
+        var existing = loadCards(now: now).filter { $0.id != card.id }
+        existing.insert(card, at: 0)
+        try saveCards(existing, now: now)
+    }
+
     @discardableResult
     public func removeCard(id: String) throws -> Bool {
         guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return false }
@@ -490,5 +587,101 @@ public struct HotCache: Sendable {
                 isOfflinePending: card.isOfflinePending
             )
         }.sorted { $0.createdAt > $1.createdAt }
+    }
+}
+
+public struct LocalNotesStore: Sendable {
+    public let fileURL: URL
+
+    public init(fileURL: URL) {
+        self.fileURL = fileURL.standardizedFileURL
+    }
+
+    public func loadNotes(for snippetID: String) -> [SnippetNote] {
+        guard let normalized = try? MemosWireFormat.normalizeSnippetID(snippetID) else {
+            return []
+        }
+        let all = loadAll()
+        return Self.sortAndDeduplicate(all[normalized] ?? [])
+    }
+
+    public func appendNote(_ note: SnippetNote, for snippetID: String) throws {
+        let normalized = try MemosWireFormat.normalizeSnippetID(snippetID)
+        try withFileLock {
+            var all = loadAll()
+            var list = all[normalized] ?? []
+            if let idx = list.firstIndex(where: { $0.id == note.id }) {
+                list[idx] = note
+            } else {
+                list.append(note)
+            }
+            all[normalized] = Self.sortAndDeduplicate(list)
+            try writeAll(all)
+        }
+    }
+
+    @discardableResult
+    public func removeNotes(for snippetID: String) throws -> Bool {
+        let normalized = try MemosWireFormat.normalizeSnippetID(snippetID)
+        return try withFileLock {
+            var all = loadAll()
+            let removed = all.removeValue(forKey: normalized) != nil
+            if removed {
+                try writeAll(all)
+            }
+            return removed
+        }
+    }
+
+    public static func sortAndDeduplicate(_ notes: [SnippetNote]) -> [SnippetNote] {
+        var byID: [String: SnippetNote] = [:]
+        for note in notes {
+            byID[note.id] = note
+        }
+        return byID.values.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt < rhs.createdAt
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    private func loadAll() -> [String: [SnippetNote]] {
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else {
+            return [:]
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return (try? decoder.decode([String: [SnippetNote]].self, from: data)) ?? [:]
+    }
+
+    private func writeAll(_ map: [String: [SnippetNote]]) throws {
+        if map.isEmpty {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                try FileManager.default.removeItem(at: fileURL)
+            }
+            return
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(map)
+        try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
+    }
+
+    private func withFileLock<T>(_ operation: () throws -> T) throws -> T {
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let lockURL = fileURL.appendingPathExtension("lock")
+        let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+        guard fd >= 0 else {
+            throw RewindError.ioError("open(\(lockURL.lastPathComponent)) errno=\(errno)")
+        }
+        defer { close(fd) }
+        while flock(fd, LOCK_EX) != 0 {
+            if errno == EINTR { continue }
+            throw RewindError.ioError("flock errno=\(errno)")
+        }
+        defer { _ = flock(fd, LOCK_UN) }
+        return try operation()
     }
 }

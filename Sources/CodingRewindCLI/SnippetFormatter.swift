@@ -32,6 +32,21 @@ public enum SnippetFormatter {
         formatSnippetBlock(record, includeContextSection: true)
     }
 
+    public static func formatCreatedMarkdown(_ record: SnippetRecord) -> String {
+        "Created snippet \(record.id) (status: \(record.status.rawValue))\n\n"
+            + formatSnippetBlock(record, includeContextSection: false)
+    }
+
+    public static func formatUpdatedMarkdown(_ record: SnippetRecord) -> String {
+        "Updated snippet \(record.id) (status: \(record.status.rawValue))\n\n"
+            + formatSnippetBlock(record, includeContextSection: false)
+    }
+
+    public static func formatNotedMarkdown(_ record: SnippetRecord) -> String {
+        "Appended note to snippet \(record.id) (\(record.notes.count) note\(record.notes.count == 1 ? "" : "s"))\n\n"
+            + formatSnippetBlock(record, includeContextSection: true)
+    }
+
     public static func formatArchivedMarkdown(_ record: SnippetRecord) -> String {
         "Archived snippet \(record.id) (status: \(record.status.rawValue))\n\n"
             + formatSnippetBlock(record, includeContextSection: false)
@@ -82,6 +97,9 @@ public enum SnippetFormatter {
         if !record.keywords.isEmpty {
             lines.append("- Keywords: \(record.keywords.joined(separator: ", "))")
         }
+        if !record.tags.isEmpty {
+            lines.append("- Tags: \(record.tags.map { "#\($0)" }.joined(separator: " "))")
+        }
 
         var output = lines.joined(separator: "\n") + "\n\n" + record.verbatimText
 
@@ -101,6 +119,18 @@ public enum SnippetFormatter {
                 }
             }
             output += "\n" + ctxLines.joined(separator: "\n")
+        }
+
+        if includeContextSection && !record.notes.isEmpty {
+            var noteLines: [String] = ["", "### Notes"]
+            for note in record.notes {
+                let iso = MemosWireFormat.formatISO8601UTC(note.createdAt)
+                noteLines.append("#### [\(note.id)] \(note.author) · \(iso)")
+                noteLines.append("")
+                noteLines.append(note.content)
+                noteLines.append("")
+            }
+            output += "\n" + noteLines.joined(separator: "\n").trimmingCharacters(in: .newlines)
         }
 
         return output

@@ -2,6 +2,25 @@
 
 import Foundation
 
+public enum AIAccessMode: String, Codable, CaseIterable, Equatable, Sendable {
+    case readOnly = "read_only"
+    case readWrite = "read_write"
+}
+
+public struct SnippetNote: Identifiable, Codable, Equatable, Hashable, Sendable {
+    public let id: String
+    public let author: String
+    public let content: String
+    public let createdAt: Date
+
+    public init(id: String, author: String, content: String, createdAt: Date) {
+        self.id = id
+        self.author = author
+        self.content = content
+        self.createdAt = createdAt
+    }
+}
+
 public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     case emptySelection
     case accessibilityPermissionDenied
@@ -10,6 +29,8 @@ public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     case snippetNotFound(String)
     case invalidMemosURL(String)
     case missingCredentials
+    case aiWriteDisabled
+    case invalidMetadataUpdate(String)
     case httpError(statusCode: Int, body: String)
     case invalidServerResponse
     case networkFailure(String)

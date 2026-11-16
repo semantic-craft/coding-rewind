@@ -15,14 +15,24 @@ public struct MCPServer: Sendable {
         "2025-06-18"
     ]
 
+    public static let mutatingToolNames: Set<String> = [
+        "create_snippet",
+        "update_snippet_metadata",
+        "append_snippet_note",
+        "archive_snippet"
+    ]
+
     private let repositoryProvider: @Sendable () throws -> any SnippetQuerying
+    private let accessModeProvider: @Sendable () -> AIAccessMode
     private let now: @Sendable () -> Date
 
     public init(
         repositoryProvider: @escaping @Sendable () throws -> any SnippetQuerying,
+        accessModeProvider: @escaping @Sendable () -> AIAccessMode = { .readWrite },
         now: @escaping @Sendable () -> Date = Date.init
     ) {
         self.repositoryProvider = repositoryProvider
+        self.accessModeProvider = accessModeProvider
         self.now = now
     }
 
@@ -282,34 +292,65 @@ public struct MCPServer: Sendable {
         arguments: [String: JSONValue]
     ) async -> (text: String, isError: Bool) {
         do {
-            let repository = try repositoryProvider()
+            if Self.mutatingToolNames.contains(name), accessModeProvider() == .readOnly {
+                throw RewindError.aiWriteDisabled
+            }
+
             switch name {
             case "list_snippets":
                 let query = try Self.parseListArguments(arguments)
+                let repository = try repositoryProvider()
                 let result = try await repository.listSnippets(query, now: now())
                 let json = try SnippetFormatter.encodePrettyJSON(result)
                 return (json, false)
 
             case "search_snippets":
                 let query = try Self.parseSearchArguments(arguments)
+                let repository = try repositoryProvider()
                 let result = try await repository.listSnippets(query, now: now())
                 let json = try SnippetFormatter.encodePrettyJSON(result)
                 return (json, false)
 
             case "get_snippet":
                 let (id, includeContext) = try Self.parseGetArguments(arguments)
+                let repository = try repositoryProvider()
                 let record = try await repository.getSnippet(id: id, includeContext: includeContext, now: now())
                 let json = try SnippetFormatter.encodePrettyJSON(record)
                 return (json, false)
 
             case "archive_snippet":
                 let id = try Self.parseArchiveArguments(arguments)
+                let repository = try repositoryProvider()
                 let record = try await repository.archiveSnippet(id: id)
                 let json = try SnippetFormatter.encodePrettyJSON(record)
                 return (json, false)
 
+            case "create_snippet":
+                let input = try Self.parseCreateArguments(arguments)
+                let repository = try repositoryProvider()
+                let record = try await repository.createSnippet(input, now: now())
+                let json = try SnippetFormatter.encodePrettyJSON(record)
+                return (json, false)
+
+            case "update_snippet_metadata":
+                let (id, patch) = try Self.parseUpdateMetadataArguments(arguments)
+                let repository = try repositoryProvider()
+                let record = try await repository.updateSnippetMetadata(id: id, patch: patch, now: now())
+                let json = try SnippetFormatter.encodePrettyJSON(record)
+                return (json, false)
+
+            case "append_snippet_note":
+                let (id, input) = try Self.parseAppendNoteArguments(arguments)
+                let repository = try repositoryProvider()
+                let record = try await repository.appendSnippetNote(id: id, input: input, now: now())
+                let json = try SnippetFormatter.encodePrettyJSON(record)
+                return (json, false)
+
             default:
-                return ("Unknown tool '\(name)'. Supported tools: list_snippets, search_snippets, get_snippet, archive_snippet.", true)
+                return (
+                    "Unknown tool '\(name)'. Supported tools: list_snippets, search_snippets, get_snippet, archive_snippet, create_snippet, update_snippet_metadata, append_snippet_note.",
+                    true
+                )
             }
         } catch {
             return (Self.describeError(error), true)
@@ -496,6 +537,147 @@ public struct MCPServer: Sendable {
         return try SnippetFilterParser.normalizeSnippetID(rawID)
     }
 
+    private static func parseRequiredVerbatimString(_ arguments: [String: JSONValue], key: String) throws -> String {
+        guard let raw = arguments[key], raw != .null else {
+            throw CLIValidationError("Missing required argument '\(key)'.")
+        }
+        guard case .string(let text) = raw else {
+            throw CLIValidationError("Argument '\(key)' must be a string.")
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw CLIValidationError("Missing required '\(key)'.")
+        }
+        return text
+    }
+
+    private static func parseOptionalStringArray(_ arguments: [String: JSONValue], key: String) throws -> [String]? {
+        guard let raw = arguments[key], raw != .null else { return nil }
+        guard case .array(let items) = raw else {
+            throw CLIValidationError("Argument '\(key)' must be an array of strings.")
+        }
+        var out: [String] = []
+        out.reserveCapacity(items.count)
+        for item in items {
+            guard case .string(let s) = item else {
+                throw CLIValidationError("Argument '\(key)' must be an array of strings.")
+            }
+            out.append(s)
+        }
+        return out
+    }
+
+    private static func parseCreateArguments(_ arguments: [String: JSONValue]) throws -> SnippetCreateInput {
+        try rejectUnknownKeys(
+            arguments,
+            allowed: [
+                "text",
+                "title",
+                "session_topic",
+                "context_summary",
+                "keywords",
+                "tags",
+                "source",
+                "source_title",
+                "source_url"
+            ],
+            toolName: "create_snippet"
+        )
+        let text = try parseRequiredVerbatimString(arguments, key: "text")
+        let title = try parseOptionalString(arguments, key: "title")
+        let sessionTopic = try parseOptionalString(arguments, key: "session_topic")
+        let contextSummary = try parseOptionalString(arguments, key: "context_summary")
+        let rawKeywords = try parseOptionalStringArray(arguments, key: "keywords") ?? []
+        let keywords = rawKeywords.flatMap(SnippetFilterParser.parseCommaSeparatedKeywords)
+        let rawTags = try parseOptionalStringArray(arguments, key: "tags") ?? []
+        let tags = try rawTags.map(SnippetFilterParser.parseCustomTag)
+
+        let sourcePlatform: String
+        if let rawSource = try parseOptionalString(arguments, key: "source"),
+           !rawSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sourcePlatform = try SnippetFilterParser.parsePlatform(rawSource)
+        } else {
+            sourcePlatform = "agent"
+        }
+
+        let sourceTitle = try parseOptionalString(arguments, key: "source_title")
+        let sourceURL = try parseOptionalString(arguments, key: "source_url")
+
+        return SnippetCreateInput(
+            text: text,
+            title: title,
+            sessionTopic: sessionTopic,
+            contextSummary: contextSummary,
+            keywords: keywords,
+            tags: tags,
+            sourcePlatform: sourcePlatform,
+            sourceTitle: sourceTitle,
+            sourceURL: sourceURL
+        )
+    }
+
+    private static func parseUpdateMetadataArguments(
+        _ arguments: [String: JSONValue]
+    ) throws -> (id: String, patch: SnippetMetadataPatch) {
+        try rejectUnknownKeys(
+            arguments,
+            allowed: [
+                "id",
+                "title",
+                "session_topic",
+                "context_summary",
+                "keywords",
+                "add_tags",
+                "remove_tags",
+                "archived"
+            ],
+            toolName: "update_snippet_metadata"
+        )
+        let rawID = try parseRequiredString(arguments, key: "id")
+        let id = try SnippetFilterParser.normalizeSnippetID(rawID)
+        let title = try parseOptionalString(arguments, key: "title")
+        let sessionTopic = try parseOptionalString(arguments, key: "session_topic")
+        let contextSummary = try parseOptionalString(arguments, key: "context_summary")
+        let keywords = try parseOptionalStringArray(arguments, key: "keywords").map {
+            $0.flatMap(SnippetFilterParser.parseCommaSeparatedKeywords)
+        }
+        let addTags = try (parseOptionalStringArray(arguments, key: "add_tags") ?? [])
+            .map(SnippetFilterParser.parseCustomTag)
+        let removeTags = try (parseOptionalStringArray(arguments, key: "remove_tags") ?? [])
+            .map(SnippetFilterParser.parseCustomTag)
+        let archived = try parseOptionalBool(arguments, key: "archived")
+
+        let patch = SnippetMetadataPatch(
+            title: title,
+            sessionTopic: sessionTopic,
+            contextSummary: contextSummary,
+            keywords: keywords,
+            addTags: addTags,
+            removeTags: removeTags,
+            archived: archived
+        )
+        guard !patch.isEmpty else {
+            throw CLIValidationError(
+                "At least one metadata field, tag update, or archived flag must be provided for update_snippet_metadata."
+            )
+        }
+        return (id, patch)
+    }
+
+    private static func parseAppendNoteArguments(
+        _ arguments: [String: JSONValue]
+    ) throws -> (id: String, input: SnippetNoteInput) {
+        try rejectUnknownKeys(
+            arguments,
+            allowed: ["id", "note", "author"],
+            toolName: "append_snippet_note"
+        )
+        let rawID = try parseRequiredString(arguments, key: "id")
+        let id = try SnippetFilterParser.normalizeSnippetID(rawID)
+        let note = try parseRequiredVerbatimString(arguments, key: "note")
+        let author = try parseOptionalString(arguments, key: "author")
+        return (id, SnippetNoteInput(note: note, author: author))
+    }
+
     private func makeSuccessResponse(id: JSONValue, result: JSONValue) -> JSONValue {
         .object([
             "jsonrpc": .string("2.0"),
@@ -561,7 +743,7 @@ public struct MCPServer: Sendable {
                     ]),
                     "source": .object([
                         "type": .string("string"),
-                        "description": .string("Optional source platform filter (e.g. antigravity, chatgpt, claude, gemini, macos, web).")
+                        "description": .string("Optional source platform filter (e.g. antigravity, chatgpt, claude, gemini, macos, web, agent).")
                     ]),
                     "limit": .object([
                         "type": .string("integer"),
@@ -582,7 +764,7 @@ public struct MCPServer: Sendable {
         .object([
             "name": .string("search_snippets"),
             "description": .string(
-                "Search Coding Rewind snippets by case-insensitive substring across title, session topic, context summary, keywords, source title, and verbatim text. Defaults search 72h active snippets (limit: 20); pass window: \"all\" or status: \"synthesized\"|\"all\" to search older (>72h) or archived history."
+                "Search Coding Rewind snippets by case-insensitive substring across title, session topic, context summary, keywords, tags, source title, and verbatim text. Defaults search 72h active snippets (limit: 20); pass window: \"all\" or status: \"synthesized\"|\"all\" to search older (>72h) or archived history."
             ),
             "inputSchema": .object([
                 "type": .string("object"),
@@ -590,7 +772,7 @@ public struct MCPServer: Sendable {
                     "query": .object([
                         "type": .string("string"),
                         "minLength": .int(1),
-                        "description": .string("Substring query matched across metadata headers and verbatim text.")
+                        "description": .string("Substring query matched across metadata headers, tags, and verbatim text.")
                     ]),
                     "window": .object([
                         "type": .string("string"),
@@ -635,7 +817,7 @@ public struct MCPServer: Sendable {
         .object([
             "name": .string("get_snippet"),
             "description": .string(
-                "Fetch a single Coding Rewind snippet by ID (\"<id>\" or \"memos/<id>\"), returning full SnippetRecord JSON including verbatimText, metadata headers, sourceURL, and optional conversationContext."
+                "Fetch a single Coding Rewind snippet by ID (\"<id>\" or \"memos/<id>\"), returning full SnippetRecord JSON including verbatimText, metadata headers, tags, sourceURL, notes, and optional conversationContext."
             ),
             "inputSchema": .object([
                 "type": .string("object"),
@@ -679,6 +861,149 @@ public struct MCPServer: Sendable {
             "annotations": .object([
                 "readOnlyHint": .bool(false),
                 "idempotentHint": .bool(true),
+                "destructiveHint": .bool(false)
+            ])
+        ]),
+        .object([
+            "name": .string("create_snippet"),
+            "description": .string(
+                "Create a new Coding Rewind snippet (default #source/agent) to stash a synthesized outline, draft, or highlight back into Coding Rewind with optional structured headers and custom tags."
+            ),
+            "inputSchema": .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "text": .object([
+                        "type": .string("string"),
+                        "minLength": .int(1),
+                        "description": .string("Verbatim Markdown content to save.")
+                    ]),
+                    "title": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional concise title header. Providing any metadata header emits #rewind/ready directly.")
+                    ]),
+                    "session_topic": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional session or topic header.")
+                    ]),
+                    "context_summary": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional 1-2 sentence context summary header.")
+                    ]),
+                    "keywords": .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                        "description": .string("Optional topic keywords.")
+                    ]),
+                    "tags": .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                        "description": .string("Optional custom #tag names (excluding reserved rewind/* and source/*).")
+                    ]),
+                    "source": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional source platform token (default \"agent\").")
+                    ]),
+                    "source_title": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional provenance display title (default \"AI Synthesis\").")
+                    ]),
+                    "source_url": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional provenance link (e.g. conversation://<id> or https://...).")
+                    ])
+                ]),
+                "required": .array([.string("text")]),
+                "additionalProperties": .bool(false)
+            ]),
+            "annotations": .object([
+                "readOnlyHint": .bool(false),
+                "idempotentHint": .bool(false),
+                "destructiveHint": .bool(false)
+            ])
+        ]),
+        .object([
+            "name": .string("update_snippet_metadata"),
+            "description": .string(
+                "Update a snippet's top metadata headers (title, session_topic, context_summary, keywords), custom tags, or archived status without modifying verbatimText."
+            ),
+            "inputSchema": .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "id": .object([
+                        "type": .string("string"),
+                        "minLength": .int(1),
+                        "description": .string("Snippet ID (\"<id>\" or \"memos/<id>\").")
+                    ]),
+                    "title": .object([
+                        "type": .string("string"),
+                        "description": .string("Updated title header (pass empty string to clear).")
+                    ]),
+                    "session_topic": .object([
+                        "type": .string("string"),
+                        "description": .string("Updated session topic header (pass empty string to clear).")
+                    ]),
+                    "context_summary": .object([
+                        "type": .string("string"),
+                        "description": .string("Updated context summary header (pass empty string to clear).")
+                    ]),
+                    "keywords": .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                        "description": .string("Replacement keywords list.")
+                    ]),
+                    "add_tags": .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                        "description": .string("Custom tags to add to line 1.")
+                    ]),
+                    "remove_tags": .object([
+                        "type": .string("array"),
+                        "items": .object(["type": .string("string")]),
+                        "description": .string("Custom tags to remove from line 1.")
+                    ]),
+                    "archived": .object([
+                        "type": .string("boolean"),
+                        "description": .string("true marks #rewind/synthesized; false unarchives back to active (#rewind/ready or #rewind/pending).")
+                    ])
+                ]),
+                "required": .array([.string("id")]),
+                "additionalProperties": .bool(false)
+            ]),
+            "annotations": .object([
+                "readOnlyHint": .bool(false),
+                "idempotentHint": .bool(true),
+                "destructiveHint": .bool(false)
+            ])
+        ]),
+        .object([
+            "name": .string("append_snippet_note"),
+            "description": .string(
+                "Attach a private Markdown note/conclusion (<!-- rewind-note-v1 -->) to an existing snippet by ID while keeping verbatimText untouched."
+            ),
+            "inputSchema": .object([
+                "type": .string("object"),
+                "properties": .object([
+                    "id": .object([
+                        "type": .string("string"),
+                        "minLength": .int(1),
+                        "description": .string("Target snippet ID (\"<id>\" or \"memos/<id>\").")
+                    ]),
+                    "note": .object([
+                        "type": .string("string"),
+                        "minLength": .int(1),
+                        "description": .string("Markdown note or conclusion to attach.")
+                    ]),
+                    "author": .object([
+                        "type": .string("string"),
+                        "description": .string("Optional single-line author label (default \"agent\").")
+                    ])
+                ]),
+                "required": .array([.string("id"), .string("note")]),
+                "additionalProperties": .bool(false)
+            ]),
+            "annotations": .object([
+                "readOnlyHint": .bool(false),
+                "idempotentHint": .bool(false),
                 "destructiveHint": .bool(false)
             ])
         ])

@@ -336,6 +336,46 @@ public struct MemosClient: Sendable {
     }
 
     @discardableResult
+    public func postMemoComment(
+        memoID: String,
+        commentID: String,
+        content: String,
+        baseURL: URL,
+        token: String
+    ) async throws -> MemoWireDTO {
+        guard MemosWireFormat.isValidMemoID(commentID) else {
+            throw RewindError.invalidClipID(commentID)
+        }
+        let encodedID = try Self.encodedMemoPathComponent(from: memoID)
+        let commentURL = try endpointURL(
+            baseURL: baseURL,
+            path: "/api/memos/\(encodedID)/comments",
+            queryItems: [URLQueryItem(name: "commentId", value: commentID)]
+        )
+        let jsonEncoder = JSONEncoder()
+        jsonEncoder.outputFormatting = [.withoutEscapingSlashes]
+        let body = try jsonEncoder.encode(CreateMemoRequestDTO(content: content, visibility: "PRIVATE"))
+        let (data, status) = try await performCheckedRequest(url: commentURL, method: "POST", token: token, body: body)
+        if (200..<300).contains(status) {
+            if let decoded = try? JSONDecoder().decode(CommentItemWireDTO.self, from: data) {
+                let effectiveName = decoded.name.isEmpty ? "memos/\(commentID)" : decoded.name
+                let effectiveContent = decoded.content.isEmpty ? content : decoded.content
+                return MemoWireDTO(
+                    name: effectiveName,
+                    content: effectiveContent,
+                    createTime: decoded.createTime,
+                    updateTime: decoded.updateTime
+                )
+            }
+            return MemoWireDTO(name: "memos/\(commentID)", content: content)
+        }
+        if status == 409 {
+            return MemoWireDTO(name: "memos/\(commentID)", content: content)
+        }
+        throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+    }
+
+    @discardableResult
     public func updateMemoContent(
         id: String,
         content: String,
