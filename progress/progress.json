@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "79c0867ed20a8b6a604d49dfba3eac6a001da02c",
+    "main": "0966e9530938720bdce4482f2d475b808bded00c",
     "open_pulls": [],
     "pulls": [
       {
@@ -299,6 +299,14 @@
         "merged": true,
         "number": 38,
         "state": "closed"
+      },
+      {
+        "base": "96a786c192b046d5cd73ef28fc20f04183b598de",
+        "head": "c29a8a058368296f84ed68c8ce9d1bd1f56ceef5",
+        "merge_commit": "0966e9530938720bdce4482f2d475b808bded00c",
+        "merged": true,
+        "number": 39,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -357,19 +365,106 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-16T10:15:07.602406Z",
+  "observed_at": "2026-11-16T17:42:20.930093Z",
   "outputs": [
     "progress/index.html"
   ],
   "page": "progress/index.html",
   "related_repositories": [
     "GaimsDevSoftware/linuxpop",
+    "daaain/claude-code-log",
+    "entireio/cli",
+    "kepano/defuddle",
+    "obsidianmd/obsidian-clipper",
     "p0deje/Maccy"
   ],
   "renderer": null,
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "provenance-lead-and-hud-inspector",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "完成三层来源留底、W3C 文本锚点、浮窗脉络抽屉及三模型对抗审查与断网防冲突加固，通过 ./scripts/check 六道门禁与 SwiftUI 性能审计后 squash 合并至 main。",
+              "ref": 39
+            },
+            {
+              "kind": "commit",
+              "note": "PR #39 合并提交，包含 Swift 核心与浮窗、Web Clipper 扩展、VPS enricher 及规范文档同步。",
+              "ref": "0966e9530938720bdce4482f2d475b808bded00c"
+            },
+            {
+              "kind": "file",
+              "note": "新增 CaptureContextLead（sessionOpening 与 pageLead）及 SourceLocator 枚举，彻底隔离 http(s) 与 Antigravity 内部 conversation:// 协议。",
+              "ref": "Sources/CodingRewindCore/DomainModels.swift"
+            },
+            {
+              "kind": "file",
+              "note": "抽离 rewind-context-v1 线级解析与序列化，内置 closeUnbalancedCodeFence 防流式中断未闭合代码围栏吞噬章节。",
+              "ref": "Sources/CodingRewindCore/ContextCommentWireFormat.swift"
+            },
+            {
+              "kind": "file",
+              "note": "新增停靠式脉络预览抽屉（⌘I、行内脉络按钮、三级 Esc 收起），断网刷新保留详情缓存并在离线队列冲刷换 ID 时原子重映射本地笔记。",
+              "ref": "Sources/CodingRewindApp/HUDCardInspectorView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "新增普通网页 Page Lead 提取、ICU Intl.Segmenter 词边界 W3C #:~:text= 锚点及 ChatGPT/Claude/Gemini 会话开场白提取。",
+              "ref": "extensions/web-clipper/extractors.mjs"
+            },
+            {
+              "kind": "file",
+              "note": "按章节边界剥离代码块并提取 Page Lead 与 Session Opening 赋能云端摘要。",
+              "ref": "deploy/vps/enricher/enricher.py"
+            }
+          ],
+          "id": "provenance-lead-and-hud-inspector-impl",
+          "next": "",
+          "status": "done",
+          "summary": "定位并修复桌面浮窗点击 Antigravity 卡片「查看来源」静默无响应根因（Antigravity.app 仅注册 antigravity:// 而未注册 conversation://，且旧代码丢弃 NSWorkspace.shared.open 布尔结果）。参照 obsidianmd/obsidian-clipper、kepano/defuddle、entireio/cli、daaain/claude-code-log 与 p0deje/Maccy 的 MIT 方案分三步落地：在 AI 对话提取 Session ID 与首轮开场白 Session Opening（300 字），在普通网页提取 Page Lead 并生成浏览器原生支持的 W3C #:~:text= 精确回跳锚点，同步喂给 enricher.py；在浮窗内新增停靠式「脉络」抽屉（⌘I、行内按钮、三级 Esc，保留空格勾选卡片）原地查看完整原文、开头留底、紧邻提问、近期轮次与 AI 笔记；以 SourceLocator 区分 http(s) 打开（失败弹错误横幅）与 Antigravity 一键复制会话 ID / 唤醒宿主（接聊提示词保留 conversation://<uuid>）。经 inherit/flash/pro 三模型对抗审查补齐流式中断围栏自动闭合、断网详情缓存保留与离线 ID 切换笔记原子迁移。全仓 ./scripts/check 六道门禁（Swift 223/223、KeyboardShortcuts 94/94、enricher 12/12、Web Clipper 75/75、零 QA plist 残留）及 check_swiftui_perf.py（0 告警）通过后经 PR #39 合入 main。",
+          "title": "来源开头留底、W3C 文本锚点、浮窗脉络抽屉与网络中断防冲突加固（PR #39）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "commit",
+              "note": "基于 PR #39 合并提交执行 ./scripts/build-app-bundle.sh /Applications 原位重建签名应用包。",
+              "ref": "0966e9530938720bdce4482f2d475b808bded00c"
+            },
+            {
+              "kind": "note",
+              "note": "/Applications/CodingRewind.app 通过 Developer ID Application: Xianwei Zhang (LQAVR62TK2) codesign --verify --deep --strict 校验，CDHash 686650a0c5020f6aefa33ba87f52f6b7642fac45，主程序 SHA-256 dfc69594a12b1d21618955d3c0625a1f2acb31b2747b2ebd1fc6497d1fd1c93f；--background 启动（PID 77936）后固定目录 bin/coding-rewind（SHA-256 17948301e14855976ac746d4f48ab767f2c0e6088448a78d2b6fc2eb592fa1de）与 bin/coding-rewind-sidecar（SHA-256 b6ebd96bd8b5ea86183039893a89042a984e1d23db7e07cce397d23f609cc715）同 Contents/Helpers cmp 逐字节一致；CODING_REWIND_QA=1 隔离目录实测 memos_payload.mjs -> coding-rewind get -> coding-rewind mcp (get_snippet) -> enricher.py 四端解析一致且隔离目录已清理。",
+              "ref": "2026-11-17 本机 /Applications 覆盖升级与四端二进制契约核验"
+            }
+          ],
+          "id": "provenance-lead-local-app-upgrade",
+          "next": "",
+          "status": "done",
+          "summary": "停止旧版后台进程后基于 main（0966e9530938720bdce4482f2d475b808bded00c）执行 ./scripts/build-app-bundle.sh /Applications 完成 Developer ID（TeamIdentifier LQAVR62TK2，CDHash 686650a0c5020f6aefa33ba87f52f6b7642fac45）严格重签与后台静默重启（PID 77936），自动同步刷新 ~/Library/Application Support/CodingRewind/bin/ 下的 coding-rewind 与 coding-rewind-sidecar（cmp 逐字节一致）。在 CODING_REWIND_QA=1 零个人凭据隔离目录中，以真实 Web Clipper 模块生成含反斜杠方括号标题、未闭合代码围栏、Antigravity conversation:// 与普通网页 Page Lead + #:~:text= 的载荷，经已安装 coding-rewind CLI、内嵌 MCP 服务及 enricher.py 实测全字段解析一致。",
+          "title": "本机 /Applications/CodingRewind.app 重签升级与四端已安装二进制实测"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "真实浏览器扩展重载与跨页面实机交互继续结合现有实机跟踪项推进。",
+              "ref": 14
+            }
+          ],
+          "id": "provenance-web-extension-and-vps-rollout",
+          "next": "在桌面 Chrome 的 chrome://extensions 刷新本地解包扩展并实机划选普通网页核验 #:~:text= 滚屏标黄，按需将最新 deploy/vps/enricher/enricher.py 同步至远端 VPS 容器。",
+          "status": "unverified",
+          "summary": "新版 Web Clipper 的 Page Lead / #:~:text= 提取与 enricher.py 章节级代码剥离已完成 75 项扩展单测、12 项增强器单测及本机四端离线载荷联调，但尚未在登录态桌面 Chrome 重载解包扩展进行真实网页划词跳转验收，亦未部署替换远端 VPS 上的运行态 enricher 容器（旧容器对新评论格式保持前向兼容）。",
+          "title": "桌面浏览器解包扩展重载与远端 VPS enricher 同步实机待验"
+        }
+      ],
+      "title": "来源开头留底、W3C 文本锚点与浮窗脉络抽屉（PR #39）"
+    },
     {
       "id": "release-050",
       "items": [
@@ -2469,7 +2564,8 @@
       35,
       36,
       37,
-      38
+      38,
+      39
     ]
   }
 }
