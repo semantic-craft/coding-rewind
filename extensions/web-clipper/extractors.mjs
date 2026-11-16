@@ -189,7 +189,7 @@ export function detectPlatform(url) {
 
 const CHAT_SESSION_ID_PATTERNS = Object.freeze({
   chatgpt: /^\/(?:g\/[^/?#]+\/)?c\/([^/?#]+)(?:\/|$)/,
-  claude: /^\/chat\/([^/?#]+)(?:\/|$)/,
+  claude: /^\/(?:project\/[^/?#]+\/)?chat\/([^/?#]+)(?:\/|$)/,
   gemini: /^\/(?:u\/\d+\/)?app\/([^/?#]+)(?:\/|$)/
 });
 
@@ -1265,6 +1265,25 @@ function contextThroughSelection(messages, range, maxRounds) {
   return { prompt, messages: messages.slice(roundStart, selectedIndex + 1) };
 }
 
+export function closeUnbalancedCodeFence(text) {
+  if (!text || typeof text !== "string") return "";
+  let active = null;
+  for (const line of text.replace(/\r\n?/g, "\n").split("\n")) {
+    const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!match) continue;
+    const char = match[1][0];
+    const length = match[1].length;
+    const remainder = match[2];
+    if (!active) {
+      if (char === "`" && remainder.includes("`")) continue;
+      active = { char, length };
+    } else if (char === active.char && length >= active.length && /^[ \t]*$/.test(remainder)) {
+      active = null;
+    }
+  }
+  return active ? `${text}\n${active.char.repeat(active.length)}` : text;
+}
+
 function truncateCleanly(str, maxChars) {
   if (str.length <= maxChars) return str;
   if (maxChars <= 1) return str.slice(0, maxChars);
@@ -1276,11 +1295,26 @@ function truncateCleanly(str, maxChars) {
   return `${cut.trimEnd()}…`;
 }
 
+function truncateAndCloseFence(str, maxChars) {
+  if (str.length <= maxChars) {
+    const closed = closeUnbalancedCodeFence(str);
+    if (closed.length <= maxChars) return closed;
+  }
+  let budget = maxChars;
+  let result = closeUnbalancedCodeFence(truncateCleanly(str, budget));
+  while (result.length > maxChars && budget > 2) {
+    budget = Math.max(2, budget - (result.length - maxChars));
+    result = closeUnbalancedCodeFence(truncateCleanly(str, budget));
+    if (budget === 2) break;
+  }
+  return result;
+}
+
 export function formatRecentTurns(turnsSlice, maxChars = 4000) {
   if (!Array.isArray(turnsSlice) || turnsSlice.length === 0) return "";
   const formatted = turnsSlice.map((t) => ({
     prefix: t.role === "user" ? "User: " : "Assistant: ",
-    body: t.text.trim()
+    body: closeUnbalancedCodeFence(t.text.trim())
   }));
 
   const joinEntries = (entries) => entries.map((e) => `${e.prefix}${e.body}`).join("\n\n");
@@ -1294,9 +1328,10 @@ export function formatRecentTurns(turnsSlice, maxChars = 4000) {
 
   const trimmed = formatted.map((e) => ({
     prefix: e.prefix,
-    body: truncateCleanly(e.body, perTurnBudget)
+    body: truncateAndCloseFence(e.body, perTurnBudget)
   }));
-  return truncateCleanly(joinEntries(trimmed), maxChars);
+  const joined = joinEntries(trimmed);
+  return joined.length <= maxChars ? joined : truncateAndCloseFence(joined, maxChars);
 }
 
 export function extractSessionOpening(messages, maxChars = 300) {
@@ -1304,7 +1339,7 @@ export function extractSessionOpening(messages, maxChars = 300) {
   for (const entry of messages) {
     if (!entry || entry.role !== "user") continue;
     const trimmed = String(entry.text || "").trim();
-    if (trimmed) return truncateCleanly(trimmed, maxChars);
+    if (trimmed) return truncateAndCloseFence(trimmed, maxChars);
   }
   return "";
 }
@@ -1589,37 +1624,31 @@ export function extractPageLead(doc, selectionRange = null, sessionTitle = "", m
   }
 
   if (pieces.length === 0) return "";
-  return truncateCleanly(pieces.join("\n"), maxChars);
+  return truncateAndCloseFence(pieces.join("\n"), maxChars);
 }
 
-function isCjkCodePoint(ch) {
-  if (!ch) return false;
-  const cp = ch.codePointAt(0);
-  return (
-    (cp >= 0x3400 && cp <= 0x9fff) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0x3040 && cp <= 0x30ff) ||
-    (cp >= 0xac00 && cp <= 0xd7af)
-  );
-}
+const WORD_SEGMENTER =
+  typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "word" })
+    : null;
 
-function truncateAtCodePointEnd(str, maxLen) {
-  if (str.length <= maxLen) return str;
-  let cut = str.slice(0, maxLen);
-  if (cut.length > 0) {
-    const last = cut.charCodeAt(cut.length - 1);
-    if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
+const FALLBACK_WORD_SPAN_RE =
+  /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]|[\p{L}\p{N}_]+(?:[.:'][\p{L}\p{N}_]+)*/gu;
+
+function collectWordSpans(text) {
+  const spans = [];
+  if (WORD_SEGMENTER) {
+    for (const seg of WORD_SEGMENTER.segment(text)) {
+      if (seg.isWordLike) {
+        spans.push({ start: seg.index, end: seg.index + seg.segment.length });
+      }
+    }
+    return spans;
   }
-  return cut.trimEnd();
-}
-
-function sliceFromCodePointStart(str, startIdx) {
-  let idx = Math.max(0, startIdx);
-  if (idx > 0 && idx < str.length) {
-    const code = str.charCodeAt(idx);
-    if (code >= 0xdc00 && code <= 0xdfff) idx += 1;
+  for (const match of text.matchAll(FALLBACK_WORD_SPAN_RE)) {
+    spans.push({ start: match.index, end: match.index + match[0].length });
   }
-  return str.slice(idx).trimStart();
+  return spans;
 }
 
 function snapFragmentPrefix(rawBefore, maxChars = 30) {
@@ -1630,16 +1659,17 @@ function snapFragmentPrefix(rawBefore, maxChars = 30) {
   let candidate = "";
   if (trimmed[startIdx - 1] === " ") {
     candidate = trimmed.slice(startIdx).trimStart();
-  } else if (isCjkCodePoint(trimmed[startIdx]) || isCjkCodePoint(trimmed[startIdx - 1])) {
-    candidate = sliceFromCodePointStart(trimmed, startIdx);
   } else {
-    const nextSpace = trimmed.indexOf(" ", startIdx);
-    if (nextSpace >= 0 && nextSpace + 1 < trimmed.length) {
-      candidate = trimmed.slice(nextSpace + 1).trimStart();
+    const spans = collectWordSpans(trimmed);
+    const forward = spans.find((s) => s.start >= startIdx);
+    if (forward) {
+      candidate = trimmed.slice(forward.start).trimStart();
     } else {
-      const prevSpace = trimmed.lastIndexOf(" ", startIdx);
-      if (prevSpace >= 0 && trimmed.length - (prevSpace + 1) <= 45) {
-        candidate = trimmed.slice(prevSpace + 1).trimStart();
+      for (let i = spans.length - 1; i >= 0; i -= 1) {
+        if (spans[i].start > 0 && trimmed.length - spans[i].start <= 45) {
+          candidate = trimmed.slice(spans[i].start).trimStart();
+          break;
+        }
       }
     }
   }
@@ -1653,17 +1683,17 @@ function snapFragmentSuffix(rawAfter, maxChars = 30) {
   let candidate = "";
   if (trimmed[maxChars] === " ") {
     candidate = trimmed.slice(0, maxChars).trimEnd();
-  } else if (isCjkCodePoint(trimmed[maxChars - 1]) || isCjkCodePoint(trimmed[maxChars])) {
-    candidate = truncateAtCodePointEnd(trimmed, maxChars);
   } else {
-    const lastSpace = trimmed.lastIndexOf(" ", maxChars);
-    if (lastSpace > 0) {
-      candidate = trimmed.slice(0, lastSpace).trimEnd();
-    } else {
-      const nextSpace = trimmed.indexOf(" ", maxChars);
-      if (nextSpace > 0 && nextSpace <= 45) {
-        candidate = trimmed.slice(0, nextSpace).trimEnd();
+    const spans = collectWordSpans(trimmed);
+    for (let i = spans.length - 1; i >= 0; i -= 1) {
+      if (spans[i].end <= maxChars) {
+        candidate = trimmed.slice(0, spans[i].end).trimEnd();
+        break;
       }
+    }
+    if (!candidate) {
+      const next = spans.find((s) => s.end <= 45);
+      if (next) candidate = trimmed.slice(0, next.end).trimEnd();
     }
   }
   return /[\p{L}\p{N}]/u.test(candidate) ? candidate : "";
@@ -1676,14 +1706,24 @@ function snapFragmentStart(text, minChars = 40, maxChars = 55) {
   for (let i = maxChars; i >= minChars; i -= 1) {
     if (trimmed[i] === " ") return trimmed.slice(0, i).trimEnd();
   }
-  if (isCjkCodePoint(trimmed[47]) || isCjkCodePoint(trimmed[46])) {
-    return truncateAtCodePointEnd(trimmed, 48);
+  const spans = collectWordSpans(trimmed);
+  for (let i = spans.length - 1; i >= 0; i -= 1) {
+    const end = spans[i].end;
+    if (end >= minChars && end <= maxChars) return trimmed.slice(0, end).trimEnd();
   }
   const earlierSpace = trimmed.lastIndexOf(" ", minChars);
   if (earlierSpace >= 12) return trimmed.slice(0, earlierSpace).trimEnd();
   const laterSpace = trimmed.indexOf(" ", maxChars + 1);
   if (laterSpace > 0 && laterSpace <= 75) return trimmed.slice(0, laterSpace).trimEnd();
-  return truncateAtCodePointEnd(trimmed, maxChars);
+  for (let i = spans.length - 1; i >= 0; i -= 1) {
+    const end = spans[i].end;
+    if (end >= 12 && end < minChars) return trimmed.slice(0, end).trimEnd();
+  }
+  for (let i = 0; i < spans.length; i += 1) {
+    const end = spans[i].end;
+    if (end > maxChars && end <= 140) return trimmed.slice(0, end).trimEnd();
+  }
+  return trimmed.length <= 140 ? trimmed : "";
 }
 
 function snapFragmentEnd(text, minChars = 40, maxChars = 55) {
@@ -1698,9 +1738,12 @@ function snapFragmentEnd(text, minChars = 40, maxChars = 55) {
       return trimmed.slice(i + 1).trimStart();
     }
   }
-  const cjkStart = len - 48;
-  if (cjkStart > 0 && (isCjkCodePoint(trimmed[cjkStart]) || isCjkCodePoint(trimmed[cjkStart - 1]))) {
-    return sliceFromCodePointStart(trimmed, cjkStart);
+  const spans = collectWordSpans(trimmed);
+  for (let i = 0; i < spans.length; i += 1) {
+    const start = spans[i].start;
+    if (start > 0 && start >= earliestStart && start <= latestStart) {
+      return trimmed.slice(start).trimStart();
+    }
   }
   const laterSpace = trimmed.indexOf(" ", latestStart + 1);
   if (laterSpace > 0 && len - (laterSpace + 1) >= 12) {
@@ -1710,7 +1753,17 @@ function snapFragmentEnd(text, minChars = 40, maxChars = 55) {
   if (earlierSpace >= 0 && len - (earlierSpace + 1) <= 75) {
     return trimmed.slice(earlierSpace + 1).trimStart();
   }
-  return sliceFromCodePointStart(trimmed, len - maxChars);
+  for (let i = 0; i < spans.length; i += 1) {
+    const start = spans[i].start;
+    const rem = len - start;
+    if (start > 0 && rem >= 12 && rem < minChars) return trimmed.slice(start).trimStart();
+  }
+  for (let i = spans.length - 1; i >= 0; i -= 1) {
+    const start = spans[i].start;
+    const rem = len - start;
+    if (start > 0 && rem > maxChars && rem <= 140) return trimmed.slice(start).trimStart();
+  }
+  return len <= 140 ? trimmed : "";
 }
 
 function encodeFragmentAtom(atom) {
@@ -1862,7 +1915,9 @@ function collectRangeBlockRuns(selectionRange, doc) {
       }
     }
 
-    const isBlock = node.nodeType === ELEMENT_NODE && FRAGMENT_BLOCK_TAGS.has(getTagName(node));
+    const isBlock =
+      node.nodeType === ELEMENT_NODE &&
+      (FRAGMENT_BLOCK_TAGS.has(getTagName(node)) || isCodeLineElement(node));
     if (isBlock) currentBlockId += 1;
 
     const children = Array.from(node.childNodes || []);
@@ -1912,7 +1967,8 @@ export function buildTextFragmentUrl(rawUrl, selectionRange, doc) {
     } else {
       const startAtom = snapFragmentStart(exact, 40, 55);
       const endAtom = snapFragmentEnd(exact, 40, 55);
-      if (startAtom && endAtom && startAtom.length + endAtom.length < exact.length) {
+      if (!startAtom || !endAtom) return originalUrl;
+      if (startAtom.length + endAtom.length < exact.length) {
         coreDirective = `${encodeFragmentAtom(startAtom)},${encodeFragmentAtom(endAtom)}`;
       } else {
         coreDirective = encodeFragmentAtom(exact);
@@ -1996,7 +2052,7 @@ export function extractClipContext({
     sessionTitle,
     sessionId: extractChatSessionId(sourceUrl, base.sourcePlatform),
     sessionOpening: extractSessionOpening(messages, 300),
-    prompt: context ? truncateCleanly(context.prompt.trim(), 1500) : "",
+    prompt: context ? truncateAndCloseFence(context.prompt.trim(), 1500) : "",
     recentTurns: context ? formatRecentTurns(context.messages, maxRecentChars) : ""
   };
 }

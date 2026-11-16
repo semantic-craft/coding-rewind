@@ -37,6 +37,9 @@ SYSTEM_PROMPT_EN = (
 _FENCED_CODE_RE = re.compile(r"(`{3,}|~{3,})[\s\S]*?(?:\1|$)")
 _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 _URL_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
+_CONTEXT_SECTION_SPLIT_RE = re.compile(
+    r"(?m)^(?=### (?:Session Opening|Page Lead|Prompt|Recent Turns)\b)"
+)
 _CONTEXT_LABEL_RE = re.compile(
     r"(?m)^(?:Session ID:[^\n]*|Session Title:|Prompt:|### (?:Session Opening|Page Lead|Prompt|Recent Turns)\b|User:|Assistant:)[ \t]*"
 )
@@ -48,7 +51,13 @@ def _strip_code_and_urls(text: str | None, *, strip_context_labels: bool = False
     if not text:
         return ""
     cleaned = text.replace(CONTEXT_MARKER, " ")
-    cleaned = _FENCED_CODE_RE.sub(" ", cleaned)
+    if strip_context_labels:
+        cleaned = "\n".join(
+            _FENCED_CODE_RE.sub(" ", part)
+            for part in _CONTEXT_SECTION_SPLIT_RE.split(cleaned)
+        )
+    else:
+        cleaned = _FENCED_CODE_RE.sub(" ", cleaned)
     cleaned = _INLINE_CODE_RE.sub(" ", cleaned)
     cleaned = _URL_RE.sub(" ", cleaned)
     if strip_context_labels:

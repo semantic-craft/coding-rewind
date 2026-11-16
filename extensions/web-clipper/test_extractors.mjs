@@ -18,6 +18,8 @@ import {
   selectionToMarkdown,
   extractSessionTitle,
   extractConversationTurns,
+  closeUnbalancedCodeFence,
+  formatRecentTurns,
   extractSessionOpening,
   extractPageLead,
   buildTextFragmentUrl,
@@ -4031,4 +4033,302 @@ test("prototype-less NodeList web clip populates pageLead, W3C text fragment URL
   );
   assert.match(mutualWeb.commentBody.content, /### Page Lead\nAuthoritative web page lead$/);
   assert.doesNotMatch(mutualWeb.commentBody.content, /### Session Opening/);
+});
+
+function hasBalancedCommonMarkFences(markdown) {
+  let active = null;
+  for (const line of String(markdown || "").replace(/\r\n?/g, "\n").split("\n")) {
+    const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!match) continue;
+    const ch = match[1][0];
+    const len = match[1].length;
+    const rest = match[2];
+    if (!active) {
+      if (ch === "`" && rest.includes("`")) continue;
+      active = { ch, len };
+    } else if (ch === active.ch && len >= active.len && /^[ \t]*$/.test(rest)) {
+      active = null;
+    }
+  }
+  return active === null;
+}
+
+test("truncated openings, prompts, turns, and wire payloads always close unbalanced CommonMark code fences", () => {
+  assert.equal(closeUnbalancedCodeFence("   ```ts\nconst x = 1;"), "   ```ts\nconst x = 1;\n```");
+  assert.equal(closeUnbalancedCodeFence("    ```ts\nconst x = 1;"), "    ```ts\nconst x = 1;");
+  assert.equal(closeUnbalancedCodeFence("```inline`ticks```"), "```inline`ticks```");
+  assert.equal(
+    closeUnbalancedCodeFence("````md\n```js\nx()\n```"),
+    "````md\n```js\nx()\n```\n````"
+  );
+
+  const longCodeOpening = `Review this worker:\n\`\`\`python\n${"def handle_batch(items):\n    return len(items)\n".repeat(12)}\`\`\``;
+  const opening = extractSessionOpening([{ role: "user", text: longCodeOpening }], 300);
+  assert.ok(opening.length <= 300, `opening length ${opening.length} must stay <= 300`);
+  assert.equal(hasBalancedCommonMarkFences(opening), true);
+  assert.match(opening, /\n```$/);
+
+  const longTildeOpening = `Shell trace:\n~~~~bash\n${"printf '%s\\n' \"$item\"\n".repeat(20)}~~~~`;
+  const tildeOpening = extractSessionOpening([{ role: "user", text: longTildeOpening }], 300);
+  assert.ok(tildeOpening.length <= 300);
+  assert.equal(hasBalancedCommonMarkFences(tildeOpening), true);
+  assert.match(tildeOpening, /\n~~~~$/);
+
+  const turnCode = `Here is the implementation:\n\`\`\`swift\n${"let state = ActorState(counter: 1)\n".repeat(40)}\`\`\``;
+  const recent = formatRecentTurns(
+    [
+      { role: "user", text: turnCode },
+      { role: "assistant", text: turnCode },
+      { role: "user", text: "Unclosed user fence:\n```ts\nconst pending = true;" },
+      { role: "assistant", text: turnCode }
+    ],
+    4000
+  );
+  assert.ok(recent.length <= 4000, `recentTurns length ${recent.length} must stay <= 4000`);
+  for (const chunk of recent.split(/\n\n(?=(?:User|Assistant): )/)) {
+    const body = chunk.replace(/^(?:User|Assistant): /, "");
+    assert.equal(hasBalancedCommonMarkFences(body), true, `turn must have balanced fences: ${body.slice(-30)}`);
+  }
+
+  const longPromptHtml = `<p>Explain every line:</p><pre><code class="language-rust">${"let value = compute_next_frame_offset(index);\n".repeat(45)}</code></pre>`;
+  const chatUrl = "https://chatgpt.com/c/fence-truncation";
+  const chatDoc = parseHtmlDocument(
+    `<html><body><main>
+      <div data-message-author-role="user"><div class="whitespace-pre-wrap">${longPromptHtml}</div></div>
+      <div data-message-author-role="assistant"><div class="markdown"><p id="ans">Summary reply.</p></div></div>
+    </main></body></html>`,
+    { url: chatUrl }
+  );
+  const clip = extractClipContext({
+    doc: chatDoc,
+    selectionRange: chatDoc.createRangeFromNode(chatDoc.querySelector("#ans")),
+    url: chatUrl
+  });
+  assert.ok(clip.prompt.length <= 1500);
+  assert.equal(hasBalancedCommonMarkFences(clip.prompt), true);
+  assert.equal(hasBalancedCommonMarkFences(clip.sessionOpening), true);
+
+  const leadDoc = parseHtmlDocument(
+    `<html><head><title>Fence Lead</title></head><body><article>
+      <p>\`\`\`ts</p>
+      <p>${"Type-safe boundary validation keeps wire parsers resilient across partial truncations. ".repeat(6)}</p>
+    </article></body></html>`,
+    { url: "https://example.com/fence-lead" }
+  );
+  const lead = extractPageLead(leadDoc, null, "Fence Lead", 300);
+  assert.ok(lead.length <= 300);
+  assert.equal(hasBalancedCommonMarkFences(lead), true);
+
+  const defensiveChat = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Selected snippet",
+      sourcePlatform: "claude",
+      sessionTitle: "Defensive Fence",
+      sessionId: "sess-1",
+      prompt: "Check:\n```python\nx = 1",
+      sessionOpening: "Start:\n~~~sh\necho 1",
+      recentTurns: "User: Follow-up\n\nAssistant: Selected snippet"
+    },
+    { clipId: "rw-1794366666123-deffence1", createdAt: "2026-11-16T12:00:00Z" }
+  );
+  assert.equal(hasBalancedCommonMarkFences(defensiveChat.commentBody.content), true);
+  assert.match(
+    defensiveChat.commentBody.content,
+    /Prompt: Check:\n```python\nx = 1\n```\n\n### Session Opening\nStart:\n~~~sh\necho 1\n~~~\n\n### Recent Turns\nUser: Follow-up/
+  );
+
+  const defensiveWeb = buildMemosWirePayloads(
+    {
+      selectedMarkdown: "Selected web text",
+      sourcePlatform: "web",
+      sessionTitle: "Web Fence",
+      pageLead: "```yaml\nmode: strict"
+    },
+    { clipId: "rw-1794366666123-deffence2", createdAt: "2026-11-16T12:01:00Z" }
+  );
+  assert.equal(hasBalancedCommonMarkFences(defensiveWeb.commentBody.content), true);
+  assert.match(defensiveWeb.commentBody.content, /### Page Lead\n```yaml\nmode: strict\n```$/);
+});
+
+test("buildMemosWirePayloads isolates platform leads strictly and escapes backslashes in Source link labels", () => {
+  for (const chatPlatform of ["chatgpt", "claude", "gemini"]) {
+    const leakedLeadClip = {
+      selectedMarkdown: "Chat excerpt",
+      sourcePlatform: chatPlatform,
+      sessionTitle: "Chat Thread",
+      sessionOpening: "",
+      pageLead: "Leaked web page lead that must never appear on chat platforms"
+    };
+    assert.equal(hasClipContext(leakedLeadClip), false);
+    const built = buildMemosWirePayloads(leakedLeadClip, {
+      clipId: `rw-1794366666123-iso-${chatPlatform.slice(0, 4)}`,
+      createdAt: "2026-11-16T12:10:00Z"
+    });
+    assert.equal(built.hasContext, false);
+    assert.equal(built.commentBody, null);
+    assert.doesNotMatch(built.memoBody.content, /#rewind\/has-ctx/);
+  }
+
+  const leakedOpeningWebClip = {
+    selectedMarkdown: "Web excerpt",
+    sourcePlatform: "web",
+    sessionTitle: "Docs Article",
+    sessionOpening: "Leaked chat session opening that must never appear on web",
+    pageLead: ""
+  };
+  assert.equal(hasClipContext(leakedOpeningWebClip), false);
+  const builtWeb = buildMemosWirePayloads(leakedOpeningWebClip, {
+    clipId: "rw-1794366666123-iso-web1",
+    createdAt: "2026-11-16T12:11:00Z"
+  });
+  assert.equal(builtWeb.hasContext, false);
+  assert.equal(builtWeb.commentBody, null);
+  assert.doesNotMatch(builtWeb.memoBody.content, /#rewind\/has-ctx/);
+
+  function parseWireSourceLine(memoContent) {
+    const line = memoContent.split("\n").find((l) => l.startsWith("> **Source:** "));
+    assert.ok(line, "missing Source line");
+    const rest = line.slice("> **Source:** ".length);
+    assert.equal(rest[0], "[");
+    let idx = 1;
+    let closeBracket = -1;
+    while (idx < rest.length) {
+      if (rest[idx] === "\\") {
+        idx += 2;
+        continue;
+      }
+      if (rest[idx] === "]" && rest[idx + 1] === "(") {
+        closeBracket = idx;
+        break;
+      }
+      idx += 1;
+    }
+    assert.notEqual(closeBracket, -1, `unparseable Markdown link in ${line}`);
+    const rawLabel = rest.slice(1, closeBracket);
+    const closeParen = rest.indexOf(")", closeBracket + 2);
+    assert.notEqual(closeParen, -1);
+    const title = rawLabel
+      .replace(/\\\[/g, "[")
+      .replace(/\\\]/g, "]")
+      .replace(/\\\\/g, "\\");
+    const url = rest.slice(closeBracket + 2, closeParen);
+    return { title, url };
+  }
+
+  for (const trickyTitle of [
+    "C:\\Users\\dev\\",
+    "Spoof \\](https://evil.example/path) [v2]\\",
+    "\\\\server\\share\\[docs]"
+  ]) {
+    const builtLink = buildMemosWirePayloads(
+      {
+        selectedMarkdown: "Snippet",
+        sourcePlatform: "web",
+        sessionTitle: trickyTitle,
+        sourceUrl: "https://trusted.example.org/docs"
+      },
+      { clipId: "rw-1794366666123-bslash01", createdAt: "2026-11-16T12:12:00Z" }
+    );
+    const parsed = parseWireSourceLine(builtLink.memoBody.content);
+    assert.equal(parsed.title, trickyTitle);
+    assert.equal(parsed.url, "https://trusted.example.org/docs");
+  }
+});
+
+test("extractChatSessionId and extractClipContext support Claude project chat URLs", () => {
+  assert.equal(
+    extractChatSessionId("https://claude.ai/project/0196abc-proj/chat/9b8c7d6e-1122-3344"),
+    "9b8c7d6e-1122-3344"
+  );
+  assert.equal(
+    extractChatSessionId("https://claude.ai/project/0196abc-proj/chat/9b8c7d6e-1122-3344/?q=1#top"),
+    "9b8c7d6e-1122-3344"
+  );
+  assert.equal(extractChatSessionId("https://claude.ai/project/0196abc-proj"), "");
+  assert.equal(extractChatSessionId("https://claude.ai/project/0196abc-proj/chat/"), "");
+
+  const projectChatUrl = "https://claude.ai/project/proj-uuid-42/chat/chat-uuid-99";
+  const doc = parseHtmlDocument(
+    `<html><head><title>Project Architecture - Claude</title></head><body>
+      <div data-testid="user-message"><p>Summarize the storage schema.</p></div>
+      <div data-testid="assistant-message"><p id="proj-ans">Use append-only WAL segments.</p></div>
+    </body></html>`,
+    { url: projectChatUrl }
+  );
+  const clip = extractClipContext({
+    doc,
+    selectionRange: doc.createRangeFromNode(doc.querySelector("#proj-ans")),
+    url: projectChatUrl
+  });
+  assert.equal(clip.sourcePlatform, "claude");
+  assert.equal(clip.sessionId, "chat-uuid-99");
+  assert.equal(clip.sessionOpening, "Summarize the storage schema.");
+});
+
+test("buildTextFragmentUrl separates code-line spans without fusing and snaps long URLs and identifiers on word boundaries", () => {
+  const shikiDoc = parseHtmlDocument(
+    `<html><body><article>
+      <pre class="shiki"><code id="code-sel"><span class="line"><span>let x = 1</span></span><span class="line"><span>return x</span></span></code></pre>
+      <div class="cm-content" id="cm-sel"><div class="cm-line">const a = 2</div><div class="cm-line">export default a</div></div>
+    </article></body></html>`,
+    { url: "https://example.com/code" }
+  );
+  const codeUrl = buildTextFragmentUrl(
+    "https://example.com/code",
+    shikiDoc.createRangeFromNode(shikiDoc.querySelector("#code-sel")),
+    shikiDoc
+  );
+  assert.doesNotMatch(codeUrl, /1return/);
+  assert.equal(codeUrl, "https://example.com/code#:~:text=let%20x%20%3D%201,return%20x");
+
+  const cmUrl = buildTextFragmentUrl(
+    "https://example.com/code",
+    shikiDoc.createRangeFromNode(shikiDoc.querySelector("#cm-sel")),
+    shikiDoc
+  );
+  assert.equal(cmUrl, "https://example.com/code#:~:text=const%20a%20%3D%202,export%20default%20a");
+
+  const longApiUrl =
+    "https://api.internal.example.com/v1/organizations/primary_tenant_workspace/settings/audit_logs/export?format=parquet&compression=zstd&limit=500";
+  const urlDoc = parseHtmlDocument(
+    `<html><body><article>
+      <p><span id="url-sel">${longApiUrl}</span></p>
+      <p><span id="ident-sel">super_long_identifier_name_that_exceeds_fifty_five_characters_without_any_punctuation_at_all is returned here and followed by another_extremely_long_identifier_name_at_the_tail_end_of_selection</span></p>
+      <p><span id="blob-sel">${"a".repeat(200)}</span></p>
+    </article></body></html>`,
+    { url: "https://docs.example.com/api" }
+  );
+
+  const builtUrlFrag = buildTextFragmentUrl(
+    "https://docs.example.com/api",
+    urlDoc.createRangeFromNode(urlDoc.querySelector("#url-sel")),
+    urlDoc
+  );
+  const [rawUrlStart, rawUrlEnd] = builtUrlFrag.split("#:~:text=")[1].split(",");
+  const decodedUrlStart = decodeURIComponent(rawUrlStart);
+  const decodedUrlEnd = decodeURIComponent(rawUrlEnd);
+  assert.equal(decodedUrlStart, "https://api.internal.example.com/v1/organizations");
+  assert.equal(decodedUrlEnd, "export?format=parquet&compression=zstd&limit=500");
+
+  const builtIdentFrag = buildTextFragmentUrl(
+    "https://docs.example.com/api",
+    urlDoc.createRangeFromNode(urlDoc.querySelector("#ident-sel")),
+    urlDoc
+  );
+  const [rawIdentStart, rawIdentEnd] = builtIdentFrag.split("#:~:text=")[1].split(",");
+  assert.equal(
+    decodeURIComponent(rawIdentStart),
+    "super_long_identifier_name_that_exceeds_fifty_five_characters_without_any_punctuation_at_all"
+  );
+  assert.equal(
+    decodeURIComponent(rawIdentEnd),
+    "another_extremely_long_identifier_name_at_the_tail_end_of_selection"
+  );
+
+  const builtBlobFrag = buildTextFragmentUrl(
+    "https://docs.example.com/api",
+    urlDoc.createRangeFromNode(urlDoc.querySelector("#blob-sel")),
+    urlDoc
+  );
+  assert.equal(builtBlobFrag, "https://docs.example.com/api");
 });

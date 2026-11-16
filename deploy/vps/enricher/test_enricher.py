@@ -779,6 +779,61 @@ class EnricherUnitTests(unittest.TestCase):
             "zh-Hans",
         )
 
+        unclosed_opening_before_zh_turns = (
+            "<!-- rewind-context-v1 -->\n"
+            "Session Title: Refactor Worker\n"
+            "Session ID: 67f0a1b2-3344\n"
+            "Prompt: Summarize the retry contract\n\n"
+            "### Session Opening\n"
+            "```python\n"
+            "class WebhookServer:\n"
+            "    def serve_forever(self):…\n\n"
+            "### Recent Turns\n"
+            "User: 请用中文解释为什么这里需要幂等重试以及如何避免重复写入？\n"
+            "Assistant: 因为网络超时后客户端会携带相同的资源标识重发请求，服务端必须保持幂等。"
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(code_excerpt, unclosed_opening_before_zh_turns),
+            "zh-Hans",
+        )
+
+        unclosed_prompt_before_zh_turns = (
+            "<!-- rewind-context-v1 -->\n"
+            "Session Title: Retry Notes\n"
+            "Prompt: Explain this snippet:\n"
+            "```python\n"
+            "def compute_digest(payload: bytes) -> str:\n"
+            "    return payload.hex()…\n\n"
+            "### Recent Turns\n"
+            "User: 请用中文说明这里的超时重发与去重逻辑。\n"
+            "Assistant: 客户端重试时复用同一个剪藏标识即可避免重复创建。"
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(code_excerpt, unclosed_prompt_before_zh_turns),
+            "zh-Hans",
+        )
+
+        unclosed_sections_single_cjk_title = (
+            "<!-- rewind-context-v1 -->\n"
+            "Session Title: 锁\n"
+            "Prompt: ```python\n"
+            "x = 1\n\n"
+            "### Session Opening\n"
+            "```python\n"
+            "y = 2\n\n"
+            "### Page Lead\n"
+            "~~~yaml\n"
+            "mode: strict\n\n"
+            "### Recent Turns\n"
+            "User: ```python\n"
+            "z = 3\n"
+            "```"
+        )
+        self.assertEqual(
+            enricher.detect_clip_language(code_excerpt, unclosed_sections_single_cjk_title),
+            "zh-Hans",
+        )
+
         state = MockBackendState()
         state.ai_response = {
             "title": "Zero-Copy Scatter-Gather Framing",
