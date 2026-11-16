@@ -3,8 +3,16 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-15T23:56:59.154647Z</p>
-<p>Main: <code>main: 6d671b14ad660417d96938107e9e9a4a48de2ad7</code></p>
+<p>Observed: 2026-11-16T00:09:06.194262Z</p>
+<p>Main: <code>main: 3ea06270a8a0fa5e7d241e43e95e857698c9bbed</code></p>
+<section id="hud-offscreen-observation-fix"><h2>浮动 HUD 离屏挂载与后台订阅止血（PR #35）</h2>
+<article id="quick-peek-hud-lazy-hosting"><h3>按可见态懒加载与卸载 QuickPeekHUDPanel 宿主视图并覆盖本机升级</h3><span class="badge">done</span><p>修复 QuickPeekHUDPanel 在初始化与隐藏期间常驻挂载 480x560 NSHostingView&lt;QuickPeekHUDRootView&gt; 导致后台 refreshHotStream 持续触发离屏重算的问题。改为在 orderFrontRegardless 与 order(_:relativeTo:) 展示分支按需挂载、重算 key-view 循环并恢复非文本框首响应者以保障重开后的空格勾选快捷键，在 order(.out) 与 NSApplication.didHideNotification 分支先归还托管首响应者再移除并释放 NSHostingView（实测隐藏态与两轮各 10 次后台刷新期间 QuickPeekHUDRootView.body 求值次数由 21 降至 0）。经四路对抗评审与实测加固后以两步 TDD 提交（cc1fd8d、3ea0627）变基合入 main，并完成 /Applications/CodingRewind.app（0.4.0 build 7，TeamIdentifier LQAVR62TK2，PID 15496）静默启动覆盖升级核验。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/35">pull 35: 变基合并至 main（cc1fd8d 先落红灯回归测试，3ea0627 落修复实现），通过 ./scripts/check 全部六道门禁。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/QuickPeekHUDViews.swift">file Sources/CodingRewindApp/QuickPeekHUDViews.swift: QuickPeekHUDPanel 按可见态懒挂载与卸载 NSHostingView，同步覆盖 NSApplication.didHideNotification 与重开首响应者恢复。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/QuickPeekHUDOffscreenObservationTests.swift">file Tests/CodingRewindAppTests/QuickPeekHUDOffscreenObservationTests.swift: 覆盖未展示静默启动、7 条关闭与应用隐藏路径下的宿主视图弱引用释放、应用取消隐藏恢复及重开后空格勾选快捷键回归测试。</a></li>
+<li>note 2026-11-16 本机 /Applications/CodingRewind.app 升级与静默启动核验: Developer ID（LQAVR62TK2）严格签名校验通过，--background 启动（PID 15496）零在屏浮动窗口挂载。</li>
+</ul><p>Next: </p></article>
+</section>
 <section id="single-binary-cli-mcp-and-host-sync"><h2>单二进制 CLI 与 4 工具领域 MCP 收敛及跨宿主接线</h2>
 <article id="v040-hardening-and-release"><h3>对抗性代码评审加固（PR #34）、本机 0.4.0 覆盖升级与 GitHub Release v0.4.0 发布</h3><span class="badge">done</span><p>经三模型独立对抗评审与实测复现修复 6 项发版门禁问题：移除只读查询 listSnippets 对 hot_cache.json 的覆写并在分页后重读 outbox.jsonl；统一 list、get、archive 与 outbox.jsonl 的状态顺序，归档前幂等冲刷待发条目且远端 HTTP 404 不复活旧缓存卡片；区分 snippetNotFound 与 invalidClipID（非法 ID 在 CLI 解析期返回退出码 64），保留开发凭据失败错误并在 CODING_REWIND_QA=1 缺令牌时快速失败；在 coding-rewind mcp 单次会话内缓存已解析令牌，补齐 SIGPIPE 忽略、4 MiB 单行上限与严格 JSON-RPC 2.0 标量 id 校验，并为对话上下文解析补齐围栏感知；AppUpdater 强制校验候选包 CFBundleShortVersionString 与双辅助二进制可执行属性，应用启动同步刷新已安装的 coding-rewind-sidecar 并自动迁移 v0.3.2 插件清单与 SKILL.md。经非作者独立 Shipping Verifier 端到端实测 PASS（PR #34 合并提交 6d671b1），完成 /Applications/CodingRewind.app 0.3.2 -&gt; 0.4.0（build 7，TeamIdentifier LQAVR62TK2）覆盖升级与静默凭据读取核验，并发布公开 GitHub Release v0.4.0（双端压缩包与 SHA256SUMS.txt）。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/34">pull 34: squash 合并至 main（6d671b1），独立 Shipping Verifier 二进制回路实测 PASS（#issuecomment-6903471642）并通过 ./scripts/check 六道门禁。</a></li>
@@ -405,7 +413,6 @@
 </ul><p>Next: 后续网页 DOM 或快捷键行为变化时，重跑对应真实入口与行为回归。</p></article>
 </section>
 <section><h2>Open pull requests</h2><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/pull/35">#35</a> <code>03c0901e511f52cb4b935e0b911fb3f185acc636</code></li>
 </ul><h2>Recent releases</h2><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.4.0">v0.4.0</a> 2026-11-15T23:55:24Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.2">v0.3.2</a> 2026-11-15T15:05:05Z (draft: False, prerelease: False)</li>
