@@ -119,6 +119,14 @@ struct LocalizationAndUpdateModelsTests {
             .resumeUnarchivedStartup,
             .resumePendingStartup,
             .archiveCardBlockedOfflineOrUnconfigured,
+            .archivedClips(count: 1),
+            .archivedClips(count: 3),
+            .partialArchiveClipsFailure(succeeded: 1, failed: 2),
+            .deletedClips(count: 1),
+            .deletedClips(count: 2),
+            .partialDeleteClipsFailure(succeeded: 1, failed: 1),
+            .deleteCardBlockedOfflineOrUnconfigured,
+            .cardsLockedByActiveConversation,
             .savedConnectionSettings,
             .pluginInstalled,
             .pluginNeedsRepair(.missingSidecarBinary),
@@ -133,6 +141,19 @@ struct LocalizationAndUpdateModelsTests {
             #expect(!en.isEmpty)
             #expect(zh != en)
         }
+
+        #expect(L10n.banner(.archivedClips(count: 1), in: .zhHans) == "已归档 1 条片段，原文仍保留在 Memos 中")
+        #expect(L10n.banner(.archivedClips(count: 1), in: .en).contains("1 clip"))
+        #expect(!L10n.banner(.archivedClips(count: 1), in: .en).contains("1 clips"))
+        #expect(L10n.banner(.archivedClips(count: 3), in: .en).contains("3 clips"))
+        #expect(L10n.banner(.deletedClips(count: 1), in: .zhHans).contains("1 条片段"))
+        #expect(L10n.banner(.deletedClips(count: 1), in: .en).contains("1 clip"))
+        #expect(!L10n.banner(.deletedClips(count: 1), in: .en).contains("1 clips"))
+        #expect(L10n.banner(.deletedClips(count: 2), in: .en).contains("2 clips"))
+        #expect(L10n.banner(.partialArchiveClipsFailure(succeeded: 1, failed: 2), in: .en).contains("1 clip"))
+        #expect(L10n.banner(.partialArchiveClipsFailure(succeeded: 1, failed: 2), in: .en).contains("2 clips"))
+        #expect(L10n.banner(.partialDeleteClipsFailure(succeeded: 2, failed: 1), in: .en).contains("2 clips"))
+        #expect(L10n.banner(.partialDeleteClipsFailure(succeeded: 2, failed: 1), in: .en).contains("1 clip"))
 
         let zhPrompts = L10n.suggestedPrompts(in: .zhHans)
         let enPrompts = L10n.suggestedPrompts(in: .en)

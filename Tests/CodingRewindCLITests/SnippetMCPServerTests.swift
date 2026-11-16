@@ -94,7 +94,14 @@ struct SnippetMCPServerTests {
             Issue.record("Expected tools array")
             return
         }
-        #expect(tools.count == 4)
+        let toolNames: [String] = tools.compactMap { item in
+            guard case .object(let obj) = item, case .string(let name) = obj["name"] else {
+                return nil
+            }
+            return name
+        }
+        #expect(toolNames == ["list_snippets", "search_snippets", "get_snippet", "archive_snippet"])
+        #expect(!toolNames.contains("delete_snippet"))
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -147,6 +154,21 @@ struct SnippetMCPServerTests {
         } else {
             Issue.record("Expected -32700 Parse error")
         }
+
+        let deleteToolCall = try await send(#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"delete_snippet","arguments":{"id":"rw-recent-ready"}}}"#)
+        if case .object(let obj) = deleteToolCall,
+           case .object(let res) = obj["result"],
+           case .array(let content) = res["content"],
+           case .object(let first) = content.first,
+           case .string(let text) = first["text"] {
+            #expect(res["isError"] == .bool(true))
+            #expect(text.contains("Unknown tool 'delete_snippet'"))
+        } else {
+            Issue.record("Expected isError: true when calling disallowed delete_snippet tool")
+        }
+        #expect(await backend.recordedDeleteIDs.isEmpty)
+        let retained = try await backend.getSnippet(id: "rw-recent-ready", includeContext: false, now: SnippetCLIFixtures.fixedNow)
+        #expect(retained.id == "rw-recent-ready")
     }
 
     @Test("MCPServer enforces 4 MiB line cap without stalling subsequent frames and terminates cleanly on broken output pipe")

@@ -110,6 +110,16 @@ public enum ConnectionCheckOutcome: Equatable, Sendable {
     case failed(RewindError)
 }
 
+public struct PendingDeleteConfirmation: Equatable, Sendable {
+    public let cardIDs: [String]
+    public let allOfflinePending: Bool
+
+    public init(cardIDs: [String], allOfflinePending: Bool) {
+        self.cardIDs = cardIDs
+        self.allOfflinePending = allOfflinePending
+    }
+}
+
 @MainActor
 @Observable
 public final class AppCoordinator {
@@ -149,6 +159,16 @@ public final class AppCoordinator {
     public private(set) var isLaunchingConversation = false
     public private(set) var canEndUnconfirmedConversation = false
     public private(set) var canEndUnarchivedConversation = false
+    public private(set) var pendingDeleteConfirmation: PendingDeleteConfirmation?
+    public private(set) var isMutatingCards = false
+    public private(set) var lockedConversationCardIDs: Set<String> = []
+    private var deletedClipIDs: Set<String> = []
+    private var archivedClipIDs: Set<String> = []
+    private var inFlightCaptureEntries: [String: OutboxEntry] = [:]
+    private var pendingRemoteDeletesURL: URL {
+        paths.dataDirectoryURL.appendingPathComponent("pending-remote-deletes.json", isDirectory: false)
+    }
+    private var pendingRemoteDeleteIDs: Set<String> = []
     private let antigravityContext: AntigravityCaptureContext
     public var capturer: any SelectionCapturing
 
@@ -161,8 +181,20 @@ public final class AppCoordinator {
         let localRevision: Int
     }
     public private(set) var cards: [RewindCard] = []
-    public var searchText: String = ""
-    public var statusFilter: StatusFilter = .all
+    public var searchText: String = "" {
+        didSet {
+            if oldValue != searchText {
+                pendingDeleteConfirmation = nil
+            }
+        }
+    }
+    public var statusFilter: StatusFilter = .all {
+        didSet {
+            if oldValue != statusFilter {
+                pendingDeleteConfirmation = nil
+            }
+        }
+    }
     public var checkedCardIDs: Set<String> = []
     public var focusedCardID: String?
     private var activeBannerNotice: BannerNotice?
@@ -231,7 +263,16 @@ public final class AppCoordinator {
         ]
         self.antigravityContext = antigravityContext
         self.capturer = capturer
-        self.cards = Self.mergeCards(cached: hotCache.loadCards(), pendingOutbox: outbox.loadEntries())
+        if FileManager.default.fileExists(atPath: pendingRemoteDeletesURL.path),
+           let pendingData = try? Data(contentsOf: pendingRemoteDeletesURL),
+           let pendingIDs = try? JSONDecoder().decode([String].self, from: pendingData) {
+            pendingRemoteDeleteIDs = Set(pendingIDs)
+            deletedClipIDs.formUnion(pendingRemoteDeleteIDs)
+        }
+        self.cards = Self.mergeCards(
+            cached: hotCache.loadCards().filter { !deletedClipIDs.contains($0.id) },
+            pendingOutbox: activeOutboxEntries()
+        )
         self.focusedCardID = self.cards.first?.id
         if FileManager.default.fileExists(atPath: conversationHostURL.path) {
             conversationHost = try JSONDecoder().decode(ConversationHost.self, from: Data(contentsOf: conversationHostURL))
@@ -245,6 +286,7 @@ public final class AppCoordinator {
             }
             canEndUnconfirmedConversation = receipt?.state == .unknown
             canEndUnarchivedConversation = receipt?.state == .succeeded && current.markSynthesized && !current.archiveCardIDs.isEmpty
+            lockedConversationCardIDs = canEndUnarchivedConversation ? Set(current.archiveCardIDs) : Set(current.cardIDs)
             setBanner(
                 canEndUnarchivedConversation ? .resumeUnarchivedStartup : .resumePendingStartup,
                 isError: false
@@ -294,6 +336,7 @@ public final class AppCoordinator {
     }
 
     public func toggleCheck(for cardID: String) {
+        pendingDeleteConfirmation = nil
         if checkedCardIDs.contains(cardID) {
             checkedCardIDs.remove(cardID)
         } else {
@@ -310,8 +353,55 @@ public final class AppCoordinator {
 
     public func focusAndCheckCard(id: String) {
         guard cards.contains(where: { $0.id == id }) else { return }
+        pendingDeleteConfirmation = nil
         focusedCardID = id
         checkedCardIDs.insert(id)
+    }
+
+    public func isCardLocked(_ cardID: String) -> Bool {
+        lockedConversationCardIDs.contains(cardID)
+    }
+
+    public var checkedActionableCardIDs: [String] {
+        cards.map(\.id).filter { checkedCardIDs.contains($0) }
+    }
+
+    public var targetActionCardIDs: [String] {
+        let checked = checkedActionableCardIDs
+        if !checked.isEmpty {
+            return checked
+        }
+        if let focused = focusedCardID, filteredCards.contains(where: { $0.id == focused }) {
+            return [focused]
+        }
+        return filteredCards.first.map { [$0.id] } ?? []
+    }
+
+    public func cancelDeleteConfirmation() {
+        pendingDeleteConfirmation = nil
+    }
+
+    private func reconcilePendingDeleteConfirmation(idRemapping: [String: String] = [:]) {
+        guard let current = pendingDeleteConfirmation else { return }
+        let visibleByID = Dictionary(uniqueKeysWithValues: filteredCards.map { ($0.id, $0) })
+        var seen: Set<String> = []
+        var updatedCards: [RewindCard] = []
+        for rawID in current.cardIDs {
+            let resolvedID = idRemapping[rawID] ?? rawID
+            guard let card = visibleByID[resolvedID],
+                  seen.insert(resolvedID).inserted else {
+                continue
+            }
+            updatedCards.append(card)
+        }
+        if updatedCards.isEmpty {
+            pendingDeleteConfirmation = nil
+        } else {
+            pendingDeleteConfirmation = PendingDeleteConfirmation(
+                cardIDs: updatedCards.map(\.id),
+                allOfflinePending: updatedCards.allSatisfy(\.isOfflinePending)
+            )
+        }
     }
 
     public func menuStatusSnapshot(isHUDVisible: Bool, isAccessibilityTrusted: Bool) -> MenuStatusSnapshot {
@@ -404,6 +494,8 @@ public final class AppCoordinator {
             let (platform, sourceTitle, sourceURL, context) = await buildProvenance(from: selection)
             let hasContext = (context?.isEmpty == false)
             let clientClipId = MemosWireFormat.makeClientClipID(now: selection.capturedAt)
+            deletedClipIDs.remove(clientClipId)
+            archivedClipIDs.remove(clientClipId)
             let rawContent = try MemosWireFormat.formatRawMemoContent(
                 verbatimText: selection.text,
                 sourcePlatform: platform,
@@ -419,6 +511,8 @@ public final class AppCoordinator {
                 commentContent: commentContent,
                 createdAt: selection.capturedAt
             )
+            inFlightCaptureEntries[clientClipId] = entry
+            defer { inFlightCaptureEntries.removeValue(forKey: clientClipId) }
 
             if let localCard = MemosWireFormat.parseMemo(
                 id: clientClipId,
@@ -446,8 +540,17 @@ public final class AppCoordinator {
             do {
                 if let flushed = (try? await outbox.flush(using: memosClient, baseURL: baseURL, token: token))?.flushed,
                    !flushed.isEmpty {
-                    applyFlushedOutboxItems(flushed)
+                    let liveFlushed = await reconcileFlushedOutboxItems(flushed, baseURL: baseURL, token: token)
+                    applyFlushedOutboxItems(liveFlushed)
                 }
+                if deletedClipIDs.contains(clientClipId) {
+                    return .failed(.emptySelection)
+                }
+                if archivedClipIDs.contains(clientClipId) {
+                    return .saved(cardID: clientClipId, sourceTitle: sourceTitle)
+                }
+                let deletedBeforeCreate = deletedClipIDs
+                let archivedBeforeCreate = archivedClipIDs
                 let saved = try await memosClient.createClip(
                     clientClipId: clientClipId,
                     content: rawContent,
@@ -456,6 +559,24 @@ public final class AppCoordinator {
                     token: token,
                     fallbackCreatedAt: selection.capturedAt
                 )
+                let deletedDuringCreate = deletedClipIDs.contains(clientClipId)
+                    || (!deletedBeforeCreate.contains(saved.id) && deletedClipIDs.contains(saved.id))
+                if deletedDuringCreate {
+                    deletedClipIDs.insert(saved.id)
+                    removeSupersededProvisionalCard(clientClipId: clientClipId, savedID: saved.id)
+                    await deleteMemoOrQueuePending(id: saved.id, baseURL: baseURL, token: token)
+                    return .failed(.emptySelection)
+                }
+                let archivedDuringCreate = archivedClipIDs.contains(clientClipId)
+                    || (!archivedBeforeCreate.contains(saved.id) && archivedClipIDs.contains(saved.id))
+                if archivedDuringCreate {
+                    archivedClipIDs.insert(saved.id)
+                    removeSupersededProvisionalCard(clientClipId: clientClipId, savedID: saved.id)
+                    return .saved(cardID: saved.id, sourceTitle: sourceTitle)
+                }
+                deletedClipIDs.remove(saved.id)
+                archivedClipIDs.remove(saved.id)
+                clearPendingRemoteDelete(saved.id)
                 updateLocalCards { cards in
                     cards.removeAll { $0.id == clientClipId || $0.id == saved.id }
                     cards.insert(saved, at: 0)
@@ -466,6 +587,12 @@ public final class AppCoordinator {
                 setBanner(.savedClip(sourceTitle: sourceTitle), isError: false)
                 return .saved(cardID: saved.id, sourceTitle: sourceTitle)
             } catch {
+                if deletedClipIDs.contains(clientClipId) {
+                    return .failed(.emptySelection)
+                }
+                if archivedClipIDs.contains(clientClipId) {
+                    return .saved(cardID: clientClipId, sourceTitle: sourceTitle)
+                }
                 try outbox.enqueue(entry)
                 setBanner(.savedOfflineTemporaryFailure, isError: false)
                 return .queuedOffline(cardID: clientClipId)
@@ -490,57 +617,162 @@ public final class AppCoordinator {
 
     public func refresh() async {
         latestRefreshRequest += 1
-        var ticket = RefreshTicket(request: latestRefreshRequest, localRevision: localCardsRevision)
+        let ticket = RefreshTicket(request: latestRefreshRequest, localRevision: localCardsRevision)
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
               let token = KeychainTokenStore.resolveToken(environment: environment) else {
             guard canPublishRefresh(ticket) else { return }
-            cards = Self.mergeCards(cached: cards, pendingOutbox: outbox.loadEntries())
+            cards = Self.mergeCards(cached: cards, pendingOutbox: activeOutboxEntries())
+            reconcilePendingDeleteConfirmation()
             return
         }
         do {
             let (flushed, _) = try await outbox.flush(using: memosClient, baseURL: baseURL, token: token)
             if !flushed.isEmpty {
-                let revisionUnchangedBeforeFlush = (ticket.localRevision == localCardsRevision)
-                applyFlushedOutboxItems(flushed)
-                if revisionUnchangedBeforeFlush {
-                    ticket = RefreshTicket(request: ticket.request, localRevision: localCardsRevision)
+                let liveFlushed = await reconcileFlushedOutboxItems(flushed, baseURL: baseURL, token: token)
+                if !liveFlushed.isEmpty {
+                    applyFlushedOutboxItems(liveFlushed)
                 }
             }
+            await drainPendingRemoteDeletes(baseURL: baseURL, token: token)
             let remoteCards = try await memosClient.listHotClips(baseURL: baseURL, token: token)
+                .filter { !deletedClipIDs.contains($0.id) && !archivedClipIDs.contains($0.id) }
             guard canPublishRefresh(ticket) else { return }
-            cards = Self.mergeCards(cached: remoteCards, pendingOutbox: outbox.loadEntries())
+            cards = Self.mergeCards(cached: remoteCards, pendingOutbox: activeOutboxEntries())
             try? hotCache.saveCards(cards)
             if focusedCardID == nil {
                 focusedCardID = cards.first?.id
             }
+            reconcilePendingDeleteConfirmation()
         } catch {
             guard canPublishRefresh(ticket) else { return }
-            cards = Self.mergeCards(cached: cards, pendingOutbox: outbox.loadEntries())
+            cards = Self.mergeCards(cached: cards, pendingOutbox: activeOutboxEntries())
+            reconcilePendingDeleteConfirmation()
             setBanner(.syncFailedShowingLocal, isError: true)
         }
     }
 
+    private func activeOutboxEntries() -> [OutboxEntry] {
+        outbox.loadEntries().filter {
+            !deletedClipIDs.contains($0.clientClipId) && !archivedClipIDs.contains($0.clientClipId)
+        }
+    }
+
+    private func recordPendingRemoteDelete(_ id: String) {
+        deletedClipIDs.insert(id)
+        guard pendingRemoteDeleteIDs.insert(id).inserted else { return }
+        persistPendingRemoteDeletes()
+    }
+
+    private func clearPendingRemoteDelete(_ id: String) {
+        guard pendingRemoteDeleteIDs.remove(id) != nil else { return }
+        persistPendingRemoteDeletes()
+    }
+
+    private func persistPendingRemoteDeletes() {
+        if pendingRemoteDeleteIDs.isEmpty {
+            if FileManager.default.fileExists(atPath: pendingRemoteDeletesURL.path) {
+                try? FileManager.default.removeItem(at: pendingRemoteDeletesURL)
+            }
+            return
+        }
+        if let data = try? JSONEncoder().encode(pendingRemoteDeleteIDs.sorted()) {
+            try? AtomicFile.writeData(data, to: pendingRemoteDeletesURL, permissions: 0o600)
+        }
+    }
+
+    private func removeSupersededProvisionalCard(clientClipId: String, savedID: String) {
+        let ids: Set<String> = [clientClipId, savedID]
+        guard cards.contains(where: { ids.contains($0.id) })
+            || !checkedCardIDs.isDisjoint(with: ids) else {
+            return
+        }
+        removeCardsFromCoordinatorState(ids)
+    }
+
+    private func deleteMemoOrQueuePending(id: String, baseURL: URL, token: String) async {
+        do {
+            _ = try await memosClient.deleteMemo(id: id, baseURL: baseURL, token: token)
+            clearPendingRemoteDelete(id)
+        } catch RewindError.invalidClipID {
+            clearPendingRemoteDelete(id)
+        } catch {
+            recordPendingRemoteDelete(id)
+        }
+    }
+
+    private func drainPendingRemoteDeletes(baseURL: URL, token: String) async {
+        for id in pendingRemoteDeleteIDs.sorted() {
+            await deleteMemoOrQueuePending(id: id, baseURL: baseURL, token: token)
+        }
+    }
+
+    private func reconcileFlushedOutboxItems(
+        _ flushed: [(clientClipId: String, card: RewindCard)],
+        baseURL: URL,
+        token: String
+    ) async -> [(clientClipId: String, card: RewindCard)] {
+        var remaining = flushed
+        while true {
+            var nextLive: [(clientClipId: String, card: RewindCard)] = []
+            var staleDeleted: [(clientClipId: String, card: RewindCard)] = []
+            for item in remaining {
+                if archivedClipIDs.contains(item.clientClipId) || archivedClipIDs.contains(item.card.id) {
+                    continue
+                }
+                if deletedClipIDs.contains(item.clientClipId) || deletedClipIDs.contains(item.card.id) {
+                    staleDeleted.append(item)
+                } else {
+                    nextLive.append(item)
+                }
+            }
+            guard !staleDeleted.isEmpty else {
+                return nextLive
+            }
+            for item in staleDeleted {
+                deletedClipIDs.insert(item.card.id)
+                await deleteMemoOrQueuePending(id: item.card.id, baseURL: baseURL, token: token)
+            }
+            remaining = nextLive
+        }
+    }
+
     private func applyFlushedOutboxItems(_ flushed: [(clientClipId: String, card: RewindCard)]) {
-        guard !flushed.isEmpty else { return }
-        for item in flushed {
+        let activeFlushed = flushed.filter {
+            !deletedClipIDs.contains($0.clientClipId)
+            && !deletedClipIDs.contains($0.card.id)
+            && !archivedClipIDs.contains($0.clientClipId)
+            && !archivedClipIDs.contains($0.card.id)
+        }
+        guard !activeFlushed.isEmpty else {
+            reconcilePendingDeleteConfirmation()
+            return
+        }
+        var remappedIDs: [String: String] = [:]
+        for item in activeFlushed {
+            remappedIDs[item.clientClipId] = item.card.id
             if checkedCardIDs.remove(item.clientClipId) != nil {
                 checkedCardIDs.insert(item.card.id)
             }
             if focusedCardID == item.clientClipId {
                 focusedCardID = item.card.id
             }
-        }
-        let pendingEntries = outbox.loadEntries()
-        updateLocalCards { cards in
-            for item in flushed {
-                cards.removeAll { $0.id == item.clientClipId || $0.id == item.card.id }
-                cards.append(item.card)
+            if lockedConversationCardIDs.contains(item.clientClipId) {
+                lockedConversationCardIDs.insert(item.card.id)
             }
-            cards = Self.mergeCards(cached: cards, pendingOutbox: pendingEntries)
         }
+        let pendingEntries = activeOutboxEntries()
+        let flushedIDs = Set(activeFlushed.flatMap { [$0.clientClipId, $0.card.id] })
+        let updated = cards.filter {
+            !flushedIDs.contains($0.id)
+            && !deletedClipIDs.contains($0.id)
+            && !archivedClipIDs.contains($0.id)
+        } + activeFlushed.map(\.card)
+        cards = Self.mergeCards(cached: updated, pendingOutbox: pendingEntries)
+        try? hotCache.saveCards(cards)
         if focusedCardID == nil {
             focusedCardID = cards.first?.id
         }
+        reconcilePendingDeleteConfirmation(idRemapping: remappedIDs)
     }
 
     private func canPublishRefresh(_ ticket: RefreshTicket) -> Bool {
@@ -549,7 +781,8 @@ public final class AppCoordinator {
 
     @discardableResult
     public func launchChecked(in requestedHost: ConversationHost? = nil, waitSeconds: TimeInterval = 40) async -> ConversationLaunchResult? {
-        guard !isLaunchingConversation else { return nil }
+        guard !isLaunchingConversation, !isMutatingCards else { return nil }
+        pendingDeleteConfirmation = nil
         isLaunchingConversation = true
         canEndUnconfirmedConversation = false
         canEndUnarchivedConversation = false
@@ -582,6 +815,7 @@ public final class AppCoordinator {
             }
             let store = channel.store
             activeConversationHost = host
+            lockedConversationCardIDs = Set(current.cardIDs)
             setBanner(.waitingForHostConfirmation(host), isError: false)
             onWakeHost?(host)
             try await channel.dispatch(store)
@@ -602,6 +836,7 @@ public final class AppCoordinator {
                             let selected = cards.filter { remainingIDs.contains($0.id) }
                             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
+                                lockedConversationCardIDs = remainingIDs
                                 setBanner(.sentArchiveBlockedUnconfigured, isError: true)
                                 return .succeeded(reference)
                             }
@@ -610,6 +845,7 @@ public final class AppCoordinator {
                                 if card.isOfflinePending { failed = true; continue }
                                 do {
                                     try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
+                                    archivedClipIDs.insert(card.id)
                                     try store.recordArchivedCard(card.id, requestId: current.requestId)
                                     checkedCardIDs.remove(card.id)
                                     updateLocalCards { $0.removeAll { $0.id == card.id } }
@@ -617,6 +853,7 @@ public final class AppCoordinator {
                             }
                             try hotCache.saveCards(cards)
                             if failed {
+                                lockedConversationCardIDs = Set((try? store.current()?.archiveCardIDs) ?? current.archiveCardIDs)
                                 setBanner(.sentPartialArchiveFailure, isError: true)
                                 return .succeeded(reference)
                             }
@@ -626,6 +863,7 @@ public final class AppCoordinator {
                         if opened {
                             try store.clearCurrent(requestId: current.requestId)
                             activeConversationHost = nil
+                            lockedConversationCardIDs = []
                         }
                         setBanner(
                             opened
@@ -637,6 +875,7 @@ public final class AppCoordinator {
                     case .rejected, .expired:
                         try store.clearCurrent(requestId: current.requestId)
                         activeConversationHost = nil
+                        lockedConversationCardIDs = []
                         setBanner(
                             receipt.state == .expired ? .requestExpired(host) : .hostRejected(host),
                             isError: true
@@ -668,6 +907,7 @@ public final class AppCoordinator {
             checkedCardIDs.subtract(current.cardIDs)
             try store.clearCurrent(requestId: current.requestId)
             activeConversationHost = nil
+            lockedConversationCardIDs = []
             canEndUnconfirmedConversation = false
             setBanner(.clearedUnconfirmedRequest, isError: false)
         } catch { setErrorBanner(error) }
@@ -681,6 +921,7 @@ public final class AppCoordinator {
             checkedCardIDs.subtract(current.cardIDs)
             try store.clearCurrent(requestId: current.requestId)
             activeConversationHost = nil
+            lockedConversationCardIDs = []
             canEndUnarchivedConversation = false
             setBanner(.retainedUnarchivedCards, isError: false)
         } catch { setErrorBanner(error) }
@@ -698,6 +939,7 @@ public final class AppCoordinator {
                receipt?.conversationId == reference.id {
                 try store.clearCurrent(requestId: current.requestId)
                 activeConversationHost = nil
+                lockedConversationCardIDs = []
             }
             setBanner(.openedConversation(reference.host), isError: false)
         } catch { setErrorBanner(error) }
@@ -738,20 +980,204 @@ public final class AppCoordinator {
         return terminal.min { $0.2.expiresAt < $1.2.expiresAt }
     }
 
-    public func markCardSynthesized(_ card: RewindCard) async {
+    public func requestDeleteCards(ids: [String], bypassConfirmation: Bool = false) async {
+        guard let targets = prepareCardMutationTargets(ids: ids) else { return }
+        if !bypassConfirmation {
+            pendingDeleteConfirmation = PendingDeleteConfirmation(
+                cardIDs: targets.map(\.id),
+                allOfflinePending: targets.allSatisfy(\.isOfflinePending)
+            )
+            return
+        }
+
+        pendingDeleteConfirmation = nil
+        isMutatingCards = true
+        defer { isMutatingCards = false }
+
+        let baseURL = paths.resolveMemosBaseURL(environment: environment)
+        let token = KeychainTokenStore.resolveToken(environment: environment)
+        let isQAMode = environment[StoragePaths.qaEnvironmentKey] == "1"
+
+        var deletedCount = 0
+        var failedCount = 0
+        var sawUnconfiguredSyncedFailure = false
+        var lastError: (any Error)?
+
+        for card in targets {
+            let isPending = card.isOfflinePending || outbox.loadEntries().contains { $0.clientClipId == card.id }
+            do {
+                try Task.checkCancellation()
+                if isPending {
+                    if let baseURL, let token {
+                        do {
+                            _ = try await memosClient.deleteMemo(id: card.id, baseURL: baseURL, token: token)
+                        } catch RewindError.networkFailure {
+                            try Task.checkCancellation()
+                        }
+                    } else if isQAMode && baseURL != nil {
+                        throw RewindError.missingCredentials
+                    }
+                } else {
+                    guard let baseURL, let token else {
+                        sawUnconfiguredSyncedFailure = true
+                        failedCount += 1
+                        continue
+                    }
+                    _ = try await memosClient.deleteMemo(id: card.id, baseURL: baseURL, token: token)
+                }
+
+                try outbox.removeEntry(clientClipId: card.id)
+                _ = try? hotCache.removeCard(id: card.id)
+                deletedClipIDs.insert(card.id)
+                removeCardsFromCoordinatorState([card.id])
+                deletedCount += 1
+            } catch {
+                lastError = error
+                failedCount += 1
+            }
+        }
+
+        if failedCount == 0 {
+            setBanner(.deletedClips(count: deletedCount), isError: false)
+        } else if deletedCount > 0 {
+            setBanner(.partialDeleteClipsFailure(succeeded: deletedCount, failed: failedCount), isError: true)
+        } else if sawUnconfiguredSyncedFailure && lastError == nil {
+            setBanner(.deleteCardBlockedOfflineOrUnconfigured, isError: true)
+        } else if let lastError {
+            setErrorBanner(lastError)
+        } else {
+            setBanner(.deleteCardBlockedOfflineOrUnconfigured, isError: true)
+        }
+    }
+
+    public func requestDeleteTargetCards(bypassConfirmation: Bool = false) async {
+        await requestDeleteCards(ids: targetActionCardIDs, bypassConfirmation: bypassConfirmation)
+    }
+
+    public func confirmPendingDelete() async {
+        guard let pending = pendingDeleteConfirmation else { return }
+        await requestDeleteCards(ids: pending.cardIDs, bypassConfirmation: true)
+    }
+
+    public func archiveCards(ids: [String]) async {
+        guard let targets = prepareCardMutationTargets(ids: ids) else { return }
+        pendingDeleteConfirmation = nil
+
         guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
-              let token = KeychainTokenStore.resolveToken(environment: environment),
-              !card.isOfflinePending else {
+              let token = KeychainTokenStore.resolveToken(environment: environment) else {
             setBanner(.archiveCardBlockedOfflineOrUnconfigured, isError: true)
             return
         }
-        do {
-            try await memosClient.markSynthesized(card: card, baseURL: baseURL, token: token)
-            checkedCardIDs.remove(card.id)
-            updateLocalCards { $0.removeAll { $0.id == card.id } }
-        } catch {
-            setErrorBanner(error)
+
+        isMutatingCards = true
+        defer { isMutatingCards = false }
+
+        var archivedCount = 0
+        var failedCount = 0
+        var lastError: (any Error)?
+
+        for card in targets {
+            do {
+                let cardToArchive: RewindCard
+                if let entry = outbox.loadEntries().first(where: { $0.clientClipId == card.id }) ?? inFlightCaptureEntries[card.id] {
+                    cardToArchive = try await memosClient.createClip(
+                        clientClipId: entry.clientClipId,
+                        content: entry.memoContent,
+                        contextComment: entry.commentContent,
+                        baseURL: baseURL,
+                        token: token,
+                        fallbackCreatedAt: entry.createdAt
+                    )
+                } else if card.isOfflinePending {
+                    cardToArchive = try await memosClient.createClip(
+                        clientClipId: card.id,
+                        content: card.rawContent,
+                        contextComment: nil,
+                        baseURL: baseURL,
+                        token: token,
+                        fallbackCreatedAt: card.createdAt
+                    )
+                } else {
+                    cardToArchive = card
+                }
+
+                try await memosClient.markSynthesized(card: cardToArchive, baseURL: baseURL, token: token)
+                archivedClipIDs.insert(card.id)
+                archivedClipIDs.insert(cardToArchive.id)
+                _ = try? outbox.removeEntry(clientClipId: card.id)
+                _ = try? hotCache.removeCard(id: card.id)
+                var removedIDs: Set<String> = [card.id]
+                if cardToArchive.id != card.id {
+                    _ = try? hotCache.removeCard(id: cardToArchive.id)
+                    removedIDs.insert(cardToArchive.id)
+                }
+                removeCardsFromCoordinatorState(removedIDs)
+                archivedCount += 1
+            } catch {
+                lastError = error
+                failedCount += 1
+            }
         }
+
+        if failedCount == 0 {
+            setBanner(.archivedClips(count: archivedCount), isError: false)
+        } else if archivedCount > 0 {
+            setBanner(.partialArchiveClipsFailure(succeeded: archivedCount, failed: failedCount), isError: true)
+        } else if let lastError {
+            setErrorBanner(lastError)
+        }
+    }
+
+    public func archiveTargetCards() async {
+        await archiveCards(ids: targetActionCardIDs)
+    }
+
+    public func markCardSynthesized(_ card: RewindCard) async {
+        await archiveCards(ids: [card.id])
+    }
+
+    private func prepareCardMutationTargets(ids: [String]) -> [RewindCard]? {
+        guard !isMutatingCards else { return nil }
+        let requested = Set(ids)
+        var seen: Set<String> = []
+        let targets = cards.filter { requested.contains($0.id) && seen.insert($0.id).inserted }
+        guard !targets.isEmpty else {
+            pendingDeleteConfirmation = nil
+            return nil
+        }
+        if targets.contains(where: { lockedConversationCardIDs.contains($0.id) }) {
+            pendingDeleteConfirmation = nil
+            setBanner(.cardsLockedByActiveConversation, isError: true)
+            return nil
+        }
+        return targets
+    }
+
+    private func removeCardsFromCoordinatorState(_ removedIDs: Set<String>) {
+        let previousFilteredIDs = filteredCards.map(\.id)
+        checkedCardIDs.subtract(removedIDs)
+        updateLocalCards { $0.removeAll { removedIDs.contains($0.id) } }
+        focusedCardID = nextFocusedCardID(afterRemoving: removedIDs, previousFilteredIDs: previousFilteredIDs)
+    }
+
+    private func nextFocusedCardID(
+        afterRemoving removedIDs: Set<String>,
+        previousFilteredIDs: [String]
+    ) -> String? {
+        guard let currentFocused = focusedCardID else { return nil }
+        guard removedIDs.contains(currentFocused) else {
+            return cards.contains(where: { $0.id == currentFocused }) ? currentFocused : filteredCards.first?.id
+        }
+        let currentFilteredSet = Set(filteredCards.map(\.id))
+        if let oldIndex = previousFilteredIDs.firstIndex(of: currentFocused) {
+            if let after = previousFilteredIDs[(oldIndex + 1)...].first(where: { !removedIDs.contains($0) && currentFilteredSet.contains($0) }) {
+                return after
+            }
+            if let before = previousFilteredIDs[..<oldIndex].last(where: { !removedIDs.contains($0) && currentFilteredSet.contains($0) }) {
+                return before
+            }
+        }
+        return filteredCards.first?.id
     }
 
     public var connectionSettings: ConnectionSettingsState {

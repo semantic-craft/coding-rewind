@@ -637,6 +637,104 @@ extension AppStrings {
         }
     }
 
+    static func archiveClipLabel(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "归档片段"
+        case .en: return "Archive Clip"
+        }
+    }
+
+    static func archiveClipHelp(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "归档片段 (⌘E)，从最近片段中移除，原文仍保留在 Memos 中"
+        case .en: return "Archive Clip (⌘E). Removes from hot stream; original remains in Memos."
+        }
+    }
+
+    static func deleteClipLabel(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "删除片段"
+        case .en: return "Delete Clip"
+        }
+    }
+
+    static func deleteClipHelp(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "删除片段 (⌘⌫，按住 ⌥ 立即删除)"
+        case .en: return "Delete Clip (⌘⌫, hold ⌥ to delete immediately)"
+        }
+    }
+
+    static func copyClipTextMenu(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "拷贝原文"
+        case .en: return "Copy Text"
+        }
+    }
+
+    static func deleteClipMenuEllipsis(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "删除片段…"
+        case .en: return "Delete Clip…"
+        }
+    }
+
+    static func archiveSelectedShortButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "归档"
+        case .en: return "Archive"
+        }
+    }
+
+    static func archiveSelectedHelp(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "归档已选片段 (⌘E)，原文仍保留在 Memos 中"
+        case .en: return "Archive selected clips (⌘E). Originals remain in Memos."
+        }
+    }
+
+    static func deleteSelectedShortButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "删除"
+        case .en: return "Delete"
+        }
+    }
+
+    static func deleteSelectedHelp(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "删除已选片段 (⌘⌫，按住 ⌥ 立即删除)"
+        case .en: return "Delete selected clips (⌘⌫, hold ⌥ to delete immediately)"
+        }
+    }
+
+    static func deleteConfirmationMessage(count: Int, allOfflinePending: Bool, in language: AppLanguage) -> String {
+        let noun = count == 1 ? "clip" : "clips"
+        switch (language, allOfflinePending) {
+        case (.zhHans, true):
+            return "确定删除选中的 \(count) 条待同步片段？删除后将从本机移除。"
+        case (.en, true):
+            return "Delete \(count) pending \(noun)? This removes them from this Mac."
+        case (.zhHans, false):
+            return "确定彻底删除选中的 \(count) 条片段？将从 Memos 与本机永久移除且不可撤销。"
+        case (.en, false):
+            return "Permanently delete \(count) \(noun)? This removes them from Memos and cannot be undone."
+        }
+    }
+
+    static func cancelButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "取消"
+        case .en: return "Cancel"
+        }
+    }
+
+    static func confirmDeleteButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "彻底删除"
+        case .en: return "Delete"
+        }
+    }
+
     static func startupFailedAlertTitle(in language: AppLanguage) -> String {
         switch language {
         case .zhHans: return "Coding Rewind 未能启动"

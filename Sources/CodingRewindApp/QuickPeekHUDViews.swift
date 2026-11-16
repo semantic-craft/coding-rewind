@@ -64,7 +64,14 @@ public final class QuickPeekHUDPanel: NSPanel {
 
     public override var canBecomeKey: Bool { true }
     public override var canBecomeMain: Bool { false }
-    public override func cancelOperation(_ sender: Any?) { orderOut(sender) }
+
+    public override func cancelOperation(_ sender: Any?) {
+        if coordinator.pendingDeleteConfirmation != nil {
+            coordinator.cancelDeleteConfirmation()
+            return
+        }
+        orderOut(sender)
+    }
 
     public override func orderFrontRegardless() {
         mountContentIfNeeded()
@@ -76,10 +83,78 @@ public final class QuickPeekHUDPanel: NSPanel {
             resignHostedFirstResponderIfNeeded()
             super.order(place, relativeTo: otherWin)
             unmountContentIfNeeded()
+            coordinator.cancelDeleteConfirmation()
         } else {
             mountContentIfNeeded()
             super.order(place, relativeTo: otherWin)
         }
+    }
+
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isVisible, event.type == .keyDown else {
+            return super.performKeyEquivalent(with: event)
+        }
+        if hasMarkedTextInput {
+            return super.performKeyEquivalent(with: event)
+        }
+        let modifiers = relevantModifiers(for: event)
+        if event.keyCode == 53, modifiers.isEmpty, coordinator.pendingDeleteConfirmation != nil {
+            coordinator.cancelDeleteConfirmation()
+            return true
+        }
+        if !isEditingTextInput {
+            if event.keyCode == 51 || event.keyCode == 117 {
+                if modifiers == [.command] {
+                    Task { @MainActor [weak self] in
+                        await self?.coordinator.requestDeleteTargetCards(bypassConfirmation: false)
+                    }
+                    return true
+                }
+                if modifiers == [.command, .option] {
+                    Task { @MainActor [weak self] in
+                        await self?.coordinator.requestDeleteTargetCards(bypassConfirmation: true)
+                    }
+                    return true
+                }
+            }
+            if event.charactersIgnoringModifiers?.lowercased() == "e", modifiers == [.command] {
+                Task { @MainActor [weak self] in
+                    await self?.coordinator.archiveTargetCards()
+                }
+                return true
+            }
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    public override func sendEvent(_ event: NSEvent) {
+        if isVisible,
+           event.type == .keyDown,
+           !hasMarkedTextInput,
+           !isEditingTextInput,
+           coordinator.pendingDeleteConfirmation != nil,
+           event.keyCode == 36 || event.keyCode == 76,
+           relevantModifiers(for: event).isEmpty {
+            Task { @MainActor [weak self] in
+                await self?.coordinator.confirmPendingDelete()
+            }
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    private var isEditingTextInput: Bool {
+        (firstResponder is NSText) || ((firstResponder as? NSTextField)?.isEditable == true)
+    }
+
+    private var hasMarkedTextInput: Bool {
+        (firstResponder as? NSTextInputClient)?.hasMarkedText() == true
+    }
+
+    private func relevantModifiers(for event: NSEvent) -> NSEvent.ModifierFlags {
+        event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
     }
 
     @objc private func handleApplicationDidHide(_ notification: Notification) {
@@ -94,7 +169,8 @@ public final class QuickPeekHUDPanel: NSPanel {
                 shortcuts: shortcuts,
                 updater: updater,
                 onClose: { [weak self] in self?.orderOut(nil) },
-                onCommand: onCommand
+                onCommand: onCommand,
+                onResignTextInput: { [weak self] in self?.resignTextInputIfNeeded() }
             )
         )
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -112,6 +188,13 @@ public final class QuickPeekHUDPanel: NSPanel {
            let keyView = frosted.nextValidKeyView,
            !(keyView is NSTextField) {
             _ = makeFirstResponder(keyView)
+        }
+    }
+
+    private func resignTextInputIfNeeded() {
+        guard isEditingTextInput else { return }
+        if !makeFirstResponder(nil) {
+            endEditing(for: nil)
         }
     }
 
@@ -210,6 +293,7 @@ public struct QuickPeekHUDRootView: View {
     public var updater: AppUpdater?
     public let onClose: @MainActor () -> Void
     public let onCommand: @MainActor (AppCommand) -> Void
+    private let onResignTextInput: @MainActor () -> Void
 
     @FocusState private var isSearchFocused: Bool
 
@@ -218,17 +302,29 @@ public struct QuickPeekHUDRootView: View {
         shortcuts: AppShortcuts,
         updater: AppUpdater? = nil,
         onClose: @escaping @MainActor () -> Void,
-        onCommand: @escaping @MainActor (AppCommand) -> Void
+        onCommand: @escaping @MainActor (AppCommand) -> Void,
+        onResignTextInput: @escaping @MainActor () -> Void = {}
     ) {
         self.coordinator = coordinator
         self.shortcuts = shortcuts
         self.updater = updater
         self.onClose = onClose
         self.onCommand = onCommand
+        self.onResignTextInput = onResignTextInput
     }
 
     private var lang: AppLanguage {
         coordinator.language
+    }
+
+    private func requestDeleteCards(ids: [String], bypassConfirmation: Bool) {
+        if !bypassConfirmation {
+            isSearchFocused = false
+            onResignTextInput()
+        }
+        Task { @MainActor in
+            await coordinator.requestDeleteCards(ids: ids, bypassConfirmation: bypassConfirmation)
+        }
     }
 
     public var body: some View {
@@ -373,8 +469,49 @@ public struct QuickPeekHUDRootView: View {
                 }
                 .rewindButtonRole(.secondary)
             }
+            if let pending = coordinator.pendingDeleteConfirmation {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.red)
+                    Text(
+                        AppStrings.deleteConfirmationMessage(
+                            count: pending.cardIDs.count,
+                            allOfflinePending: pending.allOfflinePending,
+                            in: lang
+                        )
+                    )
+                    .font(.system(size: 11.5))
+                    .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button(AppStrings.cancelButton(in: lang)) {
+                        coordinator.cancelDeleteConfirmation()
+                    }
+                    .rewindButtonRole(.secondary)
+                    .accessibilityIdentifier("hud.confirmDelete.cancel")
+                    Button(AppStrings.confirmDeleteButton(in: lang)) {
+                        Task { @MainActor in
+                            await coordinator.confirmPendingDelete()
+                        }
+                    }
+                    .buttonStyle(RewindDestructiveButtonStyle())
+                    .accessibilityIdentifier("hud.confirmDelete.confirm")
+                    .disabled(coordinator.isMutatingCards)
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.red.opacity(0.10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 8)
+                                .strokeBorder(Color.red.opacity(0.35), lineWidth: 1)
+                        }
+                )
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("hud.confirmDelete.bar")
+            }
             Divider()
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Text(AppStrings.selectedCountText(count: coordinator.checkedCardIDs.count, in: lang))
                     .font(.system(size: 11, weight: .medium))
                 Toggle(AppStrings.archiveOnLaunchTitle(in: lang), isOn: $coordinator.markSynthesizedOnLaunch)
@@ -382,7 +519,35 @@ public struct QuickPeekHUDRootView: View {
                     .font(.system(size: 11))
                     .accessibilityIdentifier("hud.archiveOnLaunch")
                     .help(AppStrings.archiveOnLaunchHelp(in: lang))
-                Spacer()
+                Spacer(minLength: 4)
+                let checkedIDs = coordinator.checkedActionableCardIDs
+                if !checkedIDs.isEmpty {
+                    let batchDisabled = coordinator.isMutatingCards
+                        || checkedIDs.contains(where: { coordinator.isCardLocked($0) })
+                    HStack(spacing: 6) {
+                        Button(AppStrings.archiveSelectedShortButton(in: lang)) {
+                            Task { @MainActor in
+                                await coordinator.archiveCards(ids: coordinator.checkedActionableCardIDs)
+                            }
+                        }
+                        .rewindButtonRole(.secondary)
+                        .accessibilityIdentifier("hud.archiveSelected")
+                        .help(AppStrings.archiveSelectedHelp(in: lang))
+                        .disabled(batchDisabled)
+
+                        Button(AppStrings.deleteSelectedShortButton(in: lang)) {
+                            requestDeleteCards(
+                                ids: coordinator.checkedActionableCardIDs,
+                                bypassConfirmation: isOptionKeyHeld()
+                            )
+                        }
+                        .rewindButtonRole(.secondary)
+                        .foregroundStyle(Color.red)
+                        .accessibilityIdentifier("hud.deleteSelected")
+                        .help(AppStrings.deleteSelectedHelp(in: lang))
+                        .disabled(batchDisabled)
+                    }
+                }
             }
             HStack(spacing: 8) {
                 Spacer()
@@ -474,26 +639,108 @@ public struct QuickPeekHUDRootView: View {
 
     private func cardRow(_ card: RewindCard) -> some View {
         let checked = coordinator.checkedCardIDs.contains(card.id)
-        return VStack(alignment: .leading, spacing: 4) {
+        let isLocked = coordinator.isCardLocked(card.id)
+        let isPendingDelete = coordinator.pendingDeleteConfirmation?.cardIDs.contains(card.id) == true
+        return HUDCardRowView(
+            card: card,
+            isChecked: checked,
+            isLocked: isLocked,
+            isMutating: coordinator.isMutatingCards,
+            isPendingDelete: isPendingDelete,
+            language: lang,
+            onToggleSelect: {
+                coordinator.focusedCardID = card.id
+                coordinator.toggleCheck(for: card.id)
+            },
+            onArchive: {
+                Task { @MainActor in
+                    await coordinator.archiveCards(ids: [card.id])
+                }
+            },
+            onDelete: { bypass in
+                requestDeleteCards(ids: [card.id], bypassConfirmation: bypass)
+            },
+            onOpenURL: coordinator.onOpenURL
+        )
+    }
+}
+
+@MainActor
+private struct HUDCardRowView: View {
+    let card: RewindCard
+    let isChecked: Bool
+    let isLocked: Bool
+    let isMutating: Bool
+    let isPendingDelete: Bool
+    let language: AppLanguage
+    let onToggleSelect: () -> Void
+    let onArchive: () -> Void
+    let onDelete: (Bool) -> Void
+    let onOpenURL: (@MainActor (URL) -> Void)?
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let backgroundColor: Color = isPendingDelete
+            ? Color.red.opacity(0.10)
+            : (isChecked ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor))
+        let actionOpacity = (isHovered || isChecked || isPendingDelete) ? 0.95 : 0.55
+
+        VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Image(systemName: checked ? "checkmark.square.fill" : "square")
-                    .foregroundStyle(checked ? Color.accentColor : .secondary)
+                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(isChecked ? Color.accentColor : .secondary)
                 Circle()
                     .fill(card.status == .ready ? Color.green : Color.orange)
                     .frame(width: 5, height: 5)
                     .accessibilityHidden(true)
-                Text(card.status.badgeText(in: lang))
+                Text(card.status.badgeText(in: language))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                 Text("#\(card.sourcePlatform)").font(.system(size: 10)).foregroundStyle(.secondary)
                 if card.isOfflinePending {
-                    Text(AppStrings.pendingSyncBadge(in: lang))
+                    Text(AppStrings.pendingSyncBadge(in: language))
                         .font(.system(size: 10))
                         .foregroundStyle(.orange)
                 }
                 Spacer()
+                HStack(spacing: 4) {
+                    Button {
+                        onArchive()
+                    } label: {
+                        Image(systemName: "archivebox")
+                            .font(.system(size: 11))
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .rewindButtonRole(.toolbar)
+                    .focusEffectDisabled()
+                    .foregroundStyle(Color.secondary)
+                    .opacity(actionOpacity)
+                    .accessibilityIdentifier("hud.card.archive.\(card.id)")
+                    .accessibilityLabel(AppStrings.archiveClipLabel(in: language))
+                    .help(AppStrings.archiveClipHelp(in: language))
+                    .disabled(isLocked || isMutating)
+
+                    Button {
+                        onDelete(isOptionKeyHeld())
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .frame(width: 20, height: 20)
+                            .contentShape(Rectangle())
+                    }
+                    .rewindButtonRole(.toolbar)
+                    .focusEffectDisabled()
+                    .foregroundStyle((isHovered || isPendingDelete) ? Color.red : Color.secondary)
+                    .opacity(actionOpacity)
+                    .accessibilityIdentifier("hud.card.delete.\(card.id)")
+                    .accessibilityLabel(AppStrings.deleteClipLabel(in: language))
+                    .help(AppStrings.deleteClipHelp(in: language))
+                    .disabled(isLocked || isMutating)
+                }
                 if let url = card.reopenURL {
-                    Button(AppStrings.viewSourceButton(in: lang)) { coordinator.onOpenURL?(url) }
+                    Button(AppStrings.viewSourceButton(in: language)) { onOpenURL?(url) }
                         .rewindButtonRole(.toolbar)
                         .font(.system(size: 10))
                 }
@@ -507,11 +754,57 @@ public struct QuickPeekHUDRootView: View {
             Text(card.verbatimText).font(.system(size: 11.5)).lineLimit(3).textSelection(.enabled)
         }
         .padding(8)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            coordinator.focusedCardID = card.id
-            coordinator.toggleCheck(for: card.id)
+        .background(RoundedRectangle(cornerRadius: 8).fill(backgroundColor))
+        .overlay {
+            if isPendingDelete {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.red.opacity(0.65), lineWidth: 1)
+            }
         }
-        .background(RoundedRectangle(cornerRadius: 8).fill(checked ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor)))
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(isChecked ? [.isSelected] : [])
+        .onTapGesture {
+            onToggleSelect()
+        }
+        .onHover { isHovered = $0 }
+        .contextMenu {
+            Button(AppStrings.archiveClipLabel(in: language)) {
+                onArchive()
+            }
+            .disabled(isLocked || isMutating)
+
+            Button(AppStrings.copyClipTextMenu(in: language)) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(card.verbatimText, forType: .string)
+            }
+
+            if let url = card.reopenURL {
+                Button(AppStrings.viewSourceButton(in: language)) {
+                    onOpenURL?(url)
+                }
+            }
+
+            Divider()
+
+            Button(AppStrings.deleteClipMenuEllipsis(in: language), role: .destructive) {
+                onDelete(false)
+            }
+            .disabled(isLocked || isMutating)
+        }
+    }
+}
+
+@MainActor
+private func isOptionKeyHeld() -> Bool {
+    if NSEvent.modifierFlags.contains(.option) {
+        return true
+    }
+    guard let event = NSApp.currentEvent else { return false }
+    switch event.type {
+    case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
+        return event.modifierFlags.contains(.option)
+    default:
+        return false
     }
 }

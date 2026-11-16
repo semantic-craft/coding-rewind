@@ -98,3 +98,13 @@
 | `tobi/qmd` | [tobi/qmd](https://github.com/tobi/qmd)，`MIT License` | 参考同一单二进制同时承载终端 CLI 子命令（`search`、`get` 等）与 `mcp` `stdio` 子命令、收敛为少量高信噪比领域工具而非透传底层通用 CRUD 接口的分层设计 |
 | `openclaw/gogcli` | [openclaw/gogcli](https://github.com/openclaw/gogcli)，`MIT License` | 参考面向 Coding Agent 的稳定 `--json` 机器可读输出、标准错误与非零退出码分离及最小可组合动词集设计 |
 | `steipete/Peekaboo` | [steipete/Peekaboo](https://github.com/steipete/Peekaboo)，`MIT License` | 参考 macOS 原生应用与同名 CLI / `mcp` 工具共享底层 Swift Core 模块并随应用包统一分发签名的双面入口组织 |
+
+## 2026-11-16 片段归档与删除交互核查
+
+核查下列三个标准 `MIT` 开源项目的归档与破坏性删除交互模式（均已核实 GitHub API 返回许可为标准 `MIT License`，仅作交互与接口设计对照，**零第三方代码复制**）：
+
+| 项目 | 仓库与核实许可 | 交互与接口设计参考（零代码复制） |
+| --- | --- | --- |
+| `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 参考 `MemoActionMenu.tsx` 区分状态流转归档与物理删除的入口分层，以及 `memo_service.proto` 的 `DeleteMemo` DELETE 接口契约 |
+| `p0deje/Maccy` | [p0deje/Maccy](https://github.com/p0deje/Maccy)，`MIT License` | 参考 `ConfirmationView.swift`、`Footer.swift` 与 `KeyChord.swift` 在非激活 `NSPanel` 中采用面板内确认条及修饰键直删而不弹系统模态窗的焦点保持模式 |
+| `raycast/extensions` | [raycast/extensions](https://github.com/raycast/extensions)，`MIT License` | 参考 `Action.Style.Destructive` 对高危操作视觉警示、确认提示及快捷键与常规归档动作分离的设计习惯 |

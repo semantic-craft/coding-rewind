@@ -348,13 +348,16 @@ public struct OfflineOutbox: Sendable {
         }
     }
 
-    public func removeEntry(clientClipId: String) throws {
+    @discardableResult
+    public func removeEntry(clientClipId: String) throws -> Bool {
         try withFileLock {
             let current = loadEntries()
             let remaining = current.filter { $0.clientClipId != clientClipId }
-            if remaining.count != current.count {
+            let removed = remaining.count != current.count
+            if removed {
                 try writeEntries(remaining)
             }
+            return removed
         }
     }
 
@@ -460,18 +463,21 @@ public struct HotCache: Sendable {
         try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
     }
 
-    public func removeCard(id: String) throws {
-        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return }
+    @discardableResult
+    public func removeCard(id: String) throws -> Bool {
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else { return false }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let cards = try? decoder.decode([RewindCard].self, from: data) else { return }
+        guard let cards = try? decoder.decode([RewindCard].self, from: data) else { return false }
         let remaining = cards.filter { $0.id != id }
-        guard remaining.count != cards.count else { return }
+        let removed = remaining.count != cards.count
+        guard removed else { return false }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.withoutEscapingSlashes]
         let encoded = try encoder.encode(remaining)
         try AtomicFile.writeData(encoded, to: fileURL, permissions: 0o600)
+        return true
     }
 
     private func hotCards(_ cards: [RewindCard], now: Date) -> [RewindCard] {
