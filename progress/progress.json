@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "c92cdca8fe89f66d879114eed4949d5fc3eb1712",
+    "main": "32ee0a95ce22ed01d48c8df7441930fcc4b8f481",
     "open_pulls": [],
     "pulls": [
       {
@@ -283,6 +283,14 @@
         "merged": true,
         "number": 36,
         "state": "closed"
+      },
+      {
+        "base": "dce47b6183e09fa40d6ce2e90596ca7d10f262ef",
+        "head": "569f0ade7a56f1ff6e0b5e0d130e16e6095dfeec",
+        "merge_commit": "32ee0a95ce22ed01d48c8df7441930fcc4b8f481",
+        "merged": true,
+        "number": 37,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -334,7 +342,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-16T05:18:56.151244Z",
+  "observed_at": "2026-11-16T09:51:06.055244Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -347,6 +355,119 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "ai-write-surface-and-docs",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "包含文档对齐提交（原分支 4d97c6d）并 squash 合并至 main（32ee0a9），通过静态卫生与相对链接门禁。",
+              "ref": 37
+            },
+            {
+              "kind": "commit",
+              "note": "PR #37 合入 main 的 squash 提交，同步更新 7 份核心规范与里程碑文档。",
+              "ref": "32ee0a95ce22ed01d48c8df7441930fcc4b8f481"
+            },
+            {
+              "kind": "file",
+              "note": "新增「2026-11-16 向 AI 开放的三层写入与闭环入口」章节并同步更新总表与 MVP 条目。",
+              "ref": "docs/requirements.md"
+            },
+            {
+              "kind": "file",
+              "note": "固化 7 个 MCP 工具、8 个 CLI 子命令、rewind-note-v1 评论契约、local_notes.json 回退与 ai_access_mode 权限门控。",
+              "ref": "docs/architecture.md"
+            },
+            {
+              "kind": "file",
+              "note": "对齐 M2 网页端 claude.ai 适配器现状与 M4 物理删除仅限人工 HUD/CLI 的边界。",
+              "ref": "docs/milestones.md"
+            }
+          ],
+          "id": "docs-alignment-and-three-layer-contract",
+          "next": "",
+          "status": "done",
+          "summary": "对齐 docs/milestones.md 中 M2（补明 claude.ai 轮次适配器与当前实机覆盖边界）与 M4（同步 HUD 独立归档/删除及 CLI delete 仅限人工终端的权限边界），并在 AGENTS.md、README.md、docs/requirements.md、docs/architecture.md、docs/privacy.md、docs/code-quality.md 一致定义向 AI 开放的三层写入与回流契约（#source/agent 来源标签、rewind-note-v1 笔记评论隔离、local_notes.json 本地回退、ai_access_mode 与 CODING_REWIND_AI_ACCESS 权限门控及原文逐字节零篡改不变量）。",
+          "title": "对齐里程碑文档并固化三层 AI 写入与回流契约"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "包含 Core/CLI/MCP 写入面与权限门禁提交（原分支 af4863e）并 squash 合并至 main（32ee0a9），通过全仓 ./scripts/check 六道门禁。",
+              "ref": 37
+            },
+            {
+              "kind": "commit",
+              "note": "PR #37 合入 main 的 squash 提交，落地 MemosWireFormat、SnippetRepository、MCPServer、CLIParser 与 ConversationPrompt 闭环。",
+              "ref": "32ee0a95ce22ed01d48c8df7441930fcc4b8f481"
+            },
+            {
+              "kind": "file",
+              "note": "实现 createSnippet、updateSnippetMetadata、appendSnippetNote 远端与本地双路径事务及原文逐字节保护。",
+              "ref": "Sources/CodingRewindCore/SnippetRepository.swift"
+            },
+            {
+              "kind": "file",
+              "note": "暴露 7 个 MCP 领域工具，按 AIAccessMode 在 read_only 模式下实时拦截全部 4 个写入工具且不暴露 delete。",
+              "ref": "Sources/CodingRewindCLI/MCPServer.swift"
+            },
+            {
+              "kind": "file",
+              "note": "在 ⌘Return 接聊提示词中输出卡片 ID，并按读写权限门控追加宿主 AI 回写指引。",
+              "ref": "Sources/CodingRewindCore/ConversationHandoff.swift"
+            },
+            {
+              "kind": "file",
+              "note": "覆盖 CLI 八子命令、MCP 七工具、read_only 门禁拦截、并发笔记写入与原文逐字节零篡改回归测试。",
+              "ref": "Tests/CodingRewindCLITests/AIWriteSurfaceCLIMCPTests.swift"
+            }
+          ],
+          "id": "core-cli-mcp-seven-tool-write-surface",
+          "next": "",
+          "status": "done",
+          "summary": "将 coding-rewind mcp 由 4 个扩展至 7 个领域工具（新增 create_snippet、update_snippet_metadata、append_snippet_note，持续排除物理删除 delete），同步为 coding-rewind CLI 增加 create、update、note 子命令（共 8 个子命令）。支持远端 Memos 幂等同步与 outbox.jsonl / hot_cache.json / local_notes.json 本地及断网回退，update_snippet_metadata 严格仅改写首行标签与顶部引用块元数据而 100% 逐字节保留 verbatimText。新增 AIAccessMode（config.json 的 ai_access_mode 与 CODING_REWIND_AI_ACCESS 覆盖，非法值故障关闭降级为 read_only）实时拦截全部 4 个写入工具；⌘Return 接聊提示词附带每张卡片 ID 并在读写开启时提示宿主 AI 经 append_snippet_note 或 create_snippet 回写结论，同步升级内嵌 /rewind SKILL.md。",
+          "title": "扩展 CLI/MCP 七工具写入面、AIAccessMode 权限门禁与接聊回流提示"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "包含设置页 UI 与协调器接线提交（原分支 569f0ad）并 squash 合并至 main（32ee0a9）。",
+              "ref": 37
+            },
+            {
+              "kind": "commit",
+              "note": "PR #37 合入 main 的 squash 提交，完成 SettingsViews、AppSettingsStrings 与 AppCoordinator 联动。",
+              "ref": "32ee0a95ce22ed01d48c8df7441930fcc4b8f481"
+            },
+            {
+              "kind": "file",
+              "note": "新增 AI 接入与权限设置分区、环境变量托管只读锁定态与零明文 MCP JSON 一键复制按钮。",
+              "ref": "Sources/CodingRewindApp/SettingsViews.swift"
+            },
+            {
+              "kind": "file",
+              "note": "覆盖设置页状态展示、读写切换持久化、环境变量覆盖禁用、零明文 JSON 复制及中英文切换 UI 测试。",
+              "ref": "Tests/CodingRewindAppTests/AIAccessSettingsUITests.swift"
+            },
+            {
+              "kind": "note",
+              "note": "Developer ID（LQAVR62TK2）codesign --verify --deep --strict 通过，--background 静默启动（PID 37280，0.0 %CPU）；固定路径 coding-rewind（SHA-256 e0cfe9aa5d6cb27ab1c805b6f6c37e7f3dfd391f78538ec82231ec395e8d0a78）与 coding-rewind-sidecar（SHA-256 e586cbfeaaef9455b9c843f96c04f1ec42e612bdf006f43a3bed30420c98e887）同包内 Helpers 100% 一致，SKILL.md 已刷新含全部 7 个工具；CODING_REWIND_QA=1 隔离目录实测 mcp tools/list 返回 7 工具零 delete、read_only 阻断 create_snippet 放行 list_snippets、create -> note -> update -> get --json 原文 120 字节 100% 一致且临时目录已彻底清理。",
+              "ref": "2026-11-16 本机 /Applications/CodingRewind.app 签名升级与隔离 QA 冒烟核验"
+            }
+          ],
+          "id": "settings-ai-access-panel-and-local-upgrade",
+          "next": "",
+          "status": "done",
+          "summary": "在桌面端「设置 → 插件与权限」新增「AI 接入与权限 / AI Access & Permissions」分区，展示本机 MCP 服务就绪状态、只读与读写权限切换开关（CODING_REWIND_AI_ACCESS 环境变量接管时自动禁用开关并提示来源）以及一键复制零明文令牌 MCP JSON 配置按钮，支持中英文实时无重启切换并与 AppCoordinator 接聊提示词联动。已完成 /Applications/CodingRewind.app（Developer ID LQAVR62TK2）完整重签安装、后台静默重启、Application Support/CodingRewind/bin 双二进制与插件 SKILL.md 刷新，以及隔离 QA 目录下的 CLI/MCP 全链路冒烟验证。",
+          "title": "新增设置页「AI 接入与权限」分区并完成本机签名升级与隔离冒烟核验"
+        }
+      ],
+      "title": "文档对齐与三层 AI 写入及回流入口（PR #37）"
+    },
     {
       "id": "hud-and-cli-snippet-management",
       "items": [
@@ -2272,7 +2393,8 @@
       33,
       34,
       35,
-      36
+      36,
+      37
     ]
   }
 }
