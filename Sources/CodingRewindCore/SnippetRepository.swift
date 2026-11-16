@@ -511,31 +511,17 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             throw RewindError.snippetNotFound(normalizedID)
         }
 
-        var conversationContext: CaptureContext?
-        var collectedNotes = localNotesStore.loadNotes(for: normalizedID)
-        if let comments = try? await client.listMemoComments(id: normalizedID, baseURL: baseURL, token: token) {
-            for comment in comments {
-                if includeContext, conversationContext == nil,
-                   let parsedCtx = MemosWireFormat.parseContextComment(comment.content) {
-                    conversationContext = parsedCtx
-                } else {
-                    let fallbackDate = comment.createTime.flatMap(MemosWireFormat.parseISO8601)
-                        ?? comment.updateTime.flatMap(MemosWireFormat.parseISO8601)
-                        ?? now
-                    if let parsedNote = MemosWireFormat.parseNoteComment(
-                        id: comment.name,
-                        rawComment: comment.content,
-                        fallbackCreatedAt: fallbackDate
-                    ) {
-                        collectedNotes.append(parsedNote)
-                    }
-                }
-            }
-        }
-        let sortedNotes = LocalNotesStore.sortAndDeduplicate(collectedNotes)
+        let localNotes = localNotesStore.loadNotes(for: normalizedID)
+        let remoteComments = (try? await client.listMemoComments(id: normalizedID, baseURL: baseURL, token: token)) ?? []
+        let parsedComments = MemosWireFormat.parseMemoComments(
+            remoteComments,
+            localNotes: localNotes,
+            includeContext: includeContext,
+            now: now
+        )
         return baseRecord.withAttachments(
-            conversationContext: includeContext ? conversationContext : nil,
-            notes: sortedNotes
+            conversationContext: parsedComments.context,
+            notes: parsedComments.notes
         )
     }
 

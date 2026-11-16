@@ -1059,6 +1059,7 @@ public final class SelectionPopupPanel: NSPanel {
     ) {
         let initialView = SelectionPopupView(phase: .hidden, language: .zhHans, onStash: onStash)
         let hosting = FirstMouseHostingView(rootView: initialView)
+        hosting.sizingOptions = [.intrinsicContentSize]
         self.hostingView = hosting
         self.onOutsideShadowClick = onOutsideShadowClick
 

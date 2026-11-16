@@ -96,6 +96,9 @@ public enum BannerNotice: Equatable, Sendable {
     case pluginNeedsRepair(PluginRepairReason?)
     case pluginInstallFailedRewind(RewindError)
     case pluginInstallFailedMessage(String)
+    case openURLFailed(String)
+    case copiedSessionID(String)
+    case copiedClipText
     case rewindError(RewindError)
     case custom(String)
 }
@@ -593,6 +596,21 @@ public enum L10n {
             return pluginInstallFailedSummary(detail: rewindError(err, in: language), in: language)
         case .pluginInstallFailedMessage(let detail):
             return pluginInstallFailedSummary(detail: detail, in: language)
+        case .openURLFailed(let rawURL):
+            switch language {
+            case .zhHans: return "未能打开链接：\(rawURL)"
+            case .en: return "Could not open link: \(rawURL)"
+            }
+        case .copiedSessionID(let sessionID):
+            switch language {
+            case .zhHans: return "已复制会话 ID：\(sessionID)"
+            case .en: return "Copied Session ID: \(sessionID)"
+            }
+        case .copiedClipText:
+            switch language {
+            case .zhHans: return "已拷贝片段原文"
+            case .en: return "Copied clip text."
+            }
         case .rewindError(let err):
             return rewindError(err, in: language)
         case .custom(let raw):

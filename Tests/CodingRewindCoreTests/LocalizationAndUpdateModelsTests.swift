@@ -132,6 +132,9 @@ struct LocalizationAndUpdateModelsTests {
             .pluginNeedsRepair(.missingSidecarBinary),
             .pluginInstallFailedRewind(.missingCredentials),
             .pluginInstallFailedMessage("permission denied"),
+            .openURLFailed("https://example.com"),
+            .copiedSessionID("6eb720d3-188b-4783-a0c6-9592c554f3fc"),
+            .copiedClipText,
             .rewindError(.emptySelection)
         ]
         for notice in notices {

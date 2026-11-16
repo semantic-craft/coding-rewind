@@ -202,7 +202,11 @@ private func mgmtAXStrings(_ node: Any) -> [String] {
     let object = node as AnyObject
     if let label = object.accessibilityLabel?() { result.append(label) }
     if let title = object.accessibilityTitle?() { result.append(title) }
-    if let value = (object.accessibilityValue as (() -> String?)?)?() { result.append(value) }
+    let valueSelector = NSSelectorFromString("accessibilityValue")
+    if object.responds(to: valueSelector),
+       let value = object.perform(valueSelector)?.takeUnretainedValue() as? String {
+        result.append(value)
+    }
     if let element = node as? any NSAccessibilityStaticText,
        let value = element.accessibilityValue() {
         result.append(value)

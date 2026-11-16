@@ -120,6 +120,29 @@ public struct PendingDeleteConfirmation: Equatable, Sendable {
     }
 }
 
+public struct CardDetail: Equatable, Sendable {
+    public let context: CaptureContext?
+    public let notes: [SnippetNote]
+    public let isCompleteFromServer: Bool
+
+    public init(
+        context: CaptureContext? = nil,
+        notes: [SnippetNote] = [],
+        isCompleteFromServer: Bool
+    ) {
+        self.context = context
+        self.notes = notes
+        self.isCompleteFromServer = isCompleteFromServer
+    }
+}
+
+public enum CardDetailLoadState: Equatable, Sendable {
+    case idle
+    case loading(partial: CardDetail?)
+    case loaded(CardDetail)
+    case failed(partial: CardDetail?, message: String)
+}
+
 @MainActor
 @Observable
 public final class AppCoordinator {
@@ -203,6 +226,11 @@ public final class AppCoordinator {
     }
     public var checkedCardIDs: Set<String> = []
     public var focusedCardID: String?
+    public private(set) var inspectedCardID: String?
+    private var cardDetailStates: [String: CardDetailLoadState] = [:]
+    @ObservationIgnored private var cachedCardDetails: [String: CardDetail] = [:]
+    @ObservationIgnored private var activeDetailTask: Task<Void, Never>?
+    @ObservationIgnored private var activeDetailTaskGeneration: UInt64 = 0
     private var activeBannerNotice: BannerNotice?
     private var isUpdatingBannerFromNotice = false
     private var lastPluginInstallFailureNotice: BannerNotice?
@@ -216,7 +244,8 @@ public final class AppCoordinator {
     public var isErrorBanner: Bool = false
     public var pluginStatusText: String = ""
 
-    public var onOpenURL: (@MainActor (URL) -> Void)?
+    public var onOpenURL: (@MainActor (URL) -> Bool)?
+    public var onCopyText: (@MainActor (String) -> Void) = { _ in }
     public var onWakeHost: (@MainActor (ConversationHost) -> Void)?
     public var onOpenConversation: (@MainActor (ConversationReference) -> Bool)?
 
@@ -592,6 +621,7 @@ public final class AppCoordinator {
                 checkedCardIDs.remove(clientClipId)
                 checkedCardIDs.insert(saved.id)
                 focusedCardID = saved.id
+                remapCardDetailState(from: clientClipId, to: saved.id)
                 setBanner(.savedClip(sourceTitle: sourceTitle), isError: false)
                 return .saved(cardID: saved.id, sourceTitle: sourceTitle)
             } catch {
@@ -634,6 +664,7 @@ public final class AppCoordinator {
                 focusedCardID = cards.first?.id
             }
             reconcilePendingDeleteConfirmation()
+            invalidateAndReconcileCardDetailsAfterRefresh()
             return
         }
         do {
@@ -654,10 +685,12 @@ public final class AppCoordinator {
                 focusedCardID = cards.first?.id
             }
             reconcilePendingDeleteConfirmation()
+            invalidateAndReconcileCardDetailsAfterRefresh()
         } catch {
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: cards, pendingOutbox: activeOutboxEntries())
             reconcilePendingDeleteConfirmation()
+            invalidateAndReconcileCardDetailsAfterRefresh()
             setBanner(.syncFailedShowingLocal, isError: true)
         }
     }
@@ -770,6 +803,7 @@ public final class AppCoordinator {
             if lockedConversationCardIDs.contains(item.clientClipId) {
                 lockedConversationCardIDs.insert(item.card.id)
             }
+            remapCardDetailState(from: item.clientClipId, to: item.card.id)
         }
         let pendingEntries = activeOutboxEntries()
         let flushedIDs = Set(activeFlushed.flatMap { [$0.clientClipId, $0.card.id] })
@@ -1173,6 +1207,15 @@ public final class AppCoordinator {
     private func removeCardsFromCoordinatorState(_ removedIDs: Set<String>) {
         let previousFilteredIDs = filteredCards.map(\.id)
         checkedCardIDs.subtract(removedIDs)
+        for removedID in removedIDs {
+            cachedCardDetails.removeValue(forKey: removedID)
+            if cardDetailStates[removedID] != nil {
+                cardDetailStates.removeValue(forKey: removedID)
+            }
+        }
+        if let currentInspected = inspectedCardID, removedIDs.contains(currentInspected) {
+            closeCardPreview()
+        }
         updateLocalCards { $0.removeAll { removedIDs.contains($0.id) } }
         focusedCardID = nextFocusedCardID(afterRemoving: removedIDs, previousFilteredIDs: previousFilteredIDs)
     }
@@ -1231,8 +1274,207 @@ public final class AppCoordinator {
         return .verified
     }
 
-    public func openURL(_ url: URL) {
-        onOpenURL?(url)
+    @discardableResult
+    public func openURL(_ url: URL) -> Bool {
+        guard onOpenURL?(url) == true else {
+            setBanner(.openURLFailed(url.absoluteString), isError: true)
+            return false
+        }
+        return true
+    }
+
+    public func performSourceAction(for card: RewindCard) {
+        guard let locator = card.sourceLocator else { return }
+        switch locator {
+        case .web(let url, _):
+            openURL(url)
+        case .antigravitySession(let sessionID):
+            copySessionID(sessionID)
+        }
+    }
+
+    public func copySessionID(_ sessionID: String) {
+        let trimmed = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onCopyText(trimmed)
+        setBanner(.copiedSessionID(trimmed), isError: false)
+    }
+
+    public func copyClipText(_ text: String) {
+        onCopyText(text)
+        setBanner(.copiedClipText, isError: false)
+    }
+
+    public func wakeAntigravity() {
+        onWakeHost?(.antigravity)
+    }
+
+    public var inspectedCard: RewindCard? {
+        guard let inspectedCardID else { return nil }
+        return cards.first(where: { $0.id == inspectedCardID })
+    }
+
+    public func cardDetailState(for id: String) -> CardDetailLoadState {
+        cardDetailStates[id] ?? .idle
+    }
+
+    public func toggleCardPreview(id: String) {
+        if inspectedCardID == id {
+            closeCardPreview()
+            return
+        }
+        guard cards.contains(where: { $0.id == id }) else { return }
+        focusedCardID = id
+        inspectedCardID = id
+        if let cached = cachedCardDetails[id], cached.isCompleteFromServer {
+            cancelActiveDetailTask()
+            cardDetailStates[id] = .loaded(cached)
+            return
+        }
+        reloadCardDetail(id: id)
+    }
+
+    public func toggleFocusedCardPreview() {
+        let targetID: String?
+        if let focused = focusedCardID, filteredCards.contains(where: { $0.id == focused }) {
+            targetID = focused
+        } else {
+            targetID = filteredCards.first?.id ?? inspectedCardID
+        }
+        guard let targetID else { return }
+        if inspectedCardID == targetID {
+            closeCardPreview()
+        } else {
+            toggleCardPreview(id: targetID)
+        }
+    }
+
+    public func reloadCardDetail(id: String) {
+        guard let card = cards.first(where: { $0.id == id }) else { return }
+        cancelActiveDetailTask()
+
+        let outboxEntry = inFlightCaptureEntries[id]
+            ?? outbox.loadEntries().first(where: { $0.clientClipId == id })
+        let localContext = outboxEntry?.commentContent.flatMap(MemosWireFormat.parseContextComment)
+        let localNotes = LocalNotesStore(fileURL: paths.localNotesFileURL).loadNotes(for: id)
+        let hasLocalData = localContext != nil || !localNotes.isEmpty
+
+        let baseURL = paths.resolveMemosBaseURL(environment: environment)
+        let token = KeychainTokenStore.resolveToken(environment: environment)
+
+        if card.isOfflinePending || outboxEntry != nil || baseURL == nil || token == nil {
+            let localDetail = CardDetail(
+                context: localContext,
+                notes: localNotes,
+                isCompleteFromServer: false
+            )
+            cachedCardDetails[id] = localDetail
+            cardDetailStates[id] = .loaded(localDetail)
+            return
+        }
+
+        guard let baseURL, let token else { return }
+        let partial: CardDetail? = hasLocalData
+            ? CardDetail(context: localContext, notes: localNotes, isCompleteFromServer: false)
+            : cachedCardDetails[id]
+        cardDetailStates[id] = .loading(partial: partial)
+
+        activeDetailTaskGeneration &+= 1
+        let generation = activeDetailTaskGeneration
+        let client = memosClient
+        activeDetailTask = Task { @MainActor [weak self] in
+            do {
+                let comments = try await client.listMemoComments(id: id, baseURL: baseURL, token: token)
+                guard let self,
+                      !Task.isCancelled,
+                      self.activeDetailTaskGeneration == generation,
+                      self.inspectedCardID == id else {
+                    return
+                }
+                let latestLocalNotes = LocalNotesStore(fileURL: self.paths.localNotesFileURL).loadNotes(for: id)
+                let parsed = MemosWireFormat.parseMemoComments(comments, localNotes: latestLocalNotes)
+                let detail = CardDetail(
+                    context: parsed.context ?? localContext,
+                    notes: parsed.notes,
+                    isCompleteFromServer: true
+                )
+                self.cachedCardDetails[id] = detail
+                self.cardDetailStates[id] = .loaded(detail)
+                self.activeDetailTask = nil
+            } catch {
+                guard let self,
+                      !Task.isCancelled,
+                      self.activeDetailTaskGeneration == generation,
+                      self.inspectedCardID == id else {
+                    return
+                }
+                let message: String
+                if let rewindError = error as? RewindError {
+                    message = rewindError.localizedDescription(in: self.language)
+                } else {
+                    message = error.localizedDescription
+                }
+                self.cardDetailStates[id] = .failed(partial: partial, message: message)
+                self.activeDetailTask = nil
+            }
+        }
+    }
+
+    public func closeCardPreview() {
+        cancelActiveDetailTask()
+        if inspectedCardID != nil {
+            inspectedCardID = nil
+        }
+    }
+
+    public func dismissTransientHUDState() {
+        cancelActiveDetailTask()
+        if pendingDeleteConfirmation != nil {
+            pendingDeleteConfirmation = nil
+        }
+        if inspectedCardID != nil {
+            inspectedCardID = nil
+        }
+    }
+
+    private func cancelActiveDetailTask() {
+        activeDetailTaskGeneration &+= 1
+        activeDetailTask?.cancel()
+        activeDetailTask = nil
+    }
+
+    private func remapCardDetailState(from oldID: String, to newID: String) {
+        guard oldID != newID else { return }
+        if let cached = cachedCardDetails.removeValue(forKey: oldID) {
+            cachedCardDetails[newID] = cached
+        }
+        if let existingState = cardDetailStates.removeValue(forKey: oldID) {
+            cardDetailStates[newID] = existingState
+        }
+        if inspectedCardID == oldID {
+            inspectedCardID = newID
+        }
+    }
+
+    private func invalidateAndReconcileCardDetailsAfterRefresh() {
+        if !cachedCardDetails.isEmpty {
+            cachedCardDetails.removeAll()
+        }
+        guard let currentInspected = inspectedCardID else {
+            if !cardDetailStates.isEmpty {
+                cardDetailStates.removeAll()
+            }
+            return
+        }
+        let validIDs = Set(cards.map(\.id))
+        for key in Array(cardDetailStates.keys) where key != currentInspected && !validIDs.contains(key) {
+            cardDetailStates.removeValue(forKey: key)
+        }
+        if validIDs.contains(currentInspected) {
+            reloadCardDetail(id: currentInspected)
+        } else {
+            closeCardPreview()
+        }
     }
 
     public var isAIAccessManagedByEnvironment: Bool {
@@ -1335,7 +1577,12 @@ public final class AppCoordinator {
     ) async -> (platform: String, title: String, url: String?, context: CaptureContext?) {
         if let native = selection.nativeChat {
             let context = native.snapshot.flatMap {
-                NativeConversationContext.resolve(selectedText: native.renderedSelection ?? selection.text, snapshot: $0, sessionTitle: native.title)
+                NativeConversationContext.resolve(
+                    selectedText: native.renderedSelection ?? selection.text,
+                    snapshot: $0,
+                    sessionTitle: native.title,
+                    backlink: native.backlink
+                )
             }
             return (native.host.rawValue, native.title, native.backlink?.absoluteString, context)
         }

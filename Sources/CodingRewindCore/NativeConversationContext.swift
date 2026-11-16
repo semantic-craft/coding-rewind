@@ -62,7 +62,10 @@ public struct NativeConversationSnapshot: Equatable, Sendable {
 
 public enum NativeConversationContext {
     public static func resolve(
-        selectedText: String, snapshot: NativeConversationSnapshot, sessionTitle: String
+        selectedText: String,
+        snapshot: NativeConversationSnapshot,
+        sessionTitle: String,
+        backlink: URL? = nil
     ) -> CaptureContext? {
         let indexedMessages: [(entryIndex: Int, message: ConversationContextSlicer.Message)] = snapshot.entries.enumerated().compactMap { index, entry in
             guard case .message(let message) = entry else { return nil }
@@ -103,11 +106,31 @@ public enum NativeConversationContext {
             .map(\.message)
         guard !continuousSlice.isEmpty else { return nil }
 
+        var verifiedOpening: String?
+        entriesScan: for entry in snapshot.entries {
+            switch entry {
+            case .gap:
+                verifiedOpening = nil
+                break entriesScan
+            case .message(let message) where message.role == .user:
+                let normalized = ConversationContextSlicer.normalizeLineEndings(message.contextText)
+                if let formatted = ConversationContextSlicer.formatLeadText(normalized, truncatedByHost: false) {
+                    verifiedOpening = formatted
+                    break entriesScan
+                }
+            case .message:
+                break
+            }
+        }
+
+        let sessionID = backlink.flatMap(SourceLocator.extractChatSessionID)
         return ConversationContextSlicer.slice(
             selectedText: selectedText,
             messages: continuousSlice,
             anchor: .explicitIndex(continuousSlice.count - 1),
-            sessionTitle: sessionTitle
+            sessionTitle: sessionTitle,
+            sessionID: sessionID,
+            openingOverride: .some(verifiedOpening)
         )
     }
 }

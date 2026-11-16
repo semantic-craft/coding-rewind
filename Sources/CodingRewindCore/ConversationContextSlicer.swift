@@ -4,6 +4,7 @@ import Foundation
 
 package enum ConversationContextSlicer {
     package static let maxRounds = 4
+    package static let maxLeadCharacters = 300
     package static let maxTurnCharacters = 800
     package static let maxRecentTurnsCharacters = 4000
 
@@ -81,7 +82,9 @@ package enum ConversationContextSlicer {
         selectedText: String,
         messages: [Message],
         anchor mode: AnchorMode,
-        sessionTitle: String
+        sessionTitle: String,
+        sessionID: String? = nil,
+        openingOverride: String?? = nil
     ) -> CaptureContext? {
         guard let anchor = resolveAnchor(selectedText: selectedText, in: messages, mode: mode) else {
             return nil
@@ -109,6 +112,19 @@ package enum ConversationContextSlicer {
             prompt = ""
         }
 
+        let openingText: String?
+        switch openingOverride {
+        case .some(let explicitOpening):
+            openingText = explicitOpening.flatMap { formatLeadText($0, truncatedByHost: false) }
+        case .none:
+            let firstUserMessage = messages.first {
+                $0.role == .user && !$0.contextText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            openingText = firstUserMessage.flatMap {
+                formatLeadText($0.contextText, truncatedByHost: $0.truncatedByHost)
+            }
+        }
+
         var recentTurns = throughAnchor[firstRound...]
             .map { ConversationTurn(role: $0.role.rawValue, text: formatTurnText($0)) }
             .filter { !$0.text.isEmpty }
@@ -116,7 +132,29 @@ package enum ConversationContextSlicer {
               recentTurns.map({ "\($0.role): \($0.text)" }).joined(separator: "\n").count > maxRecentTurnsCharacters {
             recentTurns.removeFirst()
         }
-        return CaptureContext(sessionTitle: sessionTitle, prompt: prompt, recentTurns: recentTurns)
+        return CaptureContext(
+            sessionTitle: sessionTitle,
+            sessionID: sessionID,
+            lead: openingText.map(CaptureContextLead.sessionOpening),
+            prompt: prompt,
+            recentTurns: recentTurns
+        )
+    }
+
+    package static func formatLeadText(_ rawText: String, truncatedByHost: Bool) -> String? {
+        let cleaned = rawText
+            .replacingOccurrences(of: "\0", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        if cleaned.count > maxLeadCharacters {
+            let prefix = String(cleaned.prefix(maxLeadCharacters))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return prefix + "…"
+        }
+        if truncatedByHost && !cleaned.hasSuffix("…") {
+            return cleaned + "…"
+        }
+        return cleaned
     }
 
     package static func formatTurnText(_ message: Message) -> String {

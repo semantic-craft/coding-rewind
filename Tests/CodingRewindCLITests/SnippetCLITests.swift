@@ -144,6 +144,42 @@ struct SnippetCLITests {
         #expect(humanText.contains("### Conversation Context"))
         #expect(humanText.contains("#rewind/ready inside body must remain untouched!"))
 
+        let leadRecord = SnippetRecord(
+            id: "rw-lead-fmt",
+            status: .ready,
+            sourcePlatform: "web",
+            title: "Guide Clip",
+            sourceTitle: "Swift Docs",
+            sourceURL: "https://example.com/docs#:~:text=Body%20text",
+            verbatimText: "Body text",
+            createdAt: SnippetCLIFixtures.fixedNow,
+            dataOrigin: .remote,
+            conversationContext: CaptureContext(
+                sessionTitle: "Swift Docs",
+                sessionID: "sess-xyz-9",
+                lead: .sessionOpening("Design a zero-copy parser"),
+                prompt: "How do slices share storage?",
+                recentTurns: [ConversationTurn(role: "User", text: "How do slices share storage?")]
+            )
+        )
+        let formattedChatDetail = SnippetFormatter.formatSnippetDetailMarkdown(leadRecord)
+        #expect(formattedChatDetail.contains("- Session ID: sess-xyz-9"))
+        #expect(formattedChatDetail.contains("- Prompt: How do slices share storage?"))
+        #expect(formattedChatDetail.contains("#### Session Opening\nDesign a zero-copy parser"))
+        #expect(formattedChatDetail.contains("#### Recent Turns"))
+
+        let pageLeadRecord = leadRecord.withConversationContext(
+            CaptureContext(
+                sessionTitle: "Swift Docs",
+                lead: .pageLead("Slices share contiguous memory with their base collection."),
+                prompt: ""
+            )
+        )
+        let formattedPageDetail = SnippetFormatter.formatSnippetDetailMarkdown(pageLeadRecord)
+        #expect(formattedPageDetail.contains("#### Page Lead\nSlices share contiguous memory with their base collection."))
+        #expect(!formattedPageDetail.contains("- Session ID:"))
+        #expect(!formattedPageDetail.contains("#### Session Opening"))
+
         let outArchive = OutputCollector()
         let codeArchive = await CLIRunner.run(
             arguments: ["coding-rewind", "archive", "rw-recent-ready", "--data-dir", dir.path, "--json"],

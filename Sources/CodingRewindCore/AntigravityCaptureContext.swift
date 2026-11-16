@@ -23,7 +23,9 @@ public struct AntigravityConversationID: Equatable, Sendable {
         self.uuid = uuid
     }
 
-    public var backlink: String { "conversation://\(uuid.uuidString.lowercased())" }
+    public var rawValue: String { uuid.uuidString.lowercased() }
+
+    public var backlink: String { "conversation://\(rawValue)" }
 }
 
 public struct AntigravityCaptureContext: Sendable {
@@ -38,8 +40,9 @@ public struct AntigravityCaptureContext: Sendable {
         selectedText: String,
         sessionTitle: String
     ) async -> CaptureContext? {
+        let rawSessionID = conversationID.rawValue
         let transcript = brainDirectory
-            .appendingPathComponent(conversationID.uuid.uuidString.lowercased(), isDirectory: true)
+            .appendingPathComponent(rawSessionID, isDirectory: true)
             .appendingPathComponent(".system_generated/logs/transcript.jsonl", isDirectory: false)
         return await Task.detached {
             guard let messages = try? Self.readMessages(from: transcript) else { return nil }
@@ -47,7 +50,8 @@ public struct AntigravityCaptureContext: Sendable {
                 selectedText: selectedText,
                 messages: messages,
                 anchor: .uniqueSubstring,
-                sessionTitle: sessionTitle
+                sessionTitle: sessionTitle,
+                sessionID: rawSessionID
             )
         }.value
     }

@@ -832,7 +832,7 @@ extension AppShortcutsTests {
         )
         let coord = try AppCoordinator(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"], capturer: NoopCapturer())
         var opened: [URL] = []
-        coord.onOpenURL = { opened.append($0) }
+        coord.onOpenURL = { opened.append($0); return true }
         let draft = SettingsConnectionDraft(memosURL: "https://memos.example.com/api/memos")
         coord.openURL(AppStrings.deploymentGuideURL)
         if let consoleURL = draft.consoleURL { coord.openURL(consoleURL) }
@@ -1009,6 +1009,7 @@ extension AppShortcutsTests {
         var openedURLs: [URL] = []
         coord.onOpenURL = { url in
             openedURLs.append(url)
+            return true
         }
         AppAboutMetadata.openGitHubRepo(using: coord)
         AppAboutMetadata.openReleaseNotes(using: coord)
