@@ -12,17 +12,48 @@ struct RewindLaunchButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13))
+        configuration.label.rewindFilledButtonSurface(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            fontSize: 13,
+            enabledColor: Color(red: 0, green: 104 / 255, blue: 217 / 255),
+            verticalPadding: 4
+        )
+    }
+}
+
+struct RewindDestructiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.rewindFilledButtonSurface(
+            isEnabled: isEnabled,
+            isPressed: configuration.isPressed,
+            fontSize: 12,
+            enabledColor: Color(red: 214 / 255, green: 45 / 255, blue: 48 / 255),
+            verticalPadding: 3
+        )
+    }
+}
+
+private extension View {
+    func rewindFilledButtonSurface(
+        isEnabled: Bool,
+        isPressed: Bool,
+        fontSize: CGFloat,
+        enabledColor: Color,
+        verticalPadding: CGFloat
+    ) -> some View {
+        font(.system(size: fontSize))
             .foregroundStyle(isEnabled ? Color.white : Color.secondary)
             .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.vertical, verticalPadding)
             .background {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(isEnabled ? Color(red: 0, green: 104 / 255, blue: 217 / 255) : Color.gray.opacity(0.18))
+                    .fill(isEnabled ? enabledColor : Color.gray.opacity(0.18))
                     .overlay {
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.black.opacity(isEnabled && configuration.isPressed ? 0.15 : 0))
+                            .fill(Color.black.opacity(isEnabled && isPressed ? 0.15 : 0))
                     }
             }
     }
