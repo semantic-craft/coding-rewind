@@ -29,7 +29,11 @@ public enum ConversationHost: String, Codable, CaseIterable, Sendable {
 }
 
 public enum ConversationPrompt {
-    public static func buildPrompt(for cards: [RewindCard], language: AppLanguage = .zhHans) -> String {
+    public static func buildPrompt(
+        for cards: [RewindCard],
+        language: AppLanguage = .zhHans,
+        aiAccessMode: AIAccessMode = .readWrite
+    ) -> String {
         switch language {
         case .zhHans:
             var sections: [String] = [
@@ -39,6 +43,7 @@ public enum ConversationPrompt {
                 var lines: [String] = []
                 let heading = card.title ?? card.sourceTitle
                 lines.append("### 卡片 \(index + 1)：\(heading)")
+                lines.append("- 卡片 ID：`\(card.id)`")
                 if let session = card.sessionTopic, !session.isEmpty {
                     lines.append("- 会话主题：\(session)")
                 }
@@ -58,6 +63,11 @@ public enum ConversationPrompt {
                 lines.append(quoted)
                 sections.append(lines.joined(separator: "\n"))
             }
+            if !cards.isEmpty && aiAccessMode == .readWrite {
+                sections.append(
+                    "完成梳理后，如需将推演结论写回 Coding Rewind，可按上方卡片 ID 调用 `append_snippet_note` 追加批注，或调用 `create_snippet` 将新整理出的提纲与草稿存回片段库。"
+                )
+            }
             return sections.joined(separator: "\n\n")
         case .en:
             var sections: [String] = [
@@ -67,6 +77,7 @@ public enum ConversationPrompt {
                 var lines: [String] = []
                 let heading = card.title ?? card.sourceTitle
                 lines.append("### Clip \(index + 1): \(heading)")
+                lines.append("- Clip ID: `\(card.id)`")
                 if let session = card.sessionTopic, !session.isEmpty {
                     lines.append("- Session Topic: \(session)")
                 }
@@ -85,6 +96,11 @@ public enum ConversationPrompt {
                     .joined(separator: "\n")
                 lines.append(quoted)
                 sections.append(lines.joined(separator: "\n"))
+            }
+            if !cards.isEmpty && aiAccessMode == .readWrite {
+                sections.append(
+                    "After synthesis, if you want to save conclusions back to Coding Rewind, you may call `append_snippet_note` (using the Clip ID above) to attach notes to the original card, or `create_snippet` to stash a newly synthesized outline or draft."
+                )
             }
             return sections.joined(separator: "\n\n")
         }

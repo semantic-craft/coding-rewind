@@ -268,6 +268,9 @@ public enum AntigravityIntegration {
             if !skillText.contains("list_snippets")
                 || !skillText.contains("search_snippets")
                 || !skillText.contains("get_snippet")
+                || !skillText.contains("create_snippet")
+                || !skillText.contains("update_snippet_metadata")
+                || !skillText.contains("append_snippet_note")
                 || !skillText.contains("archive_snippet")
                 || !skillText.contains("conversation://")
                 || skillText.contains("memo_list_memos") {
@@ -346,17 +349,22 @@ public enum AntigravityIntegration {
         let skillMarkdown = """
         ---
         name: rewind
-        description: Query, search, and synthesize Coding Rewind highlights with full conversation provenance via coding-rewind MCP tools or CLI.
+        description: Query, search, synthesize, annotate, and stash Coding Rewind highlights with full conversation provenance via coding-rewind MCP tools or CLI.
         ---
 
         # Coding Rewind (/rewind)
 
-        Use the `coding-rewind` MCP tools (or `~/Library/Application Support/CodingRewind/bin/coding-rewind` CLI when MCP is not wired) to inspect, search, synthesize, and archive `#rewind/` snippets:
+        Use the `coding-rewind` MCP tools (or `~/Library/Application Support/CodingRewind/bin/coding-rewind` CLI when MCP is not wired) to inspect, search, synthesize, annotate, and archive `#rewind/` snippets:
 
         1. Call `list_snippets` (defaults: `window: "72h"`, `status: "active"`) or `search_snippets` (`query`) to inspect recent highlights. Pass `window: "all"` (CLI `--window all` or `--window <N>h`) to read snippets older than 72 hours, and `status: "synthesized"` or `"all"` (CLI `--status synthesized|all`) to include archived snippets.
-        2. Call `get_snippet` (`id`, `include_context: true`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind get <id> --json`) to inspect a specific snippet, reading its `title`, `sessionTopic`, `contextSummary`, `keywords`, `sourceTitle`, `sourceURL`, `conversationContext`, and unmodified `verbatimText`.
-        3. Preserve `verbatimText` word-for-word without alteration, keep AI summary fields distinct from the original quote, and always cite provenance links (`[出处](conversation://<id>)` or web chat/page URLs).
-        4. Call `archive_snippet` (`id`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind archive <id>`) when asked to mark incorporated snippets as `#rewind/synthesized`.
+        2. Call `get_snippet` (`id`, `include_context: true`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind get <id> --json`) to inspect a specific snippet, reading its `title`, `sessionTopic`, `contextSummary`, `keywords`, `tags`, `sourceTitle`, `sourceURL`, `conversationContext`, `notes`, and unmodified `verbatimText`.
+        3. Preserve `verbatimText` word-for-word without alteration, keep AI summary fields and `notes` distinct from the original quote, and always cite provenance links (`[出处](conversation://<id>)` or web chat/page URLs).
+        4. When write access is enabled (`read_write`), close the synthesis loop when helpful or requested:
+           - Call `append_snippet_note` (`id`, `note`, optional `author`; CLI `coding-rewind note <id> --text ...` or `--stdin`) using the card's Clip ID to attach conclusions back to the original card without touching `verbatimText`.
+           - Call `create_snippet` (`text`, optional `title`, `session_topic`, `context_summary`, `keywords`, `tags`, `source_url`; CLI `coding-rewind create --text ...` or `--stdin`) to stash a newly synthesized outline or draft back into Coding Rewind (`#source/agent`).
+           - Call `update_snippet_metadata` (`id`, optional `title`, `session_topic`, `context_summary`, `keywords`, `add_tags`, `remove_tags`, `archived`; CLI `coding-rewind update <id> ...`) to refine metadata headers, tags, or archive state while keeping `verbatimText` 100% byte-identical.
+           - Call `archive_snippet` (`id`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind archive <id>`) when asked to mark incorporated snippets as `#rewind/synthesized`.
+        5. Respect the permission boundary: physical deletion is never exposed via MCP, and when AI access is set to `read_only` (in Settings or via `CODING_REWIND_AI_ACCESS=read_only`), all mutating MCP tools (`create_snippet`, `update_snippet_metadata`, `append_snippet_note`, `archive_snippet`) are rejected while read tools remain available.
         """
         try AtomicFile.writeUTF8(
             skillMarkdown + "\n",

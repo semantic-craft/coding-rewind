@@ -335,13 +335,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             updater.startBackgroundSchedule()
 
             if launchContext.shouldPresentHUDOnInitialLaunch {
-                perform(.presentHUDAndFocus)
+                hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
             }
 
-            Task { @MainActor [weak self] in
-                await coord.refresh()
-                self?.statusItemController?.refreshIcon()
-            }
+            refreshHotStreamInBackground()
         } catch {
             NSLog("CodingRewind startup failed: \(error.localizedDescription)")
         }
@@ -361,9 +358,14 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public func perform(_ command: AppCommand) {
         switch command {
         case .toggleHUD:
+            let wasVisible = hudPanel?.isVisible == true
             hudPanel?.toggle(anchorFrame: statusItemController?.anchorFrame)
+            if !wasVisible, hudPanel?.isVisible == true {
+                refreshHotStreamInBackground()
+            }
         case .presentHUDAndFocus:
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+            refreshHotStreamInBackground()
         case .captureSelectionHotkey:
             triggerCapture(preferInPlacePopup: true)
         case .captureSelection:
@@ -384,11 +386,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         case .refreshHotStream:
-            guard let coord = coordinator else { return }
-            Task { @MainActor [weak self] in
-                await coord.refresh()
-                self?.statusItemController?.refreshIcon()
-            }
+            refreshHotStreamInBackground()
         case .openMemosWeb:
             guard let coord = coordinator else { return }
             if let baseURL = coord.paths.resolveMemosBaseURL(environment: coord.environment) {
@@ -427,6 +425,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .selectRecentCard(let cardID):
             coordinator?.focusAndCheckCard(id: cardID)
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+            refreshHotStreamInBackground()
         case .showAbout:
             settingsWindowController?.show(page: .about)
         case .quit:
@@ -462,6 +461,14 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
     private func presentHUDNonActivating() {
         hudPanel?.presentNonActivating(anchorFrame: statusItemController?.anchorFrame)
+    }
+
+    private func refreshHotStreamInBackground() {
+        guard let coord = coordinator else { return }
+        Task { @MainActor [weak self] in
+            await coord.refresh()
+            self?.statusItemController?.refreshIcon()
+        }
     }
 
     public static func stageBundledCLIBinaryIfAvailable(

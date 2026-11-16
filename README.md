@@ -12,7 +12,7 @@
 
 在使用独立桌面端 **Google Antigravity App 2.x、ChatGPT、Gemini** 或网页版 ChatGPT、Claude、Gemini 聊天时，经常会撞见接下来两三天马上要用、带来灵感的对话段落。当下正在推进主线任务，不想立刻切走新开对话分叉，存进重型笔记库太重，贴进系统备忘录又会丢掉提问语境且难以继续追问成文。
 
-**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可在 Antigravity 或 Codex 新建会话并发送完整上下文，继续推演或对照写稿。
+**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可在 Antigravity 或 Codex 新建会话并发送卡片标识与完整上下文，继续推演或对照写稿，还可在读写权限下由宿主 AI 将结论笔记挂回原卡片或暂存新提纲回流至浮窗。
 
 立项需求正本来自用户 t4624u 于 2026-11-10 的记录：
 
@@ -27,8 +27,8 @@
 项目拒绝双数据库双向同步与半原生半网页胶水层，围绕阿里云轻量应用服务器上的单实例原版 `usememos/memos` 构建极薄边缘端：
 
 - **单一事实源后端 `deploy/vps/`**，直接运行官方固定版本 `neosmemo/memos:26.11.0` 容器承接 `/api/memos` REST 存储，旁挂约百行纯 Python 3 标准库编写的幂等语境增强器 `rewind-enricher`，结合前文 4 轮对话生成标题、会话主题、脉络摘要与关键词引用头，100% 保留用户选中原文不改动。
-- **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`usememos/memos`、`raycast/extensions`、`GaimsDevSoftware/linuxpop`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文时自动在选区附近弹出非激活“暂存”胶囊，默认使用 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。浮窗内支持单条或批量归档（`⌘E`）与删除（`⌘⌫` 底部行内确认，`⌥⌘⌫` 或按住 `Option` 点击直接删除），`⌘Return` 将勾选卡片交给浮窗选定的 Antigravity 或 Codex，接聊方式见下文。
-- **单二进制 Agent CLI 与内嵌 MCP `Sources/CodingRewindCLI/`**，应用包内嵌并同步安装至固定路径 `~/Library/Application Support/CodingRewind/bin/coding-rewind`，与桌面端共用 `CodingRewindCore` 查询层、凭据解析及 `hot_cache.json`/`outbox.jsonl` 离线回退，既提供 `list`、`search`、`get`、`archive`、`delete` 命令行子命令，也通过 `coding-rewind mcp` 提供仅含 4 个高信噪比领域工具（`list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`）的标准 `stdio` MCP 服务（不包含物理删除工具），默认聚焦近 72 小时未归档片段并支持按需查询 `>72h` 历史与 `#rewind/synthesized` 已归档片段。
+- **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`usememos/memos`、`raycast/extensions`、`GaimsDevSoftware/linuxpop`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文时自动在选区附近弹出非激活“暂存”胶囊，默认使用 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。浮窗内支持单条或批量归档（`⌘E`）与删除（`⌘⌫` 底部行内确认，`⌥⌘⌫` 或按住 `Option` 点击直接删除），`⌘Return` 将勾选卡片连同卡片 ID 交给浮窗选定的 Antigravity 或 Codex 并支持推演后闭环回写，接聊方式见下文。
+- **单二进制 Agent CLI 与内嵌 MCP `Sources/CodingRewindCLI/`**，应用包内嵌并同步安装至固定路径 `~/Library/Application Support/CodingRewind/bin/coding-rewind`，与桌面端共用 `CodingRewindCore` 查询与写入层、凭据解析及 `hot_cache.json`/`outbox.jsonl`/`local_notes.json` 离线与本机回退，既提供 `list`、`search`、`get`、`create`、`update`、`note`、`archive`、`delete` 八个命令行子命令，也通过 `coding-rewind mcp` 提供受只读/读写权限门控的 7 个高信噪比领域工具（`list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`、`create_snippet`、`update_snippet_metadata`、`append_snippet_note`）标准 `stdio` MCP 服务（绝不向 Agent MCP 暴露物理删除工具），默认聚焦近 72 小时未归档片段并支持按需查询 `>72h` 历史与 `#rewind/synthesized` 已归档片段。
 - **Antigravity 2.x 上下文与官方插件**，桌面捕获从选区所属聊天页面（支持 `http://127.0.0.1:<port>/c/<uuid>` 与 `https://127.0.0.1/c/<uuid>`）确认会话编号，只读取该会话的官方 transcript，定位所选消息与对应提问；插件安装器向 `~/.gemini/config/plugins/coding-rewind/` 写入 `plugin.json`、`coding-rewind/launcher` sidecar 配置与引导调用 `coding-rewind` 领域工具的 `/rewind` 技能。
 - **ChatGPT 与 Gemini App 剪藏**，在 ChatGPT 与 Gemini 桌面端选中对话文本后点击选区上方的“暂存”胶囊，或按 `⌃⌥⇧⌘S`（`Hyper+S`），自动保存来源、私有会话链接、前序提问与截止选中消息的最多四个用户轮。通过当前窗口的辅助功能树和系统复制读取内容，不读取其他会话日志。回链使用应用自带的打开会话入口，完成后关闭本次打开的浏览器标签。Gemini 的回链读取目前支持默认浏览器为 Google Chrome。
 - **网页端薄剪藏扩展 `extensions/web-clipper/`**，Manifest V3 无依赖扩展，吸收 MIT 项目 `mem0ai/mem0-chrome-extension`、`revivalstack/ai-chat-exporter`、`pionxzh/chatgpt-exporter`、`obsidianmd/obsidian-clipper`、`crimx/ext-saladict`、`floating-ui/floating-ui`、`kepano/defuddle`、`mixmark-io/turndown` 与 `ChatGPTBox-dev/chatGPTBox` 经验，在任意 `http(s)` 网页及 ChatGPT、Claude、Gemini 页面支持选区就近的单动作“暂存”胶囊（含手势门控、可编辑区避让、生效范围与排除域名设置）、右键菜单及 `⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 快捷键，按需提取去行号代码块与富文本 Markdown（聊天页附带前序 4 轮对话）后后台直连 Memos API，胶囊内原位切换保存反馈或右上角展示 2.2 秒轻提示，不弹自定义协议确认框也不抢焦点。
@@ -37,7 +37,7 @@
 
 先在应用菜单中点击“安装或修复 Antigravity 插件”，也可在“设置 → 插件与权限”中点击“安装或修复插件”。安装器将 `coding-rewind-sidecar` 与 `coding-rewind` 放入固定的 `~/Library/Application Support/CodingRewind/bin/` 目录，注册并启用 `coding-rewind/launcher`。Antigravity 管理该 sidecar 进程，并提供调用 `agentapi` 所需的运行环境。
 
-在浮窗勾选片段，将对话应用选为 Antigravity，按 `⌘Return` 或点击“开始对话”。应用会打开 Antigravity，由 sidecar 新建会话并发送片段原文、已有对话上下文和来源。收到会话编号后才显示成功，同时清除本次勾选。要再次使用同一条片段，请重新勾选。
+在浮窗勾选片段，将对话应用选为 Antigravity，按 `⌘Return` 或点击“开始对话”。应用会打开 Antigravity，由 sidecar 新建会话并发送每张卡片的标识（中文 `- 卡片 ID`、英文 `- Clip ID`）、片段原文、已有对话上下文和来源；当 AI 接入权限处于读写模式（`read_write`）时，提示词末尾会引导宿主 AI 在整理推演后按需调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新生成的提纲草稿暂存回浮窗（只读模式下省略该回写提示）。收到会话编号后才显示成功，同时清除本次勾选。要再次使用同一条片段，请重新勾选。
 
 请求期间重复点击不会再建会话。进程中断或超时导致结果不明时，应用保留原请求编号，重启后查询该请求，不自动重发。收到明确的未知结果后，可先核对 Antigravity，再点击“已检查 Antigravity，清除待确认请求”恢复。“发送后归档”只在确认创建成功后执行，归档失败仍保留片段供重试，也可点击“暂不归档，保留片段”。
 
@@ -47,7 +47,7 @@
 
 ## 在 Codex 接聊
 
-安装并登录 Codex，在浮窗的对话应用选择器中选择 **Codex**，勾选片段后按 `⌘Return`。应用创建真实新会话，发送与 Antigravity 相同的片段原文、已有对话上下文和来源，并打开该会话供继续追问，无须粘贴或再次发送。首次默认目标仍是 Antigravity，之后保存所选应用。应用菜单与状态菜单也提供两种应用的开始对话动作。
+安装并登录 Codex，在浮窗的对话应用选择器中选择 **Codex**，勾选片段后按 `⌘Return`。应用创建真实新会话，发送与 Antigravity 相同的卡片标识（`- 卡片 ID` / `- Clip ID`）、片段原文、已有对话上下文、来源及读写模式下的结论回写说明，并打开该会话供继续追问，无须粘贴或再次发送。首次默认目标仍是 Antigravity，之后保存所选应用。应用菜单与状态菜单也提供两种应用的开始对话动作。
 
 Codex 接聊使用应用自带的官方 CLI，不需要安装 Antigravity 插件。找不到捆绑 CLI 时会检查 `~/.local/bin/codex`，开发或排障时可用绝对路径环境变量 `CODING_REWIND_CODEX_BIN` 指定。模型和审批沿用 Codex 自己的配置，新会话的工作目录为当前用户主目录。
 
@@ -59,14 +59,18 @@ Codex 接聊使用应用自带的官方 CLI，不需要安装 Antigravity 插件
 
 打开已安装的 `CodingRewind.app` 或执行“安装或修复 Antigravity 插件”后，单二进制工具固定安装在 `~/Library/Application Support/CodingRewind/bin/coding-rewind`，应用自动更新时会原位刷新：
 
-- **命令行直接调用（适合终端与 Coding Agent）**：
-  - `coding-rewind list [--window 72h|all|<N>h] [--status active|ready|pending|synthesized|all] [--source <platform>] [--limit 1..500] [--json]`
-  - `coding-rewind search <query> [--window 72h|all|<N>h] [--status active|ready|pending|synthesized|all] [--source <platform>] [--limit 1..500] [--json]`
-  - `coding-rewind get <id> [--no-context|--with-context] [--json]`
-  - `coding-rewind archive <id> [--json]`
-  - `coding-rewind delete <id> [--json]`（仅删除尚未同步的离线队列项或经云端 `DELETE` 确认的已同步片段，离线状态下拒绝删除已同步片段）
-- **内嵌领域 MCP 服务（`coding-rewind mcp`）**：通过标准 `stdio` JSON-RPC 2.0 仅暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 四个领域工具（替代通用 Memos 远端 41 个低信噪比工具与外部 Node 桥接进程，不向 Agent 暴露物理删除能力）。默认返回近 72 小时未归档片段；需要调阅更早历史或已归档片段时传入 `window: "all"` 或 `status: "synthesized"` / `"all"`。未配置云端或离线时自动回退读取本机 `hot_cache.json` 与 `outbox.jsonl`。
-- **跨宿主零明文接线**：在 `~/.config/agent-mcp/servers.json` 中注册后运行 `mcp-sync apply` 即可同步至 Claude Code、Codex、OpenCode 与 Antigravity，无需在任何 JSON 配置文件写入访问令牌：
+- **命令行直接调用（适合终端与 Coding Agent，共 8 个子命令）**：
+  - `coding-rewind list [--window 72h|all|<N>h] [--status active|ready|pending|synthesized|all] [--source <platform>] [--limit 1..500] [--data-dir <path>] [--json]`
+  - `coding-rewind search <query> [--window 72h|all|<N>h] [--status active|ready|pending|synthesized|all] [--source <platform>] [--limit 1..500] [--data-dir <path>] [--json]`
+  - `coding-rewind get <id> [--no-context|--with-context] [--data-dir <path>] [--json]`（返回片段详情、对话上下文及按时间排序的 `notes`）
+  - `coding-rewind create (--text <markdown> | --stdin) [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--tag <tag>...] [--source <platform>] [--source-title <st>] [--source-url <u>] [--data-dir <path>] [--json]`（默认标记 `#source/agent`，来源标签支持 `antigravity|chatgpt|claude|gemini|macos|web|agent`）
+  - `coding-rewind update <id> [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--add-tag <tag>...] [--remove-tag <tag>...] [--archive | --unarchive] [--data-dir <path>] [--json]`（仅改写首行标签与顶部引用块元数据 `Title`、`Session`、`Context`、`Keywords`，100% 逐字节原样保留正文原文）
+  - `coding-rewind note <id> (--text <markdown> | --stdin) [--author <name>] [--data-dir <path>] [--json]`（通过首行带 `<!-- rewind-note-v1 -->` 的 `PRIVATE` 评论追加 AI 笔记，与 `<!-- rewind-context-v1 -->` 严格隔离；未配置 Memos 的纯本机模式下存入 `<dataDir>/local_notes.json`）
+  - `coding-rewind archive <id> [--data-dir <path>] [--json]`
+  - `coding-rewind delete <id> [--data-dir <path>] [--json]`（严格保留给人工终端操作，绝不通过 MCP 向 AI 暴露；仅删除尚未同步的离线队列项或经云端 `DELETE` 确认的已同步片段，离线状态下拒绝删除已同步片段）
+- **内嵌领域 MCP 服务（`coding-rewind mcp`）**：通过标准 `stdio` JSON-RPC 2.0 固定暴露 7 个领域工具：`list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`、`create_snippet`、`update_snippet_metadata`、`append_snippet_note`（替代通用 Memos 远端 41 个低信噪比工具与外部 Node 桥接进程，绝不向 Agent 暴露物理删除能力）。默认返回近 72 小时未归档片段；需要调阅更早历史或已归档片段时传入 `window: "all"` 或 `status: "synthesized"` / `"all"`。未配置云端或离线时自动回退读写本机 `hot_cache.json`、`outbox.jsonl` 与 `local_notes.json`。
+- **只读与读写权限门控**：`<dataDir>/config.json` 持久化 `ai_access_mode`（`"read_only"` | `"read_write"`，默认 `"read_write"`，与 `memos_url` 互不覆盖且绝不存储任何令牌），可通过环境变量 `CODING_REWIND_AI_ACCESS=read_only|read_write` 覆盖（非空非法值按故障关闭降级为 `read_only`）。`coding-rewind mcp` 在每次工具调用时实时解析权限，切换设置无须重启 MCP 进程；处于 `read_only` 时立即拒绝全部 4 个写入工具（`create_snippet`、`update_snippet_metadata`、`append_snippet_note`、`archive_snippet`），仅放行 3 个读取工具。
+- **跨宿主零明文接线**：可在桌面端“设置 → 插件与权限 → AI 接入与权限”中点击“复制 MCP 配置”一键粘贴至 Claude Desktop、Cursor、Codex、Antigravity 等客户端，也可在 `~/.config/agent-mcp/servers.json` 中注册后运行 `mcp-sync apply` 统一同步，无需在任何 JSON 配置文件写入访问令牌：
 
 ```json
 {
@@ -125,14 +129,14 @@ CODING_REWIND_MEMOS_TOKEN_REFERENCE='op://vault/item/password' \
 
 1. **聚焦 72 小时热窗口**，服务近两三天马上要用的高质量对话片段，保存时不打断当前对话、不强迫当场开新会话、不要求手填标题或标签。
 2. **双端无感采集与脉络保真**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面端与任意 `http(s)` 网页及 ChatGPT、Claude、Gemini 网页端，聊天页自动附带原问题、出处链接与近期轮次脉络，普通网页保留选段原文与出处链接。
-3. **交回主力宿主推演与成文**，浮窗只做毫秒级速览、检索筛选与多选勾选，长对话追问与对照写稿直接交给用户主力使用的 Antigravity App 2.x、Codex 等宿主完成，并由单二进制 `coding-rewind` 提供 CLI 与 4 个领域 MCP 工具，不重复造本地富文本编辑器。
+3. **交回主力宿主推演与闭环回写**，浮窗只做毫秒级速览、检索筛选与多选勾选，长对话追问与对照写稿直接交给用户主力使用的 Antigravity App 2.x、Codex 等宿主完成，并由单二进制 `coding-rewind` 提供 8 个 CLI 子命令与受只读/读写权限门控的 7 个领域 MCP 工具（不暴露物理删除），让 AI 整理出的笔记与新提纲直接回流浮窗，不重复造本地富文本编辑器。
 4. **明确不做**，不做默认全量聊天自动采集，不做相关时主动弹窗打扰，不在配置文件写入明文密钥，也不引入任何 GPL、AGPL、Commons Clause 或无许可代码。
 
 ## 桌面入口与设置
 
 应用与 Chrome 扩展均支持 **跟随系统 / 简体中文 / English** 多语言显示，切换语言后菜单、片段浮窗、划词胶囊与设置窗口立即生效，无须重启应用；云端 `rewind-enricher` 默认按剪藏正文与对话脉络自动选择中文或英文摘要（可通过 `REWIND_SUMMARY_LANGUAGE` 固定为 `zh-Hans` 或 `en`），底层 Memos 标签与引用块字段名在各语言下保持统一。
 
-应用默认显示 Dock 图标，在“设置 → 通用”提供显示语言、登录时自动打开（`SMAppService` 登录项后台静默启动，不自动弹出浮窗）、Dock 图标显示、系统菜单栏入口以及“选中文本时显示暂存胶囊”开关；在“设置 → 关于”提供版本与构建号、MIT 许可证、仓库与更新日志链接、手动“检查更新”以及“自动检查更新”开关（后台定期从 GitHub Releases 下载并经 `SHA256SUMS.txt` 与 `SecStaticCode` 代码签名及 `TeamIdentifier` 防降级校验后一键重启替换，签名权限不兼容时自动转为引导前往 GitHub 手动查看以保护辅助功能授权）。点击 Dock 图标可重新打开片段浮窗。菜单栏“设置…”、顶部应用主菜单的“关于 Coding Rewind”与“检查更新…”、浮窗齿轮和 `⌘,` 都指向同一设置窗口（“关于”与“检查更新…”位于设置或顶部应用菜单，不再出现在右侧菜单栏状态项下拉菜单中）。设置分为通用、云端同步、快捷键、插件与权限、关于；通用开关、自动更新开关与快捷键修改立即保存，云端同步设置单独保存。
+应用默认显示 Dock 图标，在“设置 → 通用”提供显示语言、登录时自动打开（`SMAppService` 登录项后台静默启动，不自动弹出浮窗）、Dock 图标显示、系统菜单栏入口以及“选中文本时显示暂存胶囊”开关；在“设置 → 插件与权限”除辅助功能授权与 Antigravity 插件安装修复外，还提供“AI 接入与权限”（`AI Access & Permissions`）分区，集中展示本机 MCP 服务状态、只读与读写权限切换开关（立即写入 `<dataDir>/config.json` 的 `ai_access_mode`；若由环境变量 `CODING_REWIND_AI_ACCESS` 接管则自动禁用开关并标明来源）以及面向 Claude Desktop、Cursor、Codex、Antigravity 等宿主的一键“复制 MCP 配置”按钮；在“设置 → 关于”提供版本与构建号、MIT 许可证、仓库与更新日志链接、手动“检查更新”以及“自动检查更新”开关（后台定期从 GitHub Releases 下载并经 `SHA256SUMS.txt` 与 `SecStaticCode` 代码签名及 `TeamIdentifier` 防降级校验后一键重启替换，签名权限不兼容时自动转为引导前往 GitHub 手动查看以保护辅助功能授权）。点击 Dock 图标可重新打开片段浮窗。菜单栏“设置…”、顶部应用主菜单的“关于 Coding Rewind”与“检查更新…”、浮窗齿轮和 `⌘,` 都指向同一设置窗口（“关于”与“检查更新…”位于设置或顶部应用菜单，不再出现在右侧菜单栏状态项下拉菜单中）。设置分为通用、云端同步、快捷键、插件与权限、关于；通用开关、AI 读写权限开关、自动更新开关与快捷键修改立即保存，云端同步设置单独保存。
 
 如果菜单栏图标消失，先从 Finder 打开应用，再进入“设置 → 通用 → 打开系统菜单栏设置”。在系统的“允许在菜单栏中显示”列表开启 CodingRewind。应用不会反复覆盖系统的隐藏选择。
 

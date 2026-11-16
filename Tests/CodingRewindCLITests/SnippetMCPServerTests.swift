@@ -100,8 +100,17 @@ struct SnippetMCPServerTests {
             }
             return name
         }
-        #expect(toolNames == ["list_snippets", "search_snippets", "get_snippet", "archive_snippet"])
+        #expect(toolNames == [
+            "list_snippets",
+            "search_snippets",
+            "get_snippet",
+            "archive_snippet",
+            "create_snippet",
+            "update_snippet_metadata",
+            "append_snippet_note"
+        ])
         #expect(!toolNames.contains("delete_snippet"))
+        #expect(!toolNames.contains("delete"))
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601

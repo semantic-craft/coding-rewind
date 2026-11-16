@@ -113,6 +113,91 @@ public enum CLIRunner {
                 return 1
             }
 
+        case .create(let textSource, var input, let dataDir, let json):
+            let resolvedText: String
+            do {
+                resolvedText = try resolveTextSource(textSource, inputFD: inputFD, fieldName: "snippet text")
+            } catch let error as CLIValidationError {
+                writeStderr("Error: \(describeError(error))\n")
+                return 64
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+            input.text = resolvedText
+            do {
+                let repo = try makeRepository(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath,
+                    factory: factory
+                )
+                let record = try await repo.createSnippet(input, now: now())
+                if json {
+                    writeStdout(try SnippetFormatter.encodePrettyJSON(record) + "\n")
+                } else {
+                    writeStdout(SnippetFormatter.formatCreatedMarkdown(record) + "\n")
+                }
+                return 0
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+
+        case .update(let id, let patch, let dataDir, let json):
+            do {
+                let repo = try makeRepository(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath,
+                    factory: factory
+                )
+                let record = try await repo.updateSnippetMetadata(id: id, patch: patch, now: now())
+                if json {
+                    writeStdout(try SnippetFormatter.encodePrettyJSON(record) + "\n")
+                } else {
+                    writeStdout(SnippetFormatter.formatUpdatedMarkdown(record) + "\n")
+                }
+                return 0
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+
+        case .note(let id, let textSource, let author, let dataDir, let json):
+            let resolvedNote: String
+            do {
+                resolvedNote = try resolveTextSource(textSource, inputFD: inputFD, fieldName: "note text")
+            } catch let error as CLIValidationError {
+                writeStderr("Error: \(describeError(error))\n")
+                return 64
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+            do {
+                let repo = try makeRepository(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath,
+                    factory: factory
+                )
+                let record = try await repo.appendSnippetNote(
+                    id: id,
+                    input: SnippetNoteInput(note: resolvedNote, author: author),
+                    now: now()
+                )
+                if json {
+                    writeStdout(try SnippetFormatter.encodePrettyJSON(record) + "\n")
+                } else {
+                    writeStdout(SnippetFormatter.formatNotedMarkdown(record) + "\n")
+                }
+                return 0
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+
         case .archive(let id, let dataDir, let json):
             do {
                 let repo = try makeRepository(
@@ -197,9 +282,52 @@ public enum CLIRunner {
                         preResolvedToken: preResolvedToken
                     )
                 },
+                accessModeProvider: {
+                    guard let context = try? resolveRepositoryContext(
+                        dataDirOverride: dataDir,
+                        environment: environment,
+                        executablePath: executablePath
+                    ) else {
+                        return .readOnly
+                    }
+                    return context.paths.resolveAIAccessMode(environment: context.environment)
+                },
                 now: now
             )
             return await server.run(inputFD: inputFD, outputFD: mcpOutputFD)
+        }
+    }
+
+    private static func resolveTextSource(
+        _ source: CLITextSource,
+        inputFD: Int32,
+        fieldName: String
+    ) throws -> String {
+        switch source {
+        case .inline(let text):
+            return text
+        case .stdin:
+            var buffer = Data()
+            var chunk = [UInt8](repeating: 0, count: 8192)
+            while true {
+                let bytesRead = Darwin.read(inputFD, &chunk, chunk.count)
+                if bytesRead < 0 {
+                    if errno == EINTR { continue }
+                    throw RewindError.ioError("stdin read errno=\(errno)")
+                }
+                if bytesRead == 0 {
+                    break
+                }
+                if buffer.count + bytesRead > MCPServer.maxLineBytes {
+                    throw CLIValidationError("Standard input exceeds maximum size of \(MCPServer.maxLineBytes) bytes.")
+                }
+                buffer.append(contentsOf: chunk[0..<bytesRead])
+            }
+            let text = String(decoding: buffer, as: UTF8.self)
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CLIValidationError("Standard input did not contain any \(fieldName).")
+            }
+            return text
         }
     }
 
