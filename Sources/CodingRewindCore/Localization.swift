@@ -90,6 +90,8 @@ public enum BannerNotice: Equatable, Sendable {
     case deleteCardBlockedOfflineOrUnconfigured
     case cardsLockedByActiveConversation
     case savedConnectionSettings
+    case savedAIAccessMode(AIAccessMode)
+    case aiAccessManagedByEnvironment
     case pluginInstalled
     case pluginNeedsRepair(PluginRepairReason?)
     case pluginInstallFailedRewind(RewindError)
@@ -347,6 +349,31 @@ public enum L10n {
         }
     }
 
+    public static func mcpServiceStatusSummary(
+        isInstalled: Bool,
+        mode: AIAccessMode,
+        in language: AppLanguage
+    ) -> String {
+        guard isInstalled else {
+            switch language {
+            case .zhHans:
+                return "命令行与 MCP 组件尚未安装至 Application Support/CodingRewind/bin/，请点击“安装或修复插件”完成部署。"
+            case .en:
+                return "The coding-rewind helper binary is not yet staged in Application Support/CodingRewind/bin/. Click \"Install or Repair Plugin\" to deploy it."
+            }
+        }
+        switch (language, mode) {
+        case (.zhHans, .readWrite):
+            return "本机 MCP 服务已就绪（读写）：已启用全部 7 个片段工具，支持检索、新建、改写元数据、追加笔记与归档；彻底删除不向 AI 开放。"
+        case (.en, .readWrite):
+            return "Local MCP service ready (Read & Write): all 7 snippet tools are active for search, creation, metadata updates, notes, and archiving. Physical deletion is never exposed to AI."
+        case (.zhHans, .readOnly):
+            return "本机 MCP 服务已就绪（只读）：已启用 3 个只读检索工具，已拦截新建、改写元数据、追加笔记与归档 4 个写入工具。"
+        case (.en, .readOnly):
+            return "Local MCP service ready (Read-Only): 3 read tools are active; all 4 write tools (create, metadata update, note, and archive) are blocked."
+        }
+    }
+
     public static func suggestedPrompts(in language: AppLanguage) -> [String] {
         switch language {
         case .zhHans:
@@ -541,6 +568,22 @@ public enum L10n {
             switch language {
             case .zhHans: return "已保存云端同步设置"
             case .en: return "Saved Cloud Sync settings."
+            }
+        case .savedAIAccessMode(let mode):
+            switch (language, mode) {
+            case (.zhHans, .readOnly):
+                return "已切换为只读模式：AI 仅可检索片段，4 个写入工具已拦截"
+            case (.en, .readOnly):
+                return "Switched to Read-Only mode: AI write tools are now blocked."
+            case (.zhHans, .readWrite):
+                return "已切换为读写模式：AI 可追加批注、新建片段与更新元数据"
+            case (.en, .readWrite):
+                return "Switched to Read & Write mode: AI can now attach notes, create clips, and update metadata."
+            }
+        case .aiAccessManagedByEnvironment:
+            switch language {
+            case .zhHans: return "AI 写入权限由环境变量 CODING_REWIND_AI_ACCESS 接管，不能在设置中修改"
+            case .en: return "AI access permission is managed by CODING_REWIND_AI_ACCESS and cannot be changed in Settings."
             }
         case .pluginInstalled:
             return pluginInstalledSummary(in: language)

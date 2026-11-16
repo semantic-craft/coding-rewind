@@ -131,11 +131,17 @@ public final class AppCoordinator {
     }
 
     public let paths: StoragePaths
-    public var environment: [String: String]
+    public var environment: [String: String] {
+        didSet {
+            aiAccessMode = paths.resolveAIAccessMode(environment: environment)
+        }
+    }
     public let memosClient: MemosClient
     public let outbox: OfflineOutbox
     public let hotCache: HotCache
     public private(set) var language: AppLanguage
+    public private(set) var aiAccessMode: AIAccessMode
+    private var mcpBinaryStateRevision = 0
     private let hostChannels: [ConversationHost: ConversationHostChannel]
     public var conversationHost: ConversationHost = .antigravity {
         didSet {
@@ -229,6 +235,7 @@ public final class AppCoordinator {
         self.outbox = OfflineOutbox(fileURL: paths.outboxFileURL)
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
         self.language = language
+        self.aiAccessMode = paths.resolveAIAccessMode(environment: environment)
         let antigravityStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .antigravity)
         let codexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
         self.hostChannels = [
@@ -297,6 +304,7 @@ public final class AppCoordinator {
 
     public func setLanguage(_ language: AppLanguage) {
         self.language = language
+        aiAccessMode = paths.resolveAIAccessMode(environment: environment)
         try? AntigravityPluginInstaller(paths: paths).refreshLocalizedMetadataIfInstalled(language: language)
         if let failureNotice = lastPluginInstallFailureNotice {
             pluginStatusText = L10n.banner(failureNotice, in: language)
@@ -622,6 +630,9 @@ public final class AppCoordinator {
               let token = KeychainTokenStore.resolveToken(environment: environment) else {
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: cards, pendingOutbox: activeOutboxEntries())
+            if focusedCardID == nil {
+                focusedCardID = cards.first?.id
+            }
             reconcilePendingDeleteConfirmation()
             return
         }
@@ -807,8 +818,14 @@ public final class AppCoordinator {
                     setBanner(failureBanner, isError: true)
                     return nil
                 }
+                let effectiveAIAccessMode = paths.resolveAIAccessMode(environment: environment)
+                aiAccessMode = effectiveAIAccessMode
                 current = try channel.store.submit(
-                    prompt: ConversationPrompt.buildPrompt(for: selected, language: language),
+                    prompt: ConversationPrompt.buildPrompt(
+                        for: selected,
+                        language: language,
+                        aiAccessMode: effectiveAIAccessMode
+                    ),
                     cardIDs: selected.map(\.id),
                     markSynthesized: markSynthesizedOnLaunch
                 )
@@ -1218,7 +1235,53 @@ public final class AppCoordinator {
         onOpenURL?(url)
     }
 
+    public var isAIAccessManagedByEnvironment: Bool {
+        paths.isAIAccessManagedByEnvironment(environment: environment)
+    }
+
+    public var isMCPBinaryInstalled: Bool {
+        _ = mcpBinaryStateRevision
+        return FileManager.default.isExecutableFile(
+            atPath: AntigravityIntegration.stableCLIBinaryURL(in: paths.dataDirectoryURL).path
+        )
+    }
+
+    public var mcpServiceStatusText: String {
+        L10n.mcpServiceStatusSummary(
+            isInstalled: isMCPBinaryInstalled,
+            mode: aiAccessMode,
+            in: language
+        )
+    }
+
+    public func setAIAccessMode(_ mode: AIAccessMode) {
+        guard !isAIAccessManagedByEnvironment else {
+            aiAccessMode = paths.resolveAIAccessMode(environment: environment)
+            setBanner(.aiAccessManagedByEnvironment, isError: false)
+            return
+        }
+        do {
+            try paths.saveAIAccessMode(mode)
+            aiAccessMode = mode
+            setBanner(.savedAIAccessMode(mode), isError: false)
+        } catch {
+            setErrorBanner(error)
+        }
+    }
+
+    public func mcpClientConfigurationJSON() -> String {
+        StoragePaths.standardMCPConfigurationJSON(
+            executablePath: AntigravityIntegration.stableCLIBinaryURL(in: paths.dataDirectoryURL).path
+        )
+    }
+
+    public func refreshAllSettingsState() {
+        aiAccessMode = paths.resolveAIAccessMode(environment: environment)
+        refreshPluginStatus()
+    }
+
     public func installOrRepairPlugin(sourceCLIBinaryURL: URL? = nil, sourceSidecarURL: URL? = nil) {
+        defer { mcpBinaryStateRevision &+= 1 }
         do {
             try AntigravityIntegration.installOrRepair(
                 dataDirectoryURL: paths.dataDirectoryURL,
@@ -1253,6 +1316,8 @@ public final class AppCoordinator {
     }
 
     public func refreshPluginStatus() {
+        mcpBinaryStateRevision &+= 1
+        aiAccessMode = paths.resolveAIAccessMode(environment: environment)
         lastPluginInstallFailureNotice = nil
         let reasons = AntigravityIntegration.repairReasons(
             dataDirectoryURL: paths.dataDirectoryURL,

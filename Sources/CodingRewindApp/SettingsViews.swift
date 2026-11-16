@@ -160,8 +160,11 @@ public struct SettingsRootView: View {
     @Bindable public var permissionState: AccessibilityPermissionState
     @Bindable public var connectionDraft: SettingsConnectionDraft
     @Bindable public var navigationModel: SettingsNavigationModel
+    public var onCopyText: (@MainActor (String) -> Void)?
     public let onCommand: @MainActor (AppCommand) -> Void
     public let onClose: @MainActor () -> Void
+    @State private var didCopyMCPConfig = false
+    @State private var copyFeedbackResetTask: Task<Void, Never>?
 
     public init(
         coordinator: AppCoordinator,
@@ -172,6 +175,7 @@ public struct SettingsRootView: View {
         permissionState: AccessibilityPermissionState = AccessibilityPermissionState(),
         connectionDraft: SettingsConnectionDraft? = nil,
         navigationModel: SettingsNavigationModel = SettingsNavigationModel(),
+        onCopyText: (@MainActor (String) -> Void)? = nil,
         onCommand: @escaping @MainActor (AppCommand) -> Void,
         onClose: @escaping @MainActor () -> Void
     ) {
@@ -183,6 +187,7 @@ public struct SettingsRootView: View {
         self.permissionState = permissionState
         self.connectionDraft = connectionDraft ?? SettingsConnectionDraft(memosURL: coordinator.connectionSettings.memosURL)
         self.navigationModel = navigationModel
+        self.onCopyText = onCopyText
         self.onCommand = onCommand
         self.onClose = onClose
     }
@@ -236,6 +241,10 @@ public struct SettingsRootView: View {
         }
         .environment(\.locale, lang.locale)
         .frame(width: SettingsLayout.contentSize.width, height: SettingsLayout.contentSize.height)
+        .onDisappear {
+            copyFeedbackResetTask?.cancel()
+            copyFeedbackResetTask = nil
+        }
         .onExitCommand(perform: onClose)
     }
 
@@ -478,6 +487,24 @@ public struct SettingsRootView: View {
         }
     }
 
+    private func copyMCPConfiguration() {
+        let json = coordinator.mcpClientConfigurationJSON()
+        if let onCopyText {
+            onCopyText(json)
+        } else {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(json, forType: .string)
+        }
+        didCopyMCPConfig = true
+        copyFeedbackResetTask?.cancel()
+        copyFeedbackResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            didCopyMCPConfig = false
+        }
+    }
+
     private var integrations: some View {
         Group {
             SettingsSection(AppStrings.antigravityPluginSectionTitle(in: lang)) {
@@ -489,6 +516,61 @@ public struct SettingsRootView: View {
                         onCommand(.installOrRepairPlugin)
                     }
                     .rewindButtonRole(.secondary)
+                }
+            }
+            SettingsSection(AppStrings.aiAccessSectionTitle(in: lang)) {
+                SettingsRow(
+                    AppStrings.mcpServiceRowTitle(in: lang),
+                    help: coordinator.mcpServiceStatusText
+                ) {
+                    HStack(spacing: 8) {
+                        if !coordinator.isMCPBinaryInstalled {
+                            Button(AppStrings.installOrRepairShortButton(in: lang)) {
+                                onCommand(.installOrRepairPlugin)
+                            }
+                            .rewindButtonRole(.secondary)
+                            .accessibilityIdentifier("settings.mcpInstallOrRepair")
+                        }
+                        Button(
+                            didCopyMCPConfig
+                                ? AppStrings.copiedMCPConfigFeedback(in: lang)
+                                : AppStrings.copyMCPConfigButton(in: lang)
+                        ) {
+                            copyMCPConfiguration()
+                        }
+                        .rewindButtonRole(.secondary)
+                        .accessibilityIdentifier("settings.copyMCPConfig")
+                    }
+                }
+                Text(AppStrings.mcpConfigCompatibilityCaption(in: lang))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Divider()
+                SettingsRow(
+                    AppStrings.aiAccessPermissionRowTitle(in: lang),
+                    help: AppStrings.aiAccessPermissionHelp(
+                        isManaged: coordinator.isAIAccessManagedByEnvironment,
+                        in: lang
+                    )
+                ) {
+                    Picker(
+                        AppStrings.aiAccessPermissionRowTitle(in: lang),
+                        selection: Binding(
+                            get: { coordinator.aiAccessMode },
+                            set: { coordinator.setAIAccessMode($0) }
+                        )
+                    ) {
+                        ForEach(AIAccessMode.allCases, id: \.self) { mode in
+                            Text(AppStrings.aiAccessModeOptionTitle(mode, in: lang))
+                                .tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .id(lang)
+                    .disabled(coordinator.isAIAccessManagedByEnvironment)
+                    .accessibilityIdentifier("settings.aiAccessMode")
                 }
             }
             SettingsSection(AppStrings.accessibilitySectionTitle(in: lang)) {

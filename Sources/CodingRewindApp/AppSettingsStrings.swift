@@ -808,4 +808,74 @@ extension AppStrings {
             }
         }
     }
+
+    static func aiAccessSectionTitle(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "AI 接入与权限"
+        case .en: return "AI Access & Permissions"
+        }
+    }
+
+    static func mcpServiceRowTitle(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "MCP 服务状态"
+        case .en: return "Local MCP Service"
+        }
+    }
+
+    static func copyMCPConfigButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "复制 MCP JSON 配置"
+        case .en: return "Copy MCP JSON Config"
+        }
+    }
+
+    static func copiedMCPConfigFeedback(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "已复制"
+        case .en: return "Copied"
+        }
+    }
+
+    static func mcpConfigCompatibilityCaption(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans:
+            return "兼容 Claude Desktop、Cursor、Codex、Antigravity 等 MCP 客户端。访问令牌始终保存在 macOS 钥匙串中，不会写入 JSON 配置。"
+        case .en:
+            return "Compatible with Claude Desktop, Cursor, Codex, Antigravity, and other MCP clients. Access tokens stay in macOS Keychain and are never written to JSON."
+        }
+    }
+
+    static func aiAccessPermissionRowTitle(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "AI 写入权限"
+        case .en: return "AI Access Permission"
+        }
+    }
+
+    static func aiAccessModeOptionTitle(_ mode: AIAccessMode, in language: AppLanguage) -> String {
+        switch (language, mode) {
+        case (.zhHans, .readOnly):
+            return "只读（仅检索）"
+        case (.en, .readOnly):
+            return "Read-Only"
+        case (.zhHans, .readWrite):
+            return "允许读写（批注与新建）"
+        case (.en, .readWrite):
+            return "Read & Write"
+        }
+    }
+
+    static func aiAccessPermissionHelp(isManaged: Bool, in language: AppLanguage) -> String {
+        switch (language, isManaged) {
+        case (.zhHans, true):
+            return "当前由启动环境变量 CODING_REWIND_AI_ACCESS 接管，不能在此修改。"
+        case (.en, true):
+            return "Managed by environment variable CODING_REWIND_AI_ACCESS and cannot be edited here."
+        case (.zhHans, false):
+            return "切换后立即生效，同步控制 coding-rewind mcp 写入工具与开始对话提示词中的回写引导。"
+        case (.en, false):
+            return "Takes effect immediately for coding-rewind mcp write tools and Start Chat write-back prompts."
+        }
+    }
 }
