@@ -227,6 +227,9 @@ public enum SourceLocator: Equatable, Hashable, Sendable {
             if segments.count >= 2 && segments[0] == "chat" {
                 return segments[1]
             }
+            if segments.count >= 4 && segments[0] == "project" && segments[2] == "chat" {
+                return segments[3]
+            }
             return nil
         case "gemini.google.com":
             if segments.count >= 2 && segments[0] == "app" {

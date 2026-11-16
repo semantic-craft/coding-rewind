@@ -149,19 +149,19 @@ package enum ConversationContextSlicer {
         if cleaned.count > maxLeadCharacters {
             let prefix = String(cleaned.prefix(maxLeadCharacters))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return prefix + "…"
+            return MemosWireFormat.closeUnbalancedCodeFence(prefix + "…")
         }
         if truncatedByHost && !cleaned.hasSuffix("…") {
-            return cleaned + "…"
+            return MemosWireFormat.closeUnbalancedCodeFence(cleaned + "…")
         }
-        return cleaned
+        return MemosWireFormat.closeUnbalancedCodeFence(cleaned)
     }
 
     package static func formatTurnText(_ message: Message) -> String {
         let text = message.contextText
         if text.count > maxTurnCharacters || message.truncatedByHost {
-            return String(text.prefix(maxTurnCharacters)) + "…"
+            return MemosWireFormat.closeUnbalancedCodeFence(String(text.prefix(maxTurnCharacters)) + "…")
         }
-        return text
+        return MemosWireFormat.closeUnbalancedCodeFence(text)
     }
 }

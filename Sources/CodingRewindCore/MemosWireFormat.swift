@@ -171,6 +171,7 @@ public enum MemosWireFormat {
             .replacingOccurrences(of: "\n", with: " ")
         let effectiveTitle = singleLineTitle.trimmingCharacters(in: .whitespaces).isEmpty ? safePlatform : singleLineTitle
         let escapedTitle = effectiveTitle
+            .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
         let sanitizedURL = sourceURL.map(sanitizeMarkdownURL) ?? ""
@@ -235,9 +236,27 @@ public enum MemosWireFormat {
     }
 
     private static func unescapeMarkdownLinkLabel(_ label: String) -> String {
-        label
-            .replacingOccurrences(of: "\\[", with: "[")
-            .replacingOccurrences(of: "\\]", with: "]")
+        guard label.contains("\\") else { return label }
+        var result = String()
+        result.reserveCapacity(label.count)
+        var cursor = label.startIndex
+        while cursor < label.endIndex {
+            let ch = label[cursor]
+            if ch == "\\" {
+                let next = label.index(after: cursor)
+                if next < label.endIndex {
+                    let escaped = label[next]
+                    if escaped == "\\" || escaped == "[" || escaped == "]" {
+                        result.append(escaped)
+                        cursor = label.index(after: next)
+                        continue
+                    }
+                }
+            }
+            result.append(ch)
+            cursor = label.index(after: cursor)
+        }
+        return result
     }
 
     public static func formatRawMemoContent(
@@ -760,306 +779,7 @@ public enum MemosWireFormat {
         )
     }
 
-    private struct CodeFenceState {
-        let character: Character
-        let length: Int
-    }
-
-    private static func updateCodeFenceState(_ state: inout CodeFenceState?, line: Substring) {
-        var cursor = line.startIndex
-        var leadingSpaces = 0
-        while cursor < line.endIndex && line[cursor] == " " && leadingSpaces < 4 {
-            leadingSpaces += 1
-            cursor = line.index(after: cursor)
-        }
-        guard leadingSpaces <= 3, cursor < line.endIndex else { return }
-
-        let marker = line[cursor]
-        guard marker == "`" || marker == "~" else { return }
-
-        var markerCount = 0
-        while cursor < line.endIndex && line[cursor] == marker {
-            markerCount += 1
-            cursor = line.index(after: cursor)
-        }
-        guard markerCount >= 3 else { return }
-        let remainder = line[cursor...]
-
-        if let active = state {
-            if marker == active.character,
-               markerCount >= active.length,
-               remainder.allSatisfy({ $0 == " " || $0 == "\t" }) {
-                state = nil
-            }
-        } else {
-            if marker == "`" && remainder.contains("`") {
-                return
-            }
-            state = CodeFenceState(character: marker, length: markerCount)
-        }
-    }
-
-    public static func formatContextComment(_ context: CaptureContext) -> String {
-        var headerLines: [String] = [contextCommentMarker]
-        let singleLineTitle = context.sessionTitle
-            .replacingOccurrences(of: "\r\n", with: " ")
-            .replacingOccurrences(of: "\r", with: " ")
-            .replacingOccurrences(of: "\n", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !singleLineTitle.isEmpty {
-            headerLines.append("Session Title: \(singleLineTitle)")
-        }
-        if let sessionID = context.sessionID {
-            let singleLineID = sessionID
-                .replacingOccurrences(of: "\r\n", with: " ")
-                .replacingOccurrences(of: "\r", with: " ")
-                .replacingOccurrences(of: "\n", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !singleLineID.isEmpty {
-                headerLines.append("Session ID: \(singleLineID)")
-            }
-        }
-        if !context.prompt.isEmpty {
-            headerLines.append("Prompt: \(context.prompt)")
-        }
-
-        var blocks: [String] = [headerLines.joined(separator: "\n")]
-        switch context.lead {
-        case .sessionOpening(let text) where !text.isEmpty:
-            blocks.append("### Session Opening\n\(text)")
-        case .pageLead(let text) where !text.isEmpty:
-            blocks.append("### Page Lead\n\(text)")
-        default:
-            break
-        }
-        if !context.recentTurns.isEmpty {
-            let turnsBlock = context.recentTurns
-                .map { "\($0.role): \($0.text)" }
-                .joined(separator: "\n")
-            blocks.append("### Recent Turns\n\(turnsBlock)")
-        }
-        return blocks.joined(separator: "\n\n")
-    }
-
-    public static func parseMemoComments(
-        _ comments: [MemoWireDTO],
-        localNotes: [SnippetNote],
-        includeContext: Bool = true,
-        now: Date = Date()
-    ) -> (context: CaptureContext?, notes: [SnippetNote]) {
-        var conversationContext: CaptureContext?
-        var collectedNotes = localNotes
-        for comment in comments {
-            if includeContext, conversationContext == nil,
-               let parsedCtx = parseContextComment(comment.content) {
-                conversationContext = parsedCtx
-                continue
-            }
-            let fallbackDate = comment.createTime.flatMap(parseISO8601)
-                ?? comment.updateTime.flatMap(parseISO8601)
-                ?? now
-            if let parsedNote = parseNoteComment(
-                id: comment.name,
-                rawComment: comment.content,
-                fallbackCreatedAt: fallbackDate
-            ) {
-                collectedNotes.append(parsedNote)
-            }
-        }
-        let sortedNotes = LocalNotesStore.sortAndDeduplicate(collectedNotes)
-        return (includeContext ? conversationContext : nil, sortedNotes)
-    }
-
-    private enum ContextSection {
-        case headers
-        case sessionOpening
-        case pageLead
-        case promptSection
-        case recentTurns
-    }
-
-    public static func parseContextComment(_ rawComment: String) -> CaptureContext? {
-        let normalized = rawComment
-            .replacingOccurrences(of: "\0", with: "")
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        let trimmedLeading = normalized.drop(while: { $0.isWhitespace || $0.isNewline })
-        guard let newlineIdx = trimmedLeading.firstIndex(of: "\n"),
-              trimHorizontalWhitespace(trimmedLeading[..<newlineIdx]) == contextCommentMarker else {
-            return nil
-        }
-
-        let afterMarkerLine = trimmedLeading[trimmedLeading.index(after: newlineIdx)...]
-        let lines = afterMarkerLine.split(separator: "\n", omittingEmptySubsequences: false)
-
-        var section: ContextSection = .headers
-        var fenceState: CodeFenceState?
-
-        var sawSessionTitleHeader = false
-        var sawSessionIDHeader = false
-        var sawHeaderPrompt = false
-        var inHeaderPrompt = false
-
-        var sessionTitle = ""
-        var sessionID: String?
-        var headerPromptLines: [Substring] = []
-        var sectionPromptLines: [Substring] = []
-        var sessionOpeningLines: [Substring] = []
-        var pageLeadLines: [Substring] = []
-        var recentTurns: [ConversationTurn] = []
-
-        var currentRole: String?
-        var currentTurnLines: [Substring] = []
-
-        func flushTurn() {
-            guard let role = currentRole else { return }
-            let text = currentTurnLines.joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                recentTurns.append(ConversationTurn(role: role, text: text))
-            }
-            currentRole = nil
-            currentTurnLines.removeAll(keepingCapacity: true)
-        }
-
-        for rawLine in lines {
-            if fenceState == nil {
-                let trimmedHeading = trimHorizontalWhitespace(rawLine)
-                switch trimmedHeading {
-                case "### Session Opening":
-                    flushTurn()
-                    inHeaderPrompt = false
-                    section = .sessionOpening
-                    continue
-                case "### Page Lead":
-                    flushTurn()
-                    inHeaderPrompt = false
-                    section = .pageLead
-                    continue
-                case "### Prompt":
-                    flushTurn()
-                    inHeaderPrompt = false
-                    section = .promptSection
-                    continue
-                case "### Recent Turns":
-                    flushTurn()
-                    inHeaderPrompt = false
-                    section = .recentTurns
-                    continue
-                default:
-                    break
-                }
-            }
-
-            switch section {
-            case .headers:
-                if fenceState == nil {
-                    if !sawSessionTitleHeader && rawLine.hasPrefix("Session Title:") {
-                        sawSessionTitleHeader = true
-                        inHeaderPrompt = false
-                        sessionTitle = String(rawLine.dropFirst("Session Title:".count))
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        continue
-                    }
-                    if !sawSessionIDHeader && rawLine.hasPrefix("Session ID:") {
-                        sawSessionIDHeader = true
-                        inHeaderPrompt = false
-                        let parsedID = String(rawLine.dropFirst("Session ID:".count))
-                            .trimmingCharacters(in: .whitespacesAndNewlines)
-                        sessionID = parsedID.isEmpty ? nil : parsedID
-                        continue
-                    }
-                    if !sawHeaderPrompt && rawLine.hasPrefix("Prompt:") {
-                        sawHeaderPrompt = true
-                        inHeaderPrompt = true
-                        var remainder = rawLine.dropFirst("Prompt:".count)
-                        if remainder.first == " " {
-                            remainder = remainder.dropFirst()
-                        }
-                        headerPromptLines.append(remainder)
-                        updateCodeFenceState(&fenceState, line: remainder)
-                        continue
-                    }
-                }
-                if inHeaderPrompt {
-                    headerPromptLines.append(rawLine)
-                    updateCodeFenceState(&fenceState, line: rawLine)
-                } else {
-                    updateCodeFenceState(&fenceState, line: rawLine)
-                }
-
-            case .sessionOpening:
-                sessionOpeningLines.append(rawLine)
-                updateCodeFenceState(&fenceState, line: rawLine)
-
-            case .pageLead:
-                pageLeadLines.append(rawLine)
-                updateCodeFenceState(&fenceState, line: rawLine)
-
-            case .promptSection:
-                sectionPromptLines.append(rawLine)
-                updateCodeFenceState(&fenceState, line: rawLine)
-
-            case .recentTurns:
-                if fenceState == nil, let (role, firstLineBody) = parseTurnHeader(rawLine) {
-                    flushTurn()
-                    currentRole = role
-                    currentTurnLines = [firstLineBody]
-                    updateCodeFenceState(&fenceState, line: firstLineBody)
-                } else {
-                    if currentRole != nil {
-                        currentTurnLines.append(rawLine)
-                    }
-                    updateCodeFenceState(&fenceState, line: rawLine)
-                }
-            }
-        }
-        flushTurn()
-
-        let headerPrompt = headerPromptLines.joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let sectionPrompt = sectionPromptLines.joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedPrompt = !headerPrompt.isEmpty ? headerPrompt : sectionPrompt
-
-        let openingText = sessionOpeningLines.joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let pageLeadText = pageLeadLines.joined(separator: "\n")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedLead: CaptureContextLead?
-        if !openingText.isEmpty {
-            resolvedLead = .sessionOpening(openingText)
-        } else if !pageLeadText.isEmpty {
-            resolvedLead = .pageLead(pageLeadText)
-        } else {
-            resolvedLead = nil
-        }
-
-        let context = CaptureContext(
-            sessionTitle: sessionTitle,
-            sessionID: sessionID,
-            lead: resolvedLead,
-            prompt: resolvedPrompt,
-            recentTurns: recentTurns
-        )
-        return context.isEmpty ? nil : context
-    }
-
-    private static func parseTurnHeader(_ line: Substring) -> (role: String, body: Substring)? {
-        guard let colonIndex = line.firstIndex(of: ":") else { return nil }
-        let rawRole = line[..<colonIndex]
-        let lowered = rawRole.lowercased()
-        guard lowered == "user" || lowered == "assistant" else {
-            return nil
-        }
-        var remainder = line[line.index(after: colonIndex)...]
-        if remainder.first == " " {
-            remainder = remainder.dropFirst()
-        }
-        return (String(rawRole), remainder)
-    }
-
-    private static func nextLine(in text: String, from start: String.Index) -> (line: Substring, nextStart: String.Index)? {
+    static func nextLine(in text: String, from start: String.Index) -> (line: Substring, nextStart: String.Index)? {
         guard start < text.endIndex else { return nil }
         var end = start
         while end < text.endIndex {
@@ -1072,11 +792,11 @@ public enum MemosWireFormat {
         return (text[start..<text.endIndex], text.endIndex)
     }
 
-    private static func isHorizontalBlank(_ text: Substring) -> Bool {
+    static func isHorizontalBlank(_ text: Substring) -> Bool {
         text.allSatisfy { $0 == " " || $0 == "\t" || $0 == "\r" }
     }
 
-    private static func trimHorizontalWhitespace(_ text: Substring) -> String {
+    static func trimHorizontalWhitespace(_ text: Substring) -> String {
         let isHorizontalSpace: (Character) -> Bool = { $0 == " " || $0 == "\t" || $0 == "\r" }
         guard let first = text.firstIndex(where: { !isHorizontalSpace($0) }),
               let last = text.lastIndex(where: { !isHorizontalSpace($0) }) else {

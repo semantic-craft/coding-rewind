@@ -44,8 +44,8 @@ public struct AntigravityCaptureContext: Sendable {
         let transcript = brainDirectory
             .appendingPathComponent(rawSessionID, isDirectory: true)
             .appendingPathComponent(".system_generated/logs/transcript.jsonl", isDirectory: false)
-        return await Task.detached {
-            guard let messages = try? Self.readMessages(from: transcript) else { return nil }
+        let task = Task.detached {
+            guard let messages = try? Self.readMessages(from: transcript) else { return nil as CaptureContext? }
             return ConversationContextSlicer.slice(
                 selectedText: selectedText,
                 messages: messages,
@@ -53,7 +53,8 @@ public struct AntigravityCaptureContext: Sendable {
                 sessionTitle: sessionTitle,
                 sessionID: rawSessionID
             )
-        }.value
+        }
+        return await task.value
     }
 
     private static func parseMessage(record: [String: Any]) throws -> ConversationContextSlicer.Message? {

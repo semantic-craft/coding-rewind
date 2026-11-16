@@ -168,6 +168,9 @@ struct ProvenanceLeadAndSourceLocatorTests {
             ("https://chat.openai.com/g/g-swift-pro/c/67f12345-abcd#:~:text=actor", "67f12345-abcd"),
             ("https://chatgpt.com/", nil),
             ("https://claude.ai/chat/99887766-aaaa", "99887766-aaaa"),
+            ("https://claude.ai/project/proj-uuid-1/chat/99887766-bbbb", "99887766-bbbb"),
+            ("https://www.claude.ai/project/proj-uuid-1/chat/99887766-cccc#:~:text=hello", "99887766-cccc"),
+            ("https://claude.ai/project/proj-uuid-1", nil),
             ("https://claude.ai/new", nil),
             ("https://gemini.google.com/app/abcdef0123456789", "abcdef0123456789"),
             ("https://gemini.google.com/u/1/app/abcdef0123456789", "abcdef0123456789"),
@@ -515,10 +518,14 @@ struct ProvenanceLeadAndSourceLocatorTests {
             if case .failed = coord.cardDetailState(for: "server-flushed-1") { break }
             try await Task.sleep(for: .milliseconds(10))
         }
-        guard case .failed = coord.cardDetailState(for: "server-flushed-1") else {
+        guard case .failed(let partialOn502, _) = coord.cardDetailState(for: "server-flushed-1") else {
             Issue.record("Expected failed state when /comments returns HTTP 502")
             return
         }
+        #expect(partialOn502?.context?.sessionOpening == "Initial design goal")
+        #expect(partialOn502?.notes.map(\.content) == ["Local note body"])
+        #expect(localStore.loadNotes(for: offlineID).isEmpty)
+        #expect(localStore.loadNotes(for: "server-flushed-1").map(\.content) == ["Local note body"])
 
         shouldFailComments.withLock { $0 = false }
         coord.reloadCardDetail(id: "server-flushed-1")
@@ -532,6 +539,7 @@ struct ProvenanceLeadAndSourceLocatorTests {
         }
         #expect(remoteDetail.isCompleteFromServer)
         #expect(remoteDetail.context == remoteCtx)
+        #expect(remoteDetail.notes.map(\.content) == ["Local note body"])
 
         let countBeforeReopen = ProvenanceMockURLProtocol.recordedPaths(suiteID: suiteID)
             .filter { $0 == "GET /api/memos/server-flushed-1/comments" }.count
@@ -542,8 +550,258 @@ struct ProvenanceLeadAndSourceLocatorTests {
             .filter { $0 == "GET /api/memos/server-flushed-1/comments" }.count
         #expect(countAfterReopen == countBeforeReopen)
 
+        ProvenanceMockURLProtocol.register(suiteID: suiteID) { _ in
+            throw URLError(.notConnectedToInternet)
+        }
+        await coord.refresh()
+        #expect(coord.isErrorBanner)
+        #expect(coord.inspectedCardID == "server-flushed-1")
+        guard case .loaded(let preservedAfterDrop) = coord.cardDetailState(for: "server-flushed-1") else {
+            Issue.record("Expected network drop during refresh to preserve loaded card detail")
+            return
+        }
+        #expect(preservedAfterDrop == remoteDetail)
+
+        ProvenanceMockURLProtocol.register(suiteID: suiteID) { req in
+            if req.httpMethod == "DELETE" {
+                return (200, Data("{}".utf8))
+            }
+            return (200, Data("{\"memos\":[]}".utf8))
+        }
         await coord.requestDeleteCards(ids: ["server-flushed-1"], bypassConfirmation: true)
         #expect(coord.inspectedCardID == nil)
         #expect(coord.cardDetailState(for: "server-flushed-1") == .idle)
+        #expect(localStore.loadNotes(for: "server-flushed-1").isEmpty)
+    }
+
+    @Test("Truncated or unclosed Markdown code fences close cleanly without swallowing subsequent sections or turns")
+    func truncatedAndUnclosedCodeFencesRoundTripCleanly() throws {
+        let longFencedOpening = "Setup:\n```swift\n" + String(repeating: "let value = 42\n", count: 30) + "```\nTail"
+        let longFencedTurn = "Script:\n~~~bash\n" + String(repeating: "echo step\n", count: 100) + "~~~\nDone"
+        let sliced = try #require(ConversationContextSlicer.slice(
+            selectedText: "Final Chinese summary 你好世界",
+            messages: [
+                .init(role: .user, matchText: longFencedOpening),
+                .init(role: .assistant, matchText: longFencedTurn),
+                .init(role: .user, matchText: "Summarize in Chinese"),
+                .init(role: .assistant, matchText: "Final Chinese summary 你好世界")
+            ],
+            anchor: .uniqueSubstring,
+            sessionTitle: "Truncation Fence Safety",
+            sessionID: "sess-trunc-fence"
+        ))
+        #expect(sliced.sessionOpening?.hasSuffix("…\n```") == true)
+        let wire = sliced.formattedCommentMarkdown()
+        let reparsed = try #require(MemosWireFormat.parseContextComment(wire))
+        #expect(reparsed == sliced)
+        #expect(reparsed.recentTurns.count == 4)
+        #expect(reparsed.recentTurns.last?.text == "Final Chinese summary 你好世界")
+
+        let streamInterrupted = CaptureContext(
+            sessionTitle: "Interrupted Stream",
+            sessionID: "sess-interrupted",
+            lead: .sessionOpening("````markdown\n```python\nunclosed nested fence"),
+            prompt: "```ts\nconst broken = true;",
+            recentTurns: [
+                ConversationTurn(role: "User", text: "```ts\nconst broken = true;"),
+                ConversationTurn(role: "Assistant", text: "~~~sh\ncurl -s https://example.com"),
+                ConversationTurn(role: "User", text: "Did all turns survive?"),
+                ConversationTurn(role: "Assistant", text: "Yes, every turn survived.")
+            ]
+        )
+        let interruptedWire = streamInterrupted.formattedCommentMarkdown()
+        let parsedInterrupted = try #require(MemosWireFormat.parseContextComment(interruptedWire))
+        #expect(parsedInterrupted.sessionOpening?.hasSuffix("\n````") == true)
+        #expect(parsedInterrupted.prompt.hasSuffix("\n```"))
+        #expect(parsedInterrupted.recentTurns.count == 4)
+        #expect(parsedInterrupted.recentTurns[2].text == "Did all turns survive?")
+        #expect(parsedInterrupted.recentTurns[3].text == "Yes, every turn survived.")
+    }
+
+    @Test("Multi-line Prompt lines starting with Session ID or Session Title never hijack headers or drop prompt lines")
+    func multiLinePromptDoesNotHijackSessionHeaders() throws {
+        let promptWithHeaderLookalikes = """
+        Investigate this crash log:
+        Session ID: hijacked-session-999
+        Session Title: Hijacked Session Title
+        Final line of user prompt.
+        """
+        let withExplicitHeaders = CaptureContext(
+            sessionTitle: "Real Title",
+            sessionID: "real-session-123",
+            lead: .sessionOpening("Initial question"),
+            prompt: promptWithHeaderLookalikes,
+            recentTurns: [ConversationTurn(role: "User", text: promptWithHeaderLookalikes)]
+        )
+        let parsedWithHeaders = try #require(MemosWireFormat.parseContextComment(withExplicitHeaders.formattedCommentMarkdown()))
+        #expect(parsedWithHeaders.sessionTitle == "Real Title")
+        #expect(parsedWithHeaders.sessionID == "real-session-123")
+        #expect(parsedWithHeaders.prompt == promptWithHeaderLookalikes)
+
+        let withoutPriorSessionHeaders = CaptureContext(
+            sessionTitle: "",
+            sessionID: nil,
+            prompt: promptWithHeaderLookalikes
+        )
+        let parsedWithoutHeaders = try #require(MemosWireFormat.parseContextComment(withoutPriorSessionHeaders.formattedCommentMarkdown()))
+        #expect(parsedWithoutHeaders.sessionTitle.isEmpty)
+        #expect(parsedWithoutHeaders.sessionID == nil)
+        #expect(parsedWithoutHeaders.prompt == promptWithHeaderLookalikes)
+    }
+
+    @Test("MemosWireFormat escapes and unescapes backslashes and brackets in sourceTitle without link corruption")
+    func backslashAndBracketSourceTitleRoundTrip() throws {
+        let now = Date(timeIntervalSince1970: 1_763_300_000)
+        let url = "https://claude.ai/project/proj-42/chat/sess-99#:~:text= Sendable".replacingOccurrences(of: " ", with: "%20")
+        let trickyTitles = [
+            #"C:\Users\dev\workspace\"#,
+            #" inject\](https://evil.example)tail"#.trimmingCharacters(in: .whitespaces),
+            #"\[foo\]"#,
+            #"\\[bar\\]"#,
+            #"Windows\Path\[v1\]\"#
+        ]
+        for title in trickyTitles {
+            let raw = try MemosWireFormat.formatRawMemoContent(
+                verbatimText: "Body",
+                sourcePlatform: "claude",
+                sourceTitle: title,
+                sourceURL: url,
+                capturedAt: now,
+                hasContext: false
+            )
+            let card = try #require(MemosWireFormat.parseMemo(
+                id: "rw-bs",
+                rawContent: raw,
+                createdAt: now,
+                now: now
+            ))
+            #expect(card.sourceTitle == title)
+            #expect(card.sourceURL == url)
+            #expect(card.sourceLocator?.sessionID == "sess-99")
+        }
+    }
+
+    @Test("Filter reconciliation closes hidden inspected cards, targetActionCardIDs prioritizes visible inspectedCard, and LocalNotesStore remaps IDs")
+    @MainActor
+    func filterReconciliationTargetCardSafetyAndNoteIDRemap() async throws {
+        let dir = try makeTestDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let suiteID = UUID().uuidString.lowercased()
+        defer { ProvenanceMockURLProtocol.unregister(suiteID: suiteID) }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let notesStore = LocalNotesStore(fileURL: paths.localNotesFileURL)
+        let t0 = Date(timeIntervalSince1970: 1_763_300_000)
+        try notesStore.appendNote(SnippetNote(id: "n-shared", author: "user", content: "Updated", createdAt: t0.addingTimeInterval(5)), for: "rw-old")
+        try notesStore.appendNote(SnippetNote(id: "n-old-only", author: "agent", content: "Offline note", createdAt: t0.addingTimeInterval(1)), for: "rw-old")
+        try notesStore.appendNote(SnippetNote(id: "n-shared", author: "user", content: "Stale", createdAt: t0), for: "rw-new")
+        try notesStore.appendNote(SnippetNote(id: "n-new-only", author: "agent", content: "Remote cache note", createdAt: t0.addingTimeInterval(10)), for: "rw-new")
+
+        try notesStore.remapCardID(from: "rw-old", to: "rw-new")
+        try notesStore.remapCardID(from: "rw-old", to: "rw-new")
+        #expect(notesStore.loadNotes(for: "rw-old").isEmpty)
+        #expect(notesStore.loadNotes(for: "rw-new").map(\.id) == ["n-old-only", "n-shared", "n-new-only"])
+        #expect(notesStore.loadNotes(for: "rw-new").first(where: { $0.id == "n-shared" })?.content == "Updated")
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ProvenanceMockURLProtocol.self]
+        let memosClient = MemosClient(session: URLSession(configuration: config))
+        let nowISO = MemosWireFormat.formatISO8601UTC(Date())
+        let readyAlpha = "#rewind/ready #source/chatgpt\n\n> **Title:** Alpha Ready\n\nAlpha body"
+        let pendingBeta = "#rewind/pending #source/claude\n\nBeta pending body"
+
+        ProvenanceMockURLProtocol.register(suiteID: suiteID) { req in
+            let path = req.url?.path ?? ""
+            if req.httpMethod == "GET" && path == "/api/memos" {
+                let memos = [
+                    MemoWireDTO(name: "memos/rw-alpha", content: readyAlpha, createTime: nowISO),
+                    MemoWireDTO(name: "memos/rw-beta", content: pendingBeta, createTime: nowISO)
+                ]
+                return (200, try JSONEncoder().encode(["memos": memos]))
+            }
+            if req.httpMethod == "POST" && path == "/api/memos" {
+                let queryItems = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                let memoID = queryItems.first(where: { $0.name == "memoId" })?.value ?? "rw-same"
+                let dto = MemoWireDTO(name: "memos/\(memoID)", content: pendingBeta, createTime: nowISO)
+                return (200, try JSONEncoder().encode(dto))
+            }
+            return (200, Data("{\"memos\":[]}".utf8))
+        }
+
+        let selection = CapturedSelection(
+            text: "Same ID offline-to-online clip",
+            bundleIdentifier: "com.apple.Notes",
+            appName: "Notes"
+        )
+        let coord = try AppCoordinator(
+            paths: paths,
+            environment: [
+                StoragePaths.qaEnvironmentKey: "1",
+                KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1",
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).provenance.mock.local",
+                StoragePaths.memosTokenEnvironmentKey: "qa-filter-token"
+            ],
+            memosClient: memosClient,
+            capturer: FixedSelectionCapturer(selection: selection),
+            language: .en
+        )
+
+        await coord.refresh()
+        #expect(coord.filteredCards.map(\.id) == ["rw-alpha", "rw-beta"])
+
+        coord.toggleCardPreview(id: "rw-beta")
+        coord.focusedCardID = "rw-alpha"
+        #expect(coord.inspectedCardID == "rw-beta")
+        #expect(coord.targetActionCardIDs == ["rw-beta"])
+
+        coord.toggleFocusedCardPreview()
+        #expect(coord.inspectedCardID == nil)
+
+        coord.toggleCardPreview(id: "rw-beta")
+        #expect(coord.inspectedCard?.id == "rw-beta")
+
+        coord.statusFilter = .ready
+        #expect(coord.inspectedCardID == nil)
+        #expect(coord.inspectedCard == nil)
+        #expect(coord.targetActionCardIDs == ["rw-alpha"])
+
+        coord.statusFilter = .all
+        coord.toggleCardPreview(id: "rw-alpha")
+        #expect(coord.inspectedCard?.id == "rw-alpha")
+
+        coord.searchText = "Beta pending"
+        #expect(coord.inspectedCardID == nil)
+        #expect(coord.inspectedCard == nil)
+        #expect(coord.targetActionCardIDs == ["rw-beta"])
+        coord.searchText = ""
+
+        coord.environment.removeValue(forKey: StoragePaths.memosURLEnvironmentKey)
+        let queued = await coord.captureSelection()
+        guard case .queuedOffline(let sameClipID) = queued else {
+            Issue.record("Expected offline capture")
+            return
+        }
+        coord.checkedCardIDs.removeAll()
+        coord.toggleCardPreview(id: sameClipID)
+        guard case .loaded(let localPendingDetail) = coord.cardDetailState(for: sameClipID) else {
+            Issue.record("Expected local pending detail")
+            return
+        }
+        #expect(!localPendingDetail.isCompleteFromServer)
+
+        coord.environment[StoragePaths.memosURLEnvironmentKey] = "https://\(suiteID).provenance.mock.local"
+        _ = await coord.captureSelection()
+        for _ in 0..<50 {
+            if case .loaded(let d) = coord.cardDetailState(for: sameClipID), d.isCompleteFromServer { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard case .loaded(let upgradedSameIDDetail) = coord.cardDetailState(for: sameClipID) else {
+            Issue.record("Expected inspected card with unchanged ID to upgrade after flush")
+            return
+        }
+        #expect(upgradedSameIDDetail.isCompleteFromServer)
     }
 }

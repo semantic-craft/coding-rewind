@@ -651,4 +651,127 @@ extension AppShortcutsTests {
         #expect(harness.panel.contentView?.subviews.isEmpty == true)
         #expect(weakHostedView2 == nil)
     }
+
+    @Test func quickPeekHUDLongSingleTurnDeduplicationStateResetAndFilterUnmount() async throws {
+        let harness = try HUDInspectorHarness.make()
+        defer { harness.tearDown() }
+
+        let now = Date()
+        let nowISO = MemosWireFormat.formatISO8601UTC(now)
+        let longPrompt = "Single-turn architecture prompt: " + String(repeating: "a", count: 380) + " unique-tail-420"
+        let truncatedOpening = String(longPrompt.prefix(300)) + "…"
+        let longSingleCtx = CaptureContext(
+            sessionTitle: "Claude Project Chat",
+            sessionID: "claude-proj-chat-7",
+            lead: .sessionOpening(truncatedOpening),
+            prompt: longPrompt,
+            recentTurns: [
+                ConversationTurn(role: "User", text: longPrompt),
+                ConversationTurn(role: "Assistant", text: "Single turn detailed answer")
+            ]
+        )
+
+        let fencedLongPrompt = "Code review:\n```swift\n" + String(repeating: "let item = 1\n", count: 28) + "```\nEnd"
+        let fencedTruncatedOpening = MemosWireFormat.closeUnbalancedCodeFence(String(fencedLongPrompt.prefix(300)) + "…")
+        let fencedSingleCtx = CaptureContext(
+            sessionTitle: "Fenced Single",
+            sessionID: "claude-fenced-1",
+            lead: .sessionOpening(fencedTruncatedOpening),
+            prompt: fencedLongPrompt,
+            recentTurns: [ConversationTurn(role: "User", text: fencedLongPrompt)]
+        )
+        #expect(HUDCardInspectorView.shouldSuppressSessionOpening(fencedTruncatedOpening, context: fencedSingleCtx))
+
+        let multiTurnSamePrefixCtx = CaptureContext(
+            sessionTitle: "Multi Turn",
+            sessionID: "multi-turn-2",
+            lead: .sessionOpening(truncatedOpening),
+            prompt: longPrompt + " follow-up",
+            recentTurns: [
+                ConversationTurn(role: "User", text: longPrompt),
+                ConversationTurn(role: "Assistant", text: "First reply"),
+                ConversationTurn(role: "User", text: longPrompt + " follow-up"),
+                ConversationTurn(role: "Assistant", text: "Distinct multi-turn reply marker")
+            ]
+        )
+
+        let singleRaw = try MemosWireFormat.formatRawMemoContent(
+            verbatimText: "Single turn detailed answer",
+            sourcePlatform: "claude",
+            sourceTitle: "Claude Project",
+            sourceURL: "https://claude.ai/project/proj-alpha/chat/claude-proj-chat-7",
+            capturedAt: now,
+            hasContext: true
+        )
+        let multiRaw = "#rewind/ready #source/chatgpt\n\n> **Title:** Ready Multi\n\nDistinct multi-turn excerpt"
+
+        HUDInspectorMockURLProtocol.setHandler(suiteID: harness.suiteID) { req in
+            let path = req.url?.path ?? ""
+            if req.httpMethod == "GET" && path == "/api/memos" {
+                let memos = [
+                    MemoWireDTO(name: "memos/rw-long-single", content: singleRaw, createTime: nowISO),
+                    MemoWireDTO(name: "memos/rw-multi", content: multiRaw, createTime: MemosWireFormat.formatISO8601UTC(now.addingTimeInterval(-5)))
+                ]
+                return (200, try JSONEncoder().encode(["memos": memos]))
+            }
+            if req.httpMethod == "GET" && path == "/api/memos/rw-long-single/comments" {
+                let comments = [
+                    MemoWireDTO(name: "memos/c-long-single", content: longSingleCtx.formattedCommentMarkdown(), createTime: nowISO)
+                ]
+                return (200, try JSONEncoder().encode(["memos": comments]))
+            }
+            if req.httpMethod == "GET" && path == "/api/memos/rw-multi/comments" {
+                let comments = [
+                    MemoWireDTO(name: "memos/c-multi", content: multiTurnSamePrefixCtx.formattedCommentMarkdown(), createTime: nowISO)
+                ]
+                return (200, try JSONEncoder().encode(["memos": comments]))
+            }
+            return (200, Data("{\"memos\":[]}".utf8))
+        }
+
+        await harness.coordinator.refresh()
+        autoreleasepool { harness.panel.presentAndFocus() }
+        try await settleInspectorLoop()
+
+        #expect(pressInspectorAXElement(identifier: "hud.card.preview.rw-long-single", in: harness.panel))
+        #expect(try await waitForInspector {
+            if case .loaded = harness.coordinator.cardDetailState(for: "rw-long-single") { return true }
+            return false
+        })
+        try await settleInspectorLoop()
+
+        #expect(containsInspectorAXText("claude-proj-chat-7", in: harness.panel))
+        #expect(containsInspectorAXText("unique-tail-420", in: harness.panel))
+        #expect(containsInspectorAXText("前序提问", in: harness.panel))
+        #expect(!containsInspectorAXText("会话开场", in: harness.panel))
+        #expect(containsInspectorAXText("Single turn detailed answer", in: harness.panel))
+
+        #expect(pressInspectorAXElement(identifier: "hud.inspector.toggleTurns", in: harness.panel))
+        try await settleInspectorLoop()
+
+        #expect(pressInspectorAXElement(identifier: "hud.card.preview.rw-multi", in: harness.panel))
+        #expect(try await waitForInspector {
+            if case .loaded = harness.coordinator.cardDetailState(for: "rw-multi") { return true }
+            return false
+        })
+        try await settleInspectorLoop()
+
+        #expect(containsInspectorAXText("会话开场", in: harness.panel))
+        #expect(containsInspectorAXText("Distinct multi-turn reply marker", in: harness.panel))
+
+        harness.coordinator.statusFilter = .pending
+        try await settleInspectorLoop()
+        #expect(harness.coordinator.inspectedCardID == nil)
+        #expect(!hasInspectorAXIdentifier("hud.inspector", in: harness.panel))
+
+        let cmdDelete = try makeInspectorKeyEvent(
+            windowNumber: harness.panel.windowNumber,
+            keyCode: 51,
+            characters: "\u{7f}",
+            modifiers: [.command]
+        )
+        #expect(autoreleasepool { harness.panel.performKeyEquivalent(with: cmdDelete) })
+        try await settleInspectorLoop()
+        #expect(harness.coordinator.pendingDeleteConfirmation?.cardIDs == ["rw-long-single"])
+    }
 }

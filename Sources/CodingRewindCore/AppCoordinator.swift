@@ -214,6 +214,7 @@ public final class AppCoordinator {
         didSet {
             if oldValue != searchText {
                 pendingDeleteConfirmation = nil
+                reconcileInspectedCardVisibility()
             }
         }
     }
@@ -221,6 +222,7 @@ public final class AppCoordinator {
         didSet {
             if oldValue != statusFilter {
                 pendingDeleteConfirmation = nil
+                reconcileInspectedCardVisibility()
             }
         }
     }
@@ -407,6 +409,9 @@ public final class AppCoordinator {
         let checked = checkedActionableCardIDs
         if !checked.isEmpty {
             return checked
+        }
+        if let inspected = inspectedCardID, filteredCards.contains(where: { $0.id == inspected }) {
+            return [inspected]
         }
         if let focused = focusedCardID, filteredCards.contains(where: { $0.id == focused }) {
             return [focused]
@@ -611,6 +616,7 @@ public final class AppCoordinator {
                     removeSupersededProvisionalCard(clientClipId: clientClipId, savedID: saved.id)
                     return .saved(cardID: saved.id, sourceTitle: sourceTitle)
                 }
+                inFlightCaptureEntries.removeValue(forKey: clientClipId)
                 deletedClipIDs.remove(saved.id)
                 archivedClipIDs.remove(saved.id)
                 clearPendingRemoteDelete(saved.id)
@@ -621,7 +627,14 @@ public final class AppCoordinator {
                 checkedCardIDs.remove(clientClipId)
                 checkedCardIDs.insert(saved.id)
                 focusedCardID = saved.id
+                if saved.id != clientClipId {
+                    try? LocalNotesStore(fileURL: paths.localNotesFileURL).remapCardID(from: clientClipId, to: saved.id)
+                }
                 remapCardDetailState(from: clientClipId, to: saved.id)
+                reconcileInspectedCardVisibility()
+                if inspectedCardID == saved.id, cachedCardDetails[saved.id]?.isCompleteFromServer != true {
+                    reloadCardDetail(id: saved.id)
+                }
                 setBanner(.savedClip(sourceTitle: sourceTitle), isError: false)
                 return .saved(cardID: saved.id, sourceTitle: sourceTitle)
             } catch {
@@ -664,7 +677,11 @@ public final class AppCoordinator {
                 focusedCardID = cards.first?.id
             }
             reconcilePendingDeleteConfirmation()
-            invalidateAndReconcileCardDetailsAfterRefresh()
+            reconcileInspectedCardVisibility()
+            pruneRemovedCardDetails()
+            if let currentInspected = inspectedCardID {
+                reloadCardDetail(id: currentInspected)
+            }
             return
         }
         do {
@@ -690,7 +707,8 @@ public final class AppCoordinator {
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: cards, pendingOutbox: activeOutboxEntries())
             reconcilePendingDeleteConfirmation()
-            invalidateAndReconcileCardDetailsAfterRefresh()
+            reconcileInspectedCardVisibility()
+            pruneRemovedCardDetails()
             setBanner(.syncFailedShowingLocal, isError: true)
         }
     }
@@ -791,9 +809,15 @@ public final class AppCoordinator {
             reconcilePendingDeleteConfirmation()
             return
         }
+        let localNotesStore = LocalNotesStore(fileURL: paths.localNotesFileURL)
         var remappedIDs: [String: String] = [:]
+        var flushedTargetIDs: Set<String> = []
         for item in activeFlushed {
             remappedIDs[item.clientClipId] = item.card.id
+            flushedTargetIDs.insert(item.card.id)
+            if item.clientClipId != item.card.id {
+                try? localNotesStore.remapCardID(from: item.clientClipId, to: item.card.id)
+            }
             if checkedCardIDs.remove(item.clientClipId) != nil {
                 checkedCardIDs.insert(item.card.id)
             }
@@ -818,6 +842,12 @@ public final class AppCoordinator {
             focusedCardID = cards.first?.id
         }
         reconcilePendingDeleteConfirmation(idRemapping: remappedIDs)
+        reconcileInspectedCardVisibility()
+        if let currentInspected = inspectedCardID,
+           flushedTargetIDs.contains(currentInspected),
+           cachedCardDetails[currentInspected]?.isCompleteFromServer != true {
+            reloadCardDetail(id: currentInspected)
+        }
     }
 
     private func canPublishRefresh(_ ticket: RefreshTicket) -> Bool {
@@ -1079,6 +1109,7 @@ public final class AppCoordinator {
 
                 try outbox.removeEntry(clientClipId: card.id)
                 _ = try? hotCache.removeCard(id: card.id)
+                _ = try? LocalNotesStore(fileURL: paths.localNotesFileURL).removeNotes(for: card.id)
                 deletedClipIDs.insert(card.id)
                 removeCardsFromCoordinatorState([card.id])
                 deletedCount += 1
@@ -1311,7 +1342,7 @@ public final class AppCoordinator {
 
     public var inspectedCard: RewindCard? {
         guard let inspectedCardID else { return nil }
-        return cards.first(where: { $0.id == inspectedCardID })
+        return filteredCards.first(where: { $0.id == inspectedCardID })
     }
 
     public func cardDetailState(for id: String) -> CardDetailLoadState {
@@ -1323,7 +1354,7 @@ public final class AppCoordinator {
             closeCardPreview()
             return
         }
-        guard cards.contains(where: { $0.id == id }) else { return }
+        guard filteredCards.contains(where: { $0.id == id }) else { return }
         focusedCardID = id
         inspectedCardID = id
         if let cached = cachedCardDetails[id], cached.isCompleteFromServer {
@@ -1335,18 +1366,18 @@ public final class AppCoordinator {
     }
 
     public func toggleFocusedCardPreview() {
+        if inspectedCardID != nil {
+            closeCardPreview()
+            return
+        }
         let targetID: String?
         if let focused = focusedCardID, filteredCards.contains(where: { $0.id == focused }) {
             targetID = focused
         } else {
-            targetID = filteredCards.first?.id ?? inspectedCardID
+            targetID = filteredCards.first?.id
         }
         guard let targetID else { return }
-        if inspectedCardID == targetID {
-            closeCardPreview()
-        } else {
-            toggleCardPreview(id: targetID)
-        }
+        toggleCardPreview(id: targetID)
     }
 
     public func reloadCardDetail(id: String) {
@@ -1357,15 +1388,17 @@ public final class AppCoordinator {
             ?? outbox.loadEntries().first(where: { $0.clientClipId == id })
         let localContext = outboxEntry?.commentContent.flatMap(MemosWireFormat.parseContextComment)
         let localNotes = LocalNotesStore(fileURL: paths.localNotesFileURL).loadNotes(for: id)
-        let hasLocalData = localContext != nil || !localNotes.isEmpty
+        let existingCached = cachedCardDetails[id]
+        let mergedContext = localContext ?? existingCached?.context
+        let mergedNotes = LocalNotesStore.sortAndDeduplicate((existingCached?.notes ?? []) + localNotes)
 
         let baseURL = paths.resolveMemosBaseURL(environment: environment)
         let token = KeychainTokenStore.resolveToken(environment: environment)
 
         if card.isOfflinePending || outboxEntry != nil || baseURL == nil || token == nil {
             let localDetail = CardDetail(
-                context: localContext,
-                notes: localNotes,
+                context: mergedContext,
+                notes: mergedNotes,
                 isCompleteFromServer: false
             )
             cachedCardDetails[id] = localDetail
@@ -1374,9 +1407,16 @@ public final class AppCoordinator {
         }
 
         guard let baseURL, let token else { return }
-        let partial: CardDetail? = hasLocalData
-            ? CardDetail(context: localContext, notes: localNotes, isCompleteFromServer: false)
-            : cachedCardDetails[id]
+        let partial: CardDetail?
+        if existingCached != nil || mergedContext != nil || !mergedNotes.isEmpty {
+            partial = CardDetail(
+                context: mergedContext,
+                notes: mergedNotes,
+                isCompleteFromServer: false
+            )
+        } else {
+            partial = nil
+        }
         cardDetailStates[id] = .loading(partial: partial)
 
         activeDetailTaskGeneration &+= 1
@@ -1456,25 +1496,38 @@ public final class AppCoordinator {
         }
     }
 
-    private func invalidateAndReconcileCardDetailsAfterRefresh() {
-        if !cachedCardDetails.isEmpty {
-            cachedCardDetails.removeAll()
-        }
-        guard let currentInspected = inspectedCardID else {
-            if !cardDetailStates.isEmpty {
-                cardDetailStates.removeAll()
-            }
-            return
-        }
-        let validIDs = Set(cards.map(\.id))
-        for key in Array(cardDetailStates.keys) where key != currentInspected && !validIDs.contains(key) {
-            cardDetailStates.removeValue(forKey: key)
-        }
-        if validIDs.contains(currentInspected) {
-            reloadCardDetail(id: currentInspected)
-        } else {
+    private func reconcileInspectedCardVisibility() {
+        guard let currentInspected = inspectedCardID else { return }
+        if !filteredCards.contains(where: { $0.id == currentInspected }) {
             closeCardPreview()
         }
+    }
+
+    private func pruneRemovedCardDetails() {
+        let validIDs = Set(cards.map(\.id))
+        for key in Array(cachedCardDetails.keys) where !validIDs.contains(key) {
+            cachedCardDetails.removeValue(forKey: key)
+        }
+        for key in Array(cardDetailStates.keys) where !validIDs.contains(key) {
+            cardDetailStates.removeValue(forKey: key)
+        }
+    }
+
+    private func invalidateAndReconcileCardDetailsAfterRefresh() {
+        reconcileInspectedCardVisibility()
+        pruneRemovedCardDetails()
+        guard let currentInspected = inspectedCardID else {
+            cachedCardDetails.removeAll()
+            cardDetailStates.removeAll()
+            return
+        }
+        for key in Array(cachedCardDetails.keys) where key != currentInspected {
+            cachedCardDetails.removeValue(forKey: key)
+        }
+        for key in Array(cardDetailStates.keys) where key != currentInspected {
+            cardDetailStates.removeValue(forKey: key)
+        }
+        reloadCardDetail(id: currentInspected)
     }
 
     public var isAIAccessManagedByEnvironment: Bool {
