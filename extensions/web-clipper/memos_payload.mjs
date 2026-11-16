@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import "./i18n.js";
+import { closeUnbalancedCodeFence } from "./extractors.mjs";
 
 export const CLIP_ID_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$/;
 export const MAX_OUTBOX_ITEMS = 50;
@@ -58,7 +59,15 @@ export function normalizePlatform(rawPlatform) {
 }
 
 export function hasClipContext(clip = {}) {
+  const hasExplicitPlatform =
+    clip && clip.sourcePlatform !== undefined && clip.sourcePlatform !== null && String(clip.sourcePlatform).trim() !== "";
+  const platform = hasExplicitPlatform ? normalizePlatform(clip.sourcePlatform) : null;
+  const allowSessionOpening = platform === null || platform !== "web";
+  const allowPageLead = platform === null || platform === "web";
   return Boolean(
+    (clip.sessionId && String(clip.sessionId).trim()) ||
+    (allowSessionOpening && clip.sessionOpening && String(clip.sessionOpening).trim()) ||
+    (allowPageLead && clip.pageLead && String(clip.pageLead).trim()) ||
     (clip.prompt && String(clip.prompt).trim()) ||
     (clip.recentTurns && String(clip.recentTurns).trim())
   );
@@ -69,7 +78,10 @@ function cleanSingleLine(value) {
 }
 
 function escapeMarkdownLinkLabel(label) {
-  return cleanSingleLine(label).replace(/\[/g, "\\[").replace(/\]/g, "\\]");
+  return cleanSingleLine(label)
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
 }
 
 const ALLOWED_SOURCE_PROTOCOLS = new Set(["http:", "https:", "file:", "conversation:"]);
@@ -120,12 +132,17 @@ export function buildMemosWirePayloads(clip, options = {}) {
 
   const platform = normalizePlatform(clip?.sourcePlatform);
   const sessionTitle = cleanSingleLine(clip?.sessionTitle);
-  const prompt = String(clip?.prompt || "").trim();
+  const sessionId = cleanSingleLine(clip?.sessionId);
+  const prompt = closeUnbalancedCodeFence(String(clip?.prompt || "").trim());
+  const rawSessionOpening = String(clip?.sessionOpening || "").trim();
+  const rawPageLead = String(clip?.pageLead || "").trim();
+  const pageLead = platform === "web" ? closeUnbalancedCodeFence(rawPageLead) : "";
+  const sessionOpening = platform === "web" ? "" : closeUnbalancedCodeFence(rawSessionOpening);
   const recentTurns = String(clip?.recentTurns || "").trim();
   const sourceUrl = sanitizeMarkdownUrl(clip?.sourceUrl);
   const createdAtIso = formatUtcIso(options.createdAt ?? clip?.createdAt);
 
-  const hasContext = hasClipContext({ prompt, recentTurns });
+  const hasContext = hasClipContext({ sessionId, sessionOpening, pageLead, prompt, recentTurns });
   const tagsLine = hasContext
     ? `#rewind/pending #rewind/has-ctx #source/${platform}`
     : `#rewind/pending #source/${platform}`;
@@ -143,12 +160,21 @@ export function buildMemosWirePayloads(clip, options = {}) {
     visibility: "PRIVATE"
   };
 
-  const commentBody = hasContext
-    ? {
-        content: `<!-- rewind-context-v1 -->\nSession Title: ${sessionTitle}\nPrompt: ${prompt}\n\n### Recent Turns\n${recentTurns}`,
-        visibility: "PRIVATE"
-      }
-    : null;
+  let commentBody = null;
+  if (hasContext) {
+    const headerLines = ["<!-- rewind-context-v1 -->"];
+    if (sessionTitle) headerLines.push(`Session Title: ${sessionTitle}`);
+    if (sessionId) headerLines.push(`Session ID: ${sessionId}`);
+    if (prompt) headerLines.push(`Prompt: ${prompt}`);
+    const sections = [headerLines.join("\n")];
+    if (sessionOpening) sections.push(`### Session Opening\n${sessionOpening}`);
+    else if (pageLead) sections.push(`### Page Lead\n${pageLead}`);
+    if (recentTurns) sections.push(`### Recent Turns\n${recentTurns}`);
+    commentBody = {
+      content: sections.join("\n\n"),
+      visibility: "PRIVATE"
+    };
+  }
 
   return {
     clipId,

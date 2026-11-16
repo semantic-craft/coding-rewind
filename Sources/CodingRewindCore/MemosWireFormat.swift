@@ -171,6 +171,7 @@ public enum MemosWireFormat {
             .replacingOccurrences(of: "\n", with: " ")
         let effectiveTitle = singleLineTitle.trimmingCharacters(in: .whitespaces).isEmpty ? safePlatform : singleLineTitle
         let escapedTitle = effectiveTitle
+            .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "[", with: "\\[")
             .replacingOccurrences(of: "]", with: "\\]")
         let sanitizedURL = sourceURL.map(sanitizeMarkdownURL) ?? ""
@@ -235,9 +236,27 @@ public enum MemosWireFormat {
     }
 
     private static func unescapeMarkdownLinkLabel(_ label: String) -> String {
-        label
-            .replacingOccurrences(of: "\\[", with: "[")
-            .replacingOccurrences(of: "\\]", with: "]")
+        guard label.contains("\\") else { return label }
+        var result = String()
+        result.reserveCapacity(label.count)
+        var cursor = label.startIndex
+        while cursor < label.endIndex {
+            let ch = label[cursor]
+            if ch == "\\" {
+                let next = label.index(after: cursor)
+                if next < label.endIndex {
+                    let escaped = label[next]
+                    if escaped == "\\" || escaped == "[" || escaped == "]" {
+                        result.append(escaped)
+                        cursor = label.index(after: next)
+                        continue
+                    }
+                }
+            }
+            result.append(ch)
+            cursor = label.index(after: cursor)
+        }
+        return result
     }
 
     public static func formatRawMemoContent(
@@ -760,168 +779,7 @@ public enum MemosWireFormat {
         )
     }
 
-    private struct CodeFenceState {
-        let character: Character
-        let length: Int
-    }
-
-    private static func updateCodeFenceState(_ state: inout CodeFenceState?, line: Substring) {
-        var cursor = line.startIndex
-        var leadingSpaces = 0
-        while cursor < line.endIndex && line[cursor] == " " && leadingSpaces < 4 {
-            leadingSpaces += 1
-            cursor = line.index(after: cursor)
-        }
-        guard leadingSpaces <= 3, cursor < line.endIndex else { return }
-
-        let marker = line[cursor]
-        guard marker == "`" || marker == "~" else { return }
-
-        var markerCount = 0
-        while cursor < line.endIndex && line[cursor] == marker {
-            markerCount += 1
-            cursor = line.index(after: cursor)
-        }
-        guard markerCount >= 3 else { return }
-        let remainder = line[cursor...]
-
-        if let active = state {
-            if marker == active.character,
-               markerCount >= active.length,
-               remainder.allSatisfy({ $0 == " " || $0 == "\t" }) {
-                state = nil
-            }
-        } else {
-            if marker == "`" && remainder.contains("`") {
-                return
-            }
-            state = CodeFenceState(character: marker, length: markerCount)
-        }
-    }
-
-    public static func parseContextComment(_ rawComment: String) -> CaptureContext? {
-        let normalized = rawComment
-            .replacingOccurrences(of: "\0", with: "")
-            .replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-        let trimmedLeading = normalized.drop(while: { $0.isWhitespace || $0.isNewline })
-        guard trimmedLeading.hasPrefix(contextCommentMarker) else {
-            return nil
-        }
-
-        let afterMarkerLine: Substring
-        if let newlineIdx = trimmedLeading.firstIndex(of: "\n") {
-            afterMarkerLine = trimmedLeading[trimmedLeading.index(after: newlineIdx)...]
-        } else {
-            return nil
-        }
-
-        let lines = afterMarkerLine.split(separator: "\n", omittingEmptySubsequences: false)
-        var index = 0
-        var sessionTitle = ""
-
-        while index < lines.count && lines[index].allSatisfy({ $0 == " " || $0 == "\t" }) {
-            index += 1
-        }
-
-        if index < lines.count, lines[index].hasPrefix("Session Title:") {
-            sessionTitle = String(lines[index].dropFirst("Session Title:".count))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            index += 1
-        }
-
-        while index < lines.count && lines[index].allSatisfy({ $0 == " " || $0 == "\t" }) {
-            index += 1
-        }
-
-        var recentTurnsHeaderIndex: Int?
-        var promptFenceState: CodeFenceState?
-        for scanIdx in index..<lines.count {
-            let line = lines[scanIdx]
-            if scanIdx == index, line.hasPrefix("Prompt:") {
-                var remainder = line.dropFirst("Prompt:".count)
-                if remainder.first == " " {
-                    remainder = remainder.dropFirst()
-                }
-                updateCodeFenceState(&promptFenceState, line: remainder)
-                continue
-            }
-            if promptFenceState == nil, trimHorizontalWhitespace(line) == "### Recent Turns" {
-                recentTurnsHeaderIndex = scanIdx
-                break
-            }
-            updateCodeFenceState(&promptFenceState, line: line)
-        }
-
-        let promptEndIndex = recentTurnsHeaderIndex ?? lines.count
-        var promptLines = Array(lines[index..<promptEndIndex])
-
-        var prompt = ""
-        if let firstPromptLine = promptLines.first, firstPromptLine.hasPrefix("Prompt:") {
-            var remainder = firstPromptLine.dropFirst("Prompt:".count)
-            if remainder.first == " " {
-                remainder = remainder.dropFirst()
-            }
-            promptLines[0] = remainder
-            prompt = promptLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-
-        var recentTurns: [ConversationTurn] = []
-        if let headerIdx = recentTurnsHeaderIndex {
-            var currentRole: String?
-            var currentTurnLines: [Substring] = []
-            var turnFenceState: CodeFenceState?
-
-            func flushTurn() {
-                guard let role = currentRole else { return }
-                let text = currentTurnLines.joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
-                    recentTurns.append(ConversationTurn(role: role, text: text))
-                }
-                currentRole = nil
-                currentTurnLines.removeAll(keepingCapacity: true)
-            }
-
-            for turnLine in lines[(headerIdx + 1)...] {
-                if turnFenceState == nil, let (role, firstLineBody) = parseTurnHeader(turnLine) {
-                    flushTurn()
-                    currentRole = role
-                    currentTurnLines = [firstLineBody]
-                    updateCodeFenceState(&turnFenceState, line: firstLineBody)
-                } else {
-                    if currentRole != nil {
-                        currentTurnLines.append(turnLine)
-                    }
-                    updateCodeFenceState(&turnFenceState, line: turnLine)
-                }
-            }
-            flushTurn()
-        }
-
-        let context = CaptureContext(
-            sessionTitle: sessionTitle,
-            prompt: prompt,
-            recentTurns: recentTurns
-        )
-        return context.isEmpty ? nil : context
-    }
-
-    private static func parseTurnHeader(_ line: Substring) -> (role: String, body: Substring)? {
-        guard let colonIndex = line.firstIndex(of: ":") else { return nil }
-        let rawRole = line[..<colonIndex]
-        let lowered = rawRole.lowercased()
-        guard lowered == "user" || lowered == "assistant" else {
-            return nil
-        }
-        var remainder = line[line.index(after: colonIndex)...]
-        if remainder.first == " " {
-            remainder = remainder.dropFirst()
-        }
-        return (String(rawRole), remainder)
-    }
-
-    private static func nextLine(in text: String, from start: String.Index) -> (line: Substring, nextStart: String.Index)? {
+    static func nextLine(in text: String, from start: String.Index) -> (line: Substring, nextStart: String.Index)? {
         guard start < text.endIndex else { return nil }
         var end = start
         while end < text.endIndex {
@@ -934,11 +792,11 @@ public enum MemosWireFormat {
         return (text[start..<text.endIndex], text.endIndex)
     }
 
-    private static func isHorizontalBlank(_ text: Substring) -> Bool {
+    static func isHorizontalBlank(_ text: Substring) -> Bool {
         text.allSatisfy { $0 == " " || $0 == "\t" || $0 == "\r" }
     }
 
-    private static func trimHorizontalWhitespace(_ text: Substring) -> String {
+    static func trimHorizontalWhitespace(_ text: Substring) -> String {
         let isHorizontalSpace: (Character) -> Bool = { $0 == " " || $0 == "\t" || $0 == "\r" }
         guard let first = text.firstIndex(where: { !isHorizontalSpace($0) }),
               let last = text.lastIndex(where: { !isHorizontalSpace($0) }) else {

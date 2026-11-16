@@ -630,13 +630,6 @@ extension AppStrings {
         }
     }
 
-    static func viewSourceButton(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "查看来源 ↗"
-        case .en: return "Source ↗"
-        }
-    }
-
     static func archiveClipLabel(in language: AppLanguage) -> String {
         switch language {
         case .zhHans: return "归档片段"

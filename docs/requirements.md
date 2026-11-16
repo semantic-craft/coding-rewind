@@ -87,6 +87,7 @@
 | 极薄客户端与宿主协同 | 决定 | 2026-11-11 | macOS 端保持约三百五十行非激活毛玻璃菜单栏 HUD，网页端采用直连 Memos REST API 的 MV3 薄扩展，勾选卡片后经 `agentapi new-conversation` 与 `/rewind` 交回 Antigravity 完成场景 A 追问与场景 C 写稿 |
 | 单二进制 CLI 与领域 MCP 收敛 | 决定 | 2026-11-15 | 淘汰远端 41 个通用 Memos MCP 工具与 `memos-mcp-bridge.sh`，提供共用 `CodingRewindCore` 的单二进制 `coding-rewind`（CLI + 内嵌领域 `mcp` 子命令），支持按参数读取超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并替换 `servers.json` 接线 |
 | 向 AI 开放的三层写入与闭环入口 | 决定 | 2026-11-16 | 将 `coding-rewind mcp` 由 4 个领域工具扩展至 7 个（新增 `create_snippet`、`update_snippet_metadata`、`append_snippet_note`，绝不向 MCP 暴露物理删除），CLI 同步补齐 `create`、`update`、`note` 子命令；在“设置 → 插件与权限”新增“AI 接入与权限”分区（本地 MCP 状态、只读与读写权限开关、一键复制零明文 MCP JSON 配置）；`⌘Return` 接聊提示词携带卡片 ID 并在读写开启时引导宿主 AI 回写笔记或暂存新提纲 |
+| 来源开头留底、浮窗脉络抽屉与分平台回溯 | 决定 | 2026-11-16 | 不采用高权限打扰且不可检索的截图留底；AI 对话额外留存会话 ID 与首轮开场白（`Session Opening`，前 300 字），普通网页提取 `h1`、导语及正文开头数行（`Page Lead`）喂给 `enricher.py` 并生成 W3C `#:~:text=` 精确到句子的高亮回跳链接；浮窗内增设停靠式“脉络”预览抽屉（原地看完整原文、开头留底、提问与笔记），并以 `SourceLocator` 区分网页打开与 Antigravity 会话 ID 复制 |
 
 ## 已记录的产品方向
 

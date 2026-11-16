@@ -108,3 +108,13 @@
 | `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 参考 `MemoActionMenu.tsx` 区分状态流转归档与物理删除的入口分层，以及 `memo_service.proto` 的 `DeleteMemo` DELETE 接口契约 |
 | `p0deje/Maccy` | [p0deje/Maccy](https://github.com/p0deje/Maccy)，`MIT License` | 参考 `ConfirmationView.swift`、`Footer.swift` 与 `KeyChord.swift` 在非激活 `NSPanel` 中采用面板内确认条及修饰键直删而不弹系统模态窗的焦点保持模式 |
 | `raycast/extensions` | [raycast/extensions](https://github.com/raycast/extensions)，`MIT License` | 参考 `Action.Style.Destructive` 对高危操作视觉警示、确认提示及快捷键与常规归档动作分离的设计习惯 |
+
+## 2026-11-16 来源开头留底、文本片段锚点与浮窗脉络预览核查
+
+核查下列开源项目与开放标准在来源留底、精准段落回跳与浮窗内原地预览上的设计（均仅作机制参考或规范遵从，**零第三方代码复制**）：
+
+| 项目或规范 | 链接与核实许可 | 机制与设计参考（零代码复制） |
+| --- | --- | --- |
+| `obsidianmd/obsidian-clipper` 与 `kepano/defuddle` | [obsidian-clipper](https://github.com/obsidianmd/obsidian-clipper)（`MIT`）、[defuddle](https://github.com/kepano/defuddle)（`MIT`） | 参考以结构化页面导语（标题、描述、开头正文）搭配选区前后短文本锚点（`TextQuoteAnchor`）替代重型页面截图的轻量留底设计 |
+| `WICG/scroll-to-text-fragment` | [scroll-to-text-fragment](https://github.com/WICG/scroll-to-text-fragment)，W3C 社区组规范 | 遵循 URL Fragment Text Directives 标准语法 `#:~:text=[prefix-,]textStart[,textEnd][,-suffix]` 及词边界对齐、`%2D` 连字符转义与 `#hash:~:text=` 组合规则，使普通网页链接在现代浏览器中无需扩展即可直达原句高亮 |
+| `entireio/cli` 与 `daaain/claude-code-log` | [entireio/cli](https://github.com/entireio/cli)（`MIT`）、[claude-code-log](https://github.com/daaain/claude-code-log)（`MIT`） | 参考面向 Coding Agent 本地会话采用会话 UUID 与首轮开场提问（`Session Opening`）锁定全局任务意图，配合 `p0deje/Maccy` 的 `PreviewItemView` 思路在浮窗内提供两步渐进式脉络预览 |

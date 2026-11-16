@@ -633,6 +633,19 @@ public struct LocalNotesStore: Sendable {
         }
     }
 
+    public func remapCardID(from oldID: String, to newID: String) throws {
+        let normalizedOld = try MemosWireFormat.normalizeSnippetID(oldID)
+        let normalizedNew = try MemosWireFormat.normalizeSnippetID(newID)
+        guard normalizedOld != normalizedNew else { return }
+        try withFileLock {
+            var all = loadAll()
+            guard let oldNotes = all.removeValue(forKey: normalizedOld) else { return }
+            let existingNew = all[normalizedNew] ?? []
+            all[normalizedNew] = Self.sortAndDeduplicate(existingNew + oldNotes)
+            try writeAll(all)
+        }
+    }
+
     public static func sortAndDeduplicate(_ notes: [SnippetNote]) -> [SnippetNote] {
         var byID: [String: SnippetNote] = [:]
         for note in notes {

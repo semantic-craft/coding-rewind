@@ -173,7 +173,7 @@ class MiniNode {
   }
 
   get children() {
-    return this.childNodes.filter((c) => c.nodeType === ELEMENT_NODE);
+    return Array.from(this.childNodes || []).filter((c) => c.nodeType === ELEMENT_NODE);
   }
 
   appendChild(child) {
@@ -231,7 +231,7 @@ class MiniNode {
         }
         foundOther = true;
       }
-      for (const c of n.childNodes || []) {
+      for (const c of Array.from(n.childNodes || [])) {
         walk(c);
         if (result) return;
       }
@@ -252,20 +252,20 @@ class MiniNode {
   cloneNode(deep = false) {
     const copy = new MiniNode(this.nodeType, this.nodeName);
     if (deep) {
-      for (const c of this.childNodes) copy.appendChild(c.cloneNode(true));
+      for (const c of Array.from(this.childNodes || [])) copy.appendChild(c.cloneNode(true));
     }
     return copy;
   }
 
   get textContent() {
-    return Array.from(this.childNodes, (c) => c.textContent).join("");
+    return Array.from(this.childNodes || [], (c) => c.textContent).join("");
   }
 
   querySelectorAll(selectorList) {
     const chains = splitSelectorGroup(selectorList).map(splitSelectorChain).filter((c) => c.length > 0);
     const matches = [];
     const visit = (node) => {
-      for (const child of node.childNodes) {
+      for (const child of Array.from(node.childNodes || [])) {
         if (child.nodeType === ELEMENT_NODE) {
           if (chains.some((chain) => matchesSelectorChain(child, chain))) {
             matches.push(child);
@@ -373,7 +373,7 @@ class MiniElement extends MiniNode {
     copy._readOnly = this._readOnly;
     copy._disabled = this._disabled;
     if (deep) {
-      for (const c of this.childNodes) copy.appendChild(c.cloneNode(true));
+      for (const c of Array.from(this.childNodes || [])) copy.appendChild(c.cloneNode(true));
     }
     return copy;
   }
@@ -454,7 +454,7 @@ export function parseHtmlDocument(html, { url = "" } = {}) {
     },
     cloneContents() {
       const frag = new MiniNode(DOCUMENT_FRAGMENT_NODE, "#document-fragment");
-      for (const child of targetNode.childNodes || []) {
+      for (const child of Array.from(targetNode.childNodes || [])) {
         frag.appendChild(child.cloneNode(true));
       }
       if ((targetNode.childNodes || []).length === 0 && targetNode.nodeType === TEXT_NODE) {

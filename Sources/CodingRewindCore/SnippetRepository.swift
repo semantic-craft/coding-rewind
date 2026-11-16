@@ -511,31 +511,17 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             throw RewindError.snippetNotFound(normalizedID)
         }
 
-        var conversationContext: CaptureContext?
-        var collectedNotes = localNotesStore.loadNotes(for: normalizedID)
-        if let comments = try? await client.listMemoComments(id: normalizedID, baseURL: baseURL, token: token) {
-            for comment in comments {
-                if includeContext, conversationContext == nil,
-                   let parsedCtx = MemosWireFormat.parseContextComment(comment.content) {
-                    conversationContext = parsedCtx
-                } else {
-                    let fallbackDate = comment.createTime.flatMap(MemosWireFormat.parseISO8601)
-                        ?? comment.updateTime.flatMap(MemosWireFormat.parseISO8601)
-                        ?? now
-                    if let parsedNote = MemosWireFormat.parseNoteComment(
-                        id: comment.name,
-                        rawComment: comment.content,
-                        fallbackCreatedAt: fallbackDate
-                    ) {
-                        collectedNotes.append(parsedNote)
-                    }
-                }
-            }
-        }
-        let sortedNotes = LocalNotesStore.sortAndDeduplicate(collectedNotes)
+        let localNotes = localNotesStore.loadNotes(for: normalizedID)
+        let remoteComments = (try? await client.listMemoComments(id: normalizedID, baseURL: baseURL, token: token)) ?? []
+        let parsedComments = MemosWireFormat.parseMemoComments(
+            remoteComments,
+            localNotes: localNotes,
+            includeContext: includeContext,
+            now: now
+        )
         return baseRecord.withAttachments(
-            conversationContext: includeContext ? conversationContext : nil,
-            notes: sortedNotes
+            conversationContext: parsedComments.context,
+            notes: parsedComments.notes
         )
     }
 
@@ -635,8 +621,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             throw RewindError.missingCredentials
         }
 
+        var targetID = normalizedID
         if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
-            _ = try await client.createClip(
+            let saved = try await client.createClip(
                 clientClipId: pendingEntry.clientClipId,
                 content: pendingEntry.memoContent,
                 contextComment: pendingEntry.commentContent,
@@ -644,13 +631,19 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 token: token,
                 fallbackCreatedAt: pendingEntry.createdAt
             )
+            _ = try? outbox.removeEntry(clientClipId: normalizedID)
+            if saved.id != normalizedID {
+                try? localNotesStore.remapCardID(from: normalizedID, to: saved.id)
+                _ = try? hotCache.removeCard(id: normalizedID)
+                targetID = saved.id
+            }
         }
 
-        let dto = try await client.getMemo(id: normalizedID, baseURL: baseURL, token: token)
+        let dto = try await client.getMemo(id: targetID, baseURL: baseURL, token: token)
         let createdAt = dto.createTime.flatMap(MemosWireFormat.parseISO8601)
             ?? dto.updateTime.flatMap(MemosWireFormat.parseISO8601)
             ?? now
-        let resolvedName = dto.name.isEmpty ? normalizedID : dto.name
+        let resolvedName = dto.name.isEmpty ? targetID : dto.name
 
         guard MemosWireFormat.parseSnippetRecord(
             id: resolvedName,
@@ -658,7 +651,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             createdAt: createdAt,
             dataOrigin: .remote
         ) != nil else {
-            throw RewindError.snippetNotFound(normalizedID)
+            throw RewindError.snippetNotFound(targetID)
         }
 
         let updatedContent = MemosWireFormat.updatingSnippetMetadata(
@@ -672,7 +665,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             archived: patch.archived
         )
         let patchedDTO = try await client.updateMemoContent(
-            id: normalizedID,
+            id: targetID,
             content: updatedContent,
             baseURL: baseURL,
             token: token
@@ -684,7 +677,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
         _ = try? outbox.removeEntry(clientClipId: normalizedID)
         if let activeCard = MemosWireFormat.parseMemo(
-            id: normalizedID,
+            id: targetID,
             rawContent: finalContent,
             createdAt: finalCreatedAt,
             now: now,
@@ -692,7 +685,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         ) {
             try? hotCache.upsertCard(activeCard, now: now)
         } else {
-            _ = try? hotCache.removeCard(id: normalizedID)
+            _ = try? hotCache.removeCard(id: targetID)
         }
 
         guard let updatedRecord = MemosWireFormat.parseSnippetRecord(
@@ -700,7 +693,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             rawContent: finalContent,
             createdAt: finalCreatedAt,
             dataOrigin: .remote,
-            notes: localNotesStore.loadNotes(for: normalizedID)
+            notes: localNotesStore.loadNotes(for: targetID)
         ) else {
             throw RewindError.invalidServerResponse
         }
@@ -743,8 +736,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             throw RewindError.missingCredentials
         }
 
+        var targetID = normalizedID
         if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
-            _ = try await client.createClip(
+            let saved = try await client.createClip(
                 clientClipId: pendingEntry.clientClipId,
                 content: pendingEntry.memoContent,
                 contextComment: pendingEntry.commentContent,
@@ -753,24 +747,29 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 fallbackCreatedAt: pendingEntry.createdAt
             )
             _ = try? outbox.removeEntry(clientClipId: normalizedID)
+            if saved.id != normalizedID {
+                try? localNotesStore.remapCardID(from: normalizedID, to: saved.id)
+                _ = try? hotCache.removeCard(id: normalizedID)
+                targetID = saved.id
+            }
         }
 
-        let dto = try await client.getMemo(id: normalizedID, baseURL: baseURL, token: token)
+        let dto = try await client.getMemo(id: targetID, baseURL: baseURL, token: token)
         let createdAt = dto.createTime.flatMap(MemosWireFormat.parseISO8601)
             ?? dto.updateTime.flatMap(MemosWireFormat.parseISO8601)
             ?? now
-        let resolvedName = dto.name.isEmpty ? normalizedID : dto.name
+        let resolvedName = dto.name.isEmpty ? targetID : dto.name
         guard MemosWireFormat.parseSnippetRecord(
             id: resolvedName,
             rawContent: dto.content,
             createdAt: createdAt,
             dataOrigin: .remote
         ) != nil else {
-            throw RewindError.snippetNotFound(normalizedID)
+            throw RewindError.snippetNotFound(targetID)
         }
 
         let postedDTO = try await client.postMemoComment(
-            memoID: normalizedID,
+            memoID: targetID,
             commentID: commentID,
             content: commentMarkdown,
             baseURL: baseURL,
@@ -782,7 +781,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             fallbackCreatedAt: postedDTO.createTime.flatMap(MemosWireFormat.parseISO8601) ?? now
         )
 
-        let refreshed = try await getSnippet(id: normalizedID, includeContext: true, now: now)
+        let refreshed = try await getSnippet(id: targetID, includeContext: true, now: now)
         if let postedNote {
             let merged = LocalNotesStore.sortAndDeduplicate(refreshed.notes + [postedNote])
             return refreshed.withAttachments(conversationContext: refreshed.conversationContext, notes: merged)
@@ -807,8 +806,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             throw RewindError.missingCredentials
         }
 
+        var targetID = normalizedID
         if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
-            _ = try await client.createClip(
+            let saved = try await client.createClip(
                 clientClipId: pendingEntry.clientClipId,
                 content: pendingEntry.memoContent,
                 contextComment: pendingEntry.commentContent,
@@ -816,13 +816,19 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 token: token,
                 fallbackCreatedAt: pendingEntry.createdAt
             )
+            _ = try? outbox.removeEntry(clientClipId: normalizedID)
+            if saved.id != normalizedID {
+                try? localNotesStore.remapCardID(from: normalizedID, to: saved.id)
+                _ = try? hotCache.removeCard(id: normalizedID)
+                targetID = saved.id
+            }
         }
 
-        let dto = try await client.getMemo(id: normalizedID, baseURL: baseURL, token: token)
+        let dto = try await client.getMemo(id: targetID, baseURL: baseURL, token: token)
         let createdAt = dto.createTime.flatMap(MemosWireFormat.parseISO8601)
             ?? dto.updateTime.flatMap(MemosWireFormat.parseISO8601)
             ?? Date()
-        let resolvedName = dto.name.isEmpty ? normalizedID : dto.name
+        let resolvedName = dto.name.isEmpty ? targetID : dto.name
 
         guard MemosWireFormat.parseSnippetRecord(
             id: resolvedName,
@@ -830,12 +836,12 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             createdAt: createdAt,
             dataOrigin: .remote
         ) != nil else {
-            throw RewindError.snippetNotFound(normalizedID)
+            throw RewindError.snippetNotFound(targetID)
         }
 
         let updatedContent = MemosWireFormat.replacingWithSynthesizedTag(dto.content)
         let patchedDTO = try await client.updateMemoContent(
-            id: normalizedID,
+            id: targetID,
             content: updatedContent,
             baseURL: baseURL,
             token: token
@@ -846,7 +852,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         let finalName = (patchedDTO?.name.isEmpty == false) ? patchedDTO!.name : resolvedName
 
         _ = try? outbox.removeEntry(clientClipId: normalizedID)
-        _ = try? hotCache.removeCard(id: normalizedID)
+        _ = try? hotCache.removeCard(id: targetID)
 
         guard let updatedRecord = MemosWireFormat.parseSnippetRecord(
             id: finalName,

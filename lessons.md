@@ -265,3 +265,14 @@
 - 正确做法 `Done right`：遍历 DOM `childNodes`、`children` 或 `getClientRects()` 一律先用 `Array.from()` 归一化并在单测中注入无数组原型的 `NodeList` 夹具；在 `mousedown` 改变浮层可见性时同步处理后续 `mouseup` 穿透，改动后在真实浏览器加载解包扩展走通完整点击链路。
 - 验证点：运行 `./scripts/check` 通过 `extensions/web-clipper/test_extractors.mjs` 全部用例，并在真实 Chromium 解包扩展中完成网页正文与行号代码块的拖拽点击暂存验证。
 - 复发记录：`Seen 1x (2026-11-15)`，真实 Chromium CDP 解包扩展联调检出。
+
+### 宿主内部 Markdown 协议不得混同于系统级 LaunchServices URL Scheme
+
+**宿主聊天面板私有的内部引用语法（如 `conversation://<uuid>`）必须通过显式领域枚举与系统可打开的 `http(s)` URL 严格隔离，且 `NSWorkspace.shared.open` 必须核验布尔返回值并暴露失败提示。**
+
+- 标签：#宿主契约 #Antigravity #领域建模 #macOS原生
+- 起因与后果：Antigravity 剪藏记录将回链存为聊天面板内专用的 Markdown 链接 `conversation://<uuid>`，但 `/Applications/Antigravity.app` 在 LaunchServices 中仅注册了 `antigravity://`；旧版 `RewindCard.reopenURL` 放行 `conversation` 协议并交由 `NSWorkspace.shared.open` 执行且丢弃 `false` 返回值，导致用户在桌面浮窗点击“查看来源”毫无反应，同时浮窗也缺少原地查看已存上下文评论的展开入口。
+- 修复与证据：在 [DomainModels.swift](Sources/CodingRewindCore/DomainModels.swift) 移除裸 `reopenURL`，引入 `SourceLocator` 枚举严格区分 `.web(url:sessionID:)` 与 `.antigravitySession(sessionID:)`；`AppCoordinator` 校验 `onOpenURL -> Bool` 并在失败时展示错误横幅，Antigravity 卡片改为一键复制会话 ID 与唤醒宿主（接聊提示词仍保留 `conversation://<uuid>` 供宿主内点击），同时在 [QuickPeekHUDViews.swift](Sources/CodingRewindApp/QuickPeekHUDViews.swift) 增设停靠式脉络预览抽屉并在双端补齐 `Session ID`、`Session Opening`、`Page Lead` 与普通网页 W3C `#:~:text=` 精确锚点。
+- 正确做法 `Done right`：写入外部打开按钮前先用 `NSWorkspace.shared.urlForApplication(toOpen:)` 与目标应用 `Info.plist` 实测系统协议可达性，用不可构造非法分支的和类型（sum type）区分外部浏览器跳转与宿主内定位标识，绝不丢弃系统打开调用的布尔结果。
+- 验证点：运行 `./scripts/check` 通过 `ProvenanceLeadAndSourceLocatorTests`、`QuickPeekHUDInspectorTests`、网页扩展 71 项测试与 `enricher` 12 项测试；实机打开浮窗点击 Antigravity 卡片验证复制会话 ID 横幅与脉络抽屉展示。
+- 复发记录：`Seen 1x (2026-11-16)`，用户实机点击“查看来源”无响应反馈后定位修复。

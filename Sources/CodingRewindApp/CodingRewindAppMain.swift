@@ -211,6 +211,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
             }
+            coord.onCopyText = { text in
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
+            }
             coord.onWakeHost = { host in
                 switch host {
                 case .antigravity:

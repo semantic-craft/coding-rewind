@@ -108,8 +108,23 @@ public enum SnippetFormatter {
             if !conversationContext.sessionTitle.isEmpty {
                 ctxLines.append("- Session Title: \(conversationContext.sessionTitle)")
             }
+            if let sessionID = conversationContext.sessionID, !sessionID.isEmpty {
+                ctxLines.append("- Session ID: \(sessionID)")
+            }
             if !conversationContext.prompt.isEmpty {
                 ctxLines.append("- Prompt: \(conversationContext.prompt)")
+            }
+            switch conversationContext.lead {
+            case .sessionOpening(let opening) where !opening.isEmpty:
+                ctxLines.append("")
+                ctxLines.append("#### Session Opening")
+                ctxLines.append(opening)
+            case .pageLead(let pageLead) where !pageLead.isEmpty:
+                ctxLines.append("")
+                ctxLines.append("#### Page Lead")
+                ctxLines.append(pageLead)
+            default:
+                break
             }
             if !conversationContext.recentTurns.isEmpty {
                 ctxLines.append("")

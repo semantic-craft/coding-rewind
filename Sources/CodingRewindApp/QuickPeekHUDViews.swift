@@ -70,6 +70,10 @@ public final class QuickPeekHUDPanel: NSPanel {
             coordinator.cancelDeleteConfirmation()
             return
         }
+        if coordinator.inspectedCardID != nil {
+            coordinator.closeCardPreview()
+            return
+        }
         orderOut(sender)
     }
 
@@ -83,7 +87,7 @@ public final class QuickPeekHUDPanel: NSPanel {
             resignHostedFirstResponderIfNeeded()
             super.order(place, relativeTo: otherWin)
             unmountContentIfNeeded()
-            coordinator.cancelDeleteConfirmation()
+            coordinator.dismissTransientHUDState()
         } else {
             mountContentIfNeeded()
             super.order(place, relativeTo: otherWin)
@@ -98,9 +102,15 @@ public final class QuickPeekHUDPanel: NSPanel {
             return super.performKeyEquivalent(with: event)
         }
         let modifiers = relevantModifiers(for: event)
-        if event.keyCode == 53, modifiers.isEmpty, coordinator.pendingDeleteConfirmation != nil {
-            coordinator.cancelDeleteConfirmation()
-            return true
+        if event.keyCode == 53, modifiers.isEmpty {
+            if coordinator.pendingDeleteConfirmation != nil {
+                coordinator.cancelDeleteConfirmation()
+                return true
+            }
+            if coordinator.inspectedCardID != nil {
+                coordinator.closeCardPreview()
+                return true
+            }
         }
         if !isEditingTextInput {
             if event.keyCode == 51 || event.keyCode == 117 {
@@ -121,6 +131,10 @@ public final class QuickPeekHUDPanel: NSPanel {
                 Task { @MainActor [weak self] in
                     await self?.coordinator.archiveTargetCards()
                 }
+                return true
+            }
+            if event.charactersIgnoringModifiers?.lowercased() == "i", modifiers == [.command] {
+                coordinator.toggleFocusedCardPreview()
                 return true
             }
         }
@@ -159,6 +173,7 @@ public final class QuickPeekHUDPanel: NSPanel {
 
     @objc private func handleApplicationDidHide(_ notification: Notification) {
         unmountContentIfNeeded()
+        coordinator.dismissTransientHUDState()
     }
 
     private func mountContentIfNeeded() {
@@ -173,6 +188,7 @@ public final class QuickPeekHUDPanel: NSPanel {
                 onResignTextInput: { [weak self] in self?.resignTextInputIfNeeded() }
             )
         )
+        hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = false
         frosted.addSubview(hosting)
         NSLayoutConstraint.activate([
@@ -446,6 +462,21 @@ public struct QuickPeekHUDRootView: View {
                 }
             }
 
+            if let inspectedCard = coordinator.inspectedCard {
+                HUDCardInspectorView(
+                    card: inspectedCard,
+                    detailState: coordinator.cardDetailState(for: inspectedCard.id),
+                    language: lang,
+                    onCopyText: { coordinator.copyClipText(inspectedCard.verbatimText) },
+                    onSourceAction: { coordinator.performSourceAction(for: inspectedCard) },
+                    onWakeAntigravity: { coordinator.wakeAntigravity() },
+                    onCopySessionID: { coordinator.copySessionID($0) },
+                    onRetry: { coordinator.reloadCardDetail(id: inspectedCard.id) },
+                    onClose: { coordinator.closeCardPreview() }
+                )
+                .id(inspectedCard.id)
+            }
+
             if coordinator.canEndUnarchivedConversation {
                 Button(AppStrings.keepClipsSkipArchiveButton(in: lang)) {
                     coordinator.endUnarchivedConversation()
@@ -639,11 +670,13 @@ public struct QuickPeekHUDRootView: View {
 
     private func cardRow(_ card: RewindCard) -> some View {
         let checked = coordinator.checkedCardIDs.contains(card.id)
+        let isInspected = coordinator.inspectedCardID == card.id
         let isLocked = coordinator.isCardLocked(card.id)
         let isPendingDelete = coordinator.pendingDeleteConfirmation?.cardIDs.contains(card.id) == true
         return HUDCardRowView(
             card: card,
             isChecked: checked,
+            isInspected: isInspected,
             isLocked: isLocked,
             isMutating: coordinator.isMutatingCards,
             isPendingDelete: isPendingDelete,
@@ -652,6 +685,18 @@ public struct QuickPeekHUDRootView: View {
                 coordinator.focusedCardID = card.id
                 coordinator.toggleCheck(for: card.id)
             },
+            onTogglePreview: {
+                coordinator.toggleCardPreview(id: card.id)
+            },
+            onCopyText: {
+                coordinator.copyClipText(card.verbatimText)
+            },
+            onSourceAction: {
+                coordinator.performSourceAction(for: card)
+            },
+            onWakeAntigravity: {
+                coordinator.wakeAntigravity()
+            },
             onArchive: {
                 Task { @MainActor in
                     await coordinator.archiveCards(ids: [card.id])
@@ -659,8 +704,7 @@ public struct QuickPeekHUDRootView: View {
             },
             onDelete: { bypass in
                 requestDeleteCards(ids: [card.id], bypassConfirmation: bypass)
-            },
-            onOpenURL: coordinator.onOpenURL
+            }
         )
     }
 }
@@ -669,14 +713,18 @@ public struct QuickPeekHUDRootView: View {
 private struct HUDCardRowView: View {
     let card: RewindCard
     let isChecked: Bool
+    let isInspected: Bool
     let isLocked: Bool
     let isMutating: Bool
     let isPendingDelete: Bool
     let language: AppLanguage
     let onToggleSelect: () -> Void
+    let onTogglePreview: () -> Void
+    let onCopyText: () -> Void
+    let onSourceAction: () -> Void
+    let onWakeAntigravity: () -> Void
     let onArchive: () -> Void
     let onDelete: (Bool) -> Void
-    let onOpenURL: (@MainActor (URL) -> Void)?
 
     @State private var isHovered = false
 
@@ -684,7 +732,7 @@ private struct HUDCardRowView: View {
         let backgroundColor: Color = isPendingDelete
             ? Color.red.opacity(0.10)
             : (isChecked ? Color.accentColor.opacity(0.10) : Color(nsColor: .controlBackgroundColor))
-        let actionOpacity = (isHovered || isChecked || isPendingDelete) ? 0.95 : 0.55
+        let actionOpacity = (isHovered || isChecked || isInspected || isPendingDelete) ? 0.95 : 0.55
 
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
@@ -705,6 +753,33 @@ private struct HUDCardRowView: View {
                 }
                 Spacer()
                 HStack(spacing: 4) {
+                    Button {
+                        onTogglePreview()
+                    } label: {
+                        Text(AppStrings.contextPreviewButton(in: language))
+                            .font(.system(size: 10, weight: isInspected ? .semibold : .regular))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                    }
+                    .rewindButtonRole(.toolbar)
+                    .focusEffectDisabled()
+                    .foregroundStyle(isInspected ? Color.accentColor : Color.secondary)
+                    .opacity(isInspected ? 1.0 : actionOpacity)
+                    .accessibilityAddTraits(isInspected ? [.isSelected] : [])
+                    .accessibilityIdentifier("hud.card.preview.\(card.id)")
+                    .help(AppStrings.contextPreviewHelp(isInspected: isInspected, in: language))
+
+                    if let locator = card.sourceLocator {
+                        Button(AppStrings.sourceActionButton(for: locator, in: language)) {
+                            onSourceAction()
+                        }
+                        .rewindButtonRole(.toolbar)
+                        .focusEffectDisabled()
+                        .font(.system(size: 10))
+                        .accessibilityIdentifier("hud.card.source.\(card.id)")
+                    }
+
                     Button {
                         onArchive()
                     } label: {
@@ -739,11 +814,6 @@ private struct HUDCardRowView: View {
                     .help(AppStrings.deleteClipHelp(in: language))
                     .disabled(isLocked || isMutating)
                 }
-                if let url = card.reopenURL {
-                    Button(AppStrings.viewSourceButton(in: language)) { onOpenURL?(url) }
-                        .rewindButtonRole(.toolbar)
-                        .font(.system(size: 10))
-                }
             }
             if let title = card.title {
                 Text(title).font(.system(size: 12, weight: .semibold))
@@ -759,6 +829,9 @@ private struct HUDCardRowView: View {
             if isPendingDelete {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.red.opacity(0.65), lineWidth: 1)
+            } else if isInspected {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1)
             }
         }
         .contentShape(Rectangle())
@@ -769,21 +842,29 @@ private struct HUDCardRowView: View {
         }
         .onHover { isHovered = $0 }
         .contextMenu {
+            Button(AppStrings.toggleContextMenu(isInspected: isInspected, in: language)) {
+                onTogglePreview()
+            }
+
+            Button(AppStrings.copyClipTextMenu(in: language)) {
+                onCopyText()
+            }
+
+            if let locator = card.sourceLocator {
+                Button(AppStrings.sourceActionButton(for: locator, in: language)) {
+                    onSourceAction()
+                }
+                if case .antigravitySession = locator {
+                    Button(AppStrings.wakeAntigravityButton(in: language)) {
+                        onWakeAntigravity()
+                    }
+                }
+            }
+
             Button(AppStrings.archiveClipLabel(in: language)) {
                 onArchive()
             }
             .disabled(isLocked || isMutating)
-
-            Button(AppStrings.copyClipTextMenu(in: language)) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(card.verbatimText, forType: .string)
-            }
-
-            if let url = card.reopenURL {
-                Button(AppStrings.viewSourceButton(in: language)) {
-                    onOpenURL?(url)
-                }
-            }
 
             Divider()
 

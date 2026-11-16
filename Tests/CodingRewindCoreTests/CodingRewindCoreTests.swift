@@ -899,10 +899,11 @@ struct CodingRewindCoreTests {
         #expect(hotCards[0].contextSummary?.contains("悬浮面板") == true)
         #expect(hotCards[0].keywords == ["NSPanel", "nonactivatingPanel", "AppKit"])
         #expect(hotCards[0].sourceURL == "conversation://conv-alpha")
+        #expect(hotCards[0].sourceLocator == .antigravitySession(sessionID: "conv-alpha"))
         #expect(hotCards[0].verbatimText == "> Quoted inside verbatim\nlet mask: NSWindow.StyleMask = [.nonactivatingPanel]")
         #expect(hotCards[1].id == "m-pending")
         #expect(hotCards[1].status == .pending)
-        #expect(hotCards[1].reopenURL == nil)
+        #expect(hotCards[1].sourceLocator == nil)
 
         let pastedEndpointBaseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local/api/memos/"))
         try await client.markSynthesized(card: hotCards[0], baseURL: pastedEndpointBaseURL, token: "tok-secret-test")
@@ -1145,7 +1146,11 @@ struct CodingRewindCoreTests {
         #expect(comment == """
         <!-- rewind-context-v1 -->
         Session Title: Conversation A
+        Session ID: \(id)
         Prompt: Question 5
+
+        ### Session Opening
+        Question 1
 
         ### Recent Turns
         User: Question 2
