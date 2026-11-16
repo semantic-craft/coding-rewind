@@ -3,8 +3,18 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-16T00:09:06.194262Z</p>
-<p>Main: <code>main: 3ea06270a8a0fa5e7d241e43e95e857698c9bbed</code></p>
+<p>Observed: 2026-11-16T05:18:56.151244Z</p>
+<p>Main: <code>main: c92cdca8fe89f66d879114eed4949d5fc3eb1712</code></p>
+<section id="hud-and-cli-snippet-management"><h2>桌面浮窗与终端 CLI 片段归档及删除管理（PR #36）</h2>
+<article id="snippet-archive-delete-management"><h3>增加桌面浮窗独立归档/删除交互与终端 CLI delete 子命令</h3><span class="badge">done</span><p>参照 MIT 项目 usememos/memos、p0deje/Maccy 与 raycast/extensions 交互设计，在不窃取前台应用焦点前提下为桌面端毛玻璃浮窗增加单条及批量独立归档（⌘E）与彻底删除（⌘⌫ 面板底部红色确认条，⌥⌘⌫ 或按住 Option 点击直删），并同步新增终端 CLI coding-rewind delete &lt;id&gt; [--json] 子命令；coding-rewind mcp 维持锁定 4 个只读与归档工具不开放物理删除。已同步片段断网时拒绝离线删除以保全 hot_cache.json，未上传暂存可本地取消并具备采集/刷新并发防复活保护。合并 PR #36（c92cdca）后已完成 /Applications/CodingRewind.app（TeamIdentifier LQAVR62TK2，PID 20314）本机覆盖升级与辅助二进制比对。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/36">pull 36: squash 合并至 main（c92cdca），经三路对抗审查（inherit/flash/pro）加固并发与确认条竞态，通过 ./scripts/check 六道门禁与 SwiftUI 性能零告警检查。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/AppCoordinator.swift">file Sources/CodingRewindCore/AppCoordinator.swift: 新增 Memos DELETE 请求、离线待上传删除队列、已同步片段离线拒删、并发防复活与 pending-remote-deletes 持久化重试。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/QuickPeekHUDViews.swift">file Sources/CodingRewindApp/QuickPeekHUDViews.swift: 常驻行内归档/删除图标按钮、右键菜单、底部批量操作栏、行内红色删前确认条与 ⌘E / ⌘⌫ / ⌥⌘⌫ / Esc 分级快捷键。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCLI/CLIParser.swift">file Sources/CodingRewindCLI/CLIParser.swift: 新增 coding-rewind delete &lt;id&gt; [--json] 终端子命令并持续锁定 MCP 仅暴露 4 个非破坏性领域工具。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/QuickPeekHUDManagementTests.swift">file Tests/CodingRewindAppTests/QuickPeekHUDManagementTests.swift: 新增桌面浮窗交互、快捷键焦点防护、AX 辅助功能与行内确认条回归测试（SwiftUI 离屏释放零泄漏）。</a></li>
+<li>note 2026-11-16 本机 /Applications/CodingRewind.app 升级与二进制一致核验: Developer ID（LQAVR62TK2）严格签名校验通过，--background 重启（PID 20314，0.0 %CPU），固定路径 coding-rewind --help 已含 delete 并与包内二进制字节一致。</li>
+</ul><p>Next: </p></article>
+</section>
 <section id="hud-offscreen-observation-fix"><h2>浮动 HUD 离屏挂载与后台订阅止血（PR #35）</h2>
 <article id="quick-peek-hud-lazy-hosting"><h3>按可见态懒加载与卸载 QuickPeekHUDPanel 宿主视图并覆盖本机升级</h3><span class="badge">done</span><p>修复 QuickPeekHUDPanel 在初始化与隐藏期间常驻挂载 480x560 NSHostingView&lt;QuickPeekHUDRootView&gt; 导致后台 refreshHotStream 持续触发离屏重算的问题。改为在 orderFrontRegardless 与 order(_:relativeTo:) 展示分支按需挂载、重算 key-view 循环并恢复非文本框首响应者以保障重开后的空格勾选快捷键，在 order(.out) 与 NSApplication.didHideNotification 分支先归还托管首响应者再移除并释放 NSHostingView（实测隐藏态与两轮各 10 次后台刷新期间 QuickPeekHUDRootView.body 求值次数由 21 降至 0）。经四路对抗评审与实测加固后以两步 TDD 提交（cc1fd8d、3ea0627）变基合入 main，并完成 /Applications/CodingRewind.app（0.4.0 build 7，TeamIdentifier LQAVR62TK2，PID 15496）静默启动覆盖升级核验。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/35">pull 35: 变基合并至 main（cc1fd8d 先落红灯回归测试，3ea0627 落修复实现），通过 ./scripts/check 全部六道门禁。</a></li>

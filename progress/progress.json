@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "3ea06270a8a0fa5e7d241e43e95e857698c9bbed",
+    "main": "c92cdca8fe89f66d879114eed4949d5fc3eb1712",
     "open_pulls": [],
     "pulls": [
       {
@@ -275,6 +275,14 @@
         "merged": true,
         "number": 35,
         "state": "closed"
+      },
+      {
+        "base": "0677f38ef83aaabc12c80093851305b2fcb9e871",
+        "head": "a9b43fd79c8ef0820ed4683dbc7efddba09b978c",
+        "merge_commit": "c92cdca8fe89f66d879114eed4949d5fc3eb1712",
+        "merged": true,
+        "number": 36,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -326,7 +334,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-16T00:09:06.194262Z",
+  "observed_at": "2026-11-16T05:18:56.151244Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -339,6 +347,51 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "hud-and-cli-snippet-management",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "squash 合并至 main（c92cdca），经三路对抗审查（inherit/flash/pro）加固并发与确认条竞态，通过 ./scripts/check 六道门禁与 SwiftUI 性能零告警检查。",
+              "ref": 36
+            },
+            {
+              "kind": "file",
+              "note": "新增 Memos DELETE 请求、离线待上传删除队列、已同步片段离线拒删、并发防复活与 pending-remote-deletes 持久化重试。",
+              "ref": "Sources/CodingRewindCore/AppCoordinator.swift"
+            },
+            {
+              "kind": "file",
+              "note": "常驻行内归档/删除图标按钮、右键菜单、底部批量操作栏、行内红色删前确认条与 ⌘E / ⌘⌫ / ⌥⌘⌫ / Esc 分级快捷键。",
+              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift"
+            },
+            {
+              "kind": "file",
+              "note": "新增 coding-rewind delete <id> [--json] 终端子命令并持续锁定 MCP 仅暴露 4 个非破坏性领域工具。",
+              "ref": "Sources/CodingRewindCLI/CLIParser.swift"
+            },
+            {
+              "kind": "file",
+              "note": "新增桌面浮窗交互、快捷键焦点防护、AX 辅助功能与行内确认条回归测试（SwiftUI 离屏释放零泄漏）。",
+              "ref": "Tests/CodingRewindAppTests/QuickPeekHUDManagementTests.swift"
+            },
+            {
+              "kind": "note",
+              "note": "Developer ID（LQAVR62TK2）严格签名校验通过，--background 重启（PID 20314，0.0 %CPU），固定路径 coding-rewind --help 已含 delete 并与包内二进制字节一致。",
+              "ref": "2026-11-16 本机 /Applications/CodingRewind.app 升级与二进制一致核验"
+            }
+          ],
+          "id": "snippet-archive-delete-management",
+          "next": "",
+          "status": "done",
+          "summary": "参照 MIT 项目 usememos/memos、p0deje/Maccy 与 raycast/extensions 交互设计，在不窃取前台应用焦点前提下为桌面端毛玻璃浮窗增加单条及批量独立归档（⌘E）与彻底删除（⌘⌫ 面板底部红色确认条，⌥⌘⌫ 或按住 Option 点击直删），并同步新增终端 CLI coding-rewind delete <id> [--json] 子命令；coding-rewind mcp 维持锁定 4 个只读与归档工具不开放物理删除。已同步片段断网时拒绝离线删除以保全 hot_cache.json，未上传暂存可本地取消并具备采集/刷新并发防复活保护。合并 PR #36（c92cdca）后已完成 /Applications/CodingRewind.app（TeamIdentifier LQAVR62TK2，PID 20314）本机覆盖升级与辅助二进制比对。",
+          "title": "增加桌面浮窗独立归档/删除交互与终端 CLI delete 子命令"
+        }
+      ],
+      "title": "桌面浮窗与终端 CLI 片段归档及删除管理（PR #36）"
+    },
     {
       "id": "hud-offscreen-observation-fix",
       "items": [
@@ -2218,7 +2271,8 @@
       32,
       33,
       34,
-      35
+      35,
+      36
     ]
   }
 }
