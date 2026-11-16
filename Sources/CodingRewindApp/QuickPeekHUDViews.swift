@@ -762,6 +762,8 @@ private struct HUDCardRowView: View {
             }
         }
         .contentShape(Rectangle())
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(isChecked ? [.isSelected] : [])
         .onTapGesture {
             onToggleSelect()
         }

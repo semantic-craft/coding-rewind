@@ -278,6 +278,44 @@ private func isMgmtAXEnabled(_ element: Any) -> Bool {
 }
 
 @MainActor
+private func isMgmtAXSelected(_ element: Any) -> Bool {
+    if let ax = element as? any NSAccessibilityProtocol {
+        return ax.isAccessibilitySelected()
+    }
+    return (element as AnyObject).isAccessibilitySelected?() ?? false
+}
+
+@MainActor
+private func mgmtAXParent(_ element: Any) -> Any? {
+    if let ax = element as? any NSAccessibilityProtocol {
+        return ax.accessibilityParent()
+    }
+    return (element as AnyObject).accessibilityParent?()
+}
+
+@MainActor
+private func mgmtAXHasSelectedAncestor(identifier: String, in root: Any) -> Bool {
+    guard var current: Any = findMgmtAXElement(identifier: identifier, in: root) else {
+        return false
+    }
+    var visited: Set<ObjectIdentifier> = []
+    while let parent = mgmtAXParent(current) {
+        let obj = parent as AnyObject
+        if !visited.insert(ObjectIdentifier(obj)).inserted {
+            break
+        }
+        if isMgmtAXSelected(parent) {
+            return true
+        }
+        if obj === (root as AnyObject) {
+            break
+        }
+        current = parent
+    }
+    return false
+}
+
+@MainActor
 @discardableResult
 private func pressMgmtAXElement(identifier: String, in root: Any) -> Bool {
     guard let element = findMgmtAXElement(identifier: identifier, in: root) else {
@@ -807,5 +845,87 @@ extension AppShortcutsTests {
         #expect(harness.coordinator.pendingDeleteConfirmation == nil)
         #expect(HUDManagementMockURLProtocol.recordedRequests(for: harness.suiteID).isEmpty)
         #expect(harness.coordinator.cards.map(\.id) == ["rw-locked-1", "rw-unlocked-2"])
+    }
+
+    @Test func quickPeekHUDCancelsPendingDeleteOnSearchFilterAndCheckAndExposesCardSelectionAXTrait() async throws {
+        let harness = try HUDManagementHarness.make()
+        defer { harness.tearDown() }
+
+        try await harness.seedMemos([
+            ("rw-ax-1", "Alpha AX clip"),
+            ("rw-ax-2", "Beta AX clip")
+        ])
+
+        autoreleasepool { harness.panel.presentAndFocus() }
+        try await settleMgmtLoop()
+
+        #expect(hasMgmtAXIdentifier("hud.card.archive.rw-ax-1", in: harness.panel))
+        #expect(hasMgmtAXIdentifier("hud.card.delete.rw-ax-1", in: harness.panel))
+        #expect(!mgmtAXHasSelectedAncestor(identifier: "hud.card.archive.rw-ax-1", in: harness.panel))
+        #expect(!mgmtAXHasSelectedAncestor(identifier: "hud.card.archive.rw-ax-2", in: harness.panel))
+
+        harness.coordinator.toggleCheck(for: "rw-ax-1")
+        try await settleMgmtLoop()
+        #expect(hasMgmtAXIdentifier("hud.card.archive.rw-ax-1", in: harness.panel))
+        #expect(hasMgmtAXIdentifier("hud.card.delete.rw-ax-1", in: harness.panel))
+        #expect(mgmtAXHasSelectedAncestor(identifier: "hud.card.archive.rw-ax-1", in: harness.panel))
+        #expect(!mgmtAXHasSelectedAncestor(identifier: "hud.card.archive.rw-ax-2", in: harness.panel))
+
+        #expect(pressMgmtAXElement(identifier: "hud.card.delete.rw-ax-1", in: harness.panel))
+        #expect(try await waitUntil { harness.coordinator.pendingDeleteConfirmation?.cardIDs == ["rw-ax-1"] })
+        try await settleMgmtLoop()
+        #expect(hasMgmtAXIdentifier("hud.confirmDelete.bar", in: harness.panel))
+
+        #expect(focusMgmtSearchField(in: harness.panel))
+        let searchKey = try makeKeyEvent(windowNumber: harness.panel.windowNumber, keyCode: 0, characters: "a")
+        autoreleasepool { harness.panel.sendEvent(searchKey) }
+        #expect(try await waitUntil {
+            harness.coordinator.searchText == "a" && harness.coordinator.pendingDeleteConfirmation == nil
+        })
+        try await settleMgmtLoop()
+        #expect(!hasMgmtAXIdentifier("hud.confirmDelete.bar", in: harness.panel))
+
+        harness.coordinator.searchText = ""
+        try await settleMgmtLoop()
+
+        #expect(pressMgmtAXElement(identifier: "hud.card.delete.rw-ax-1", in: harness.panel))
+        #expect(try await waitUntil { harness.coordinator.pendingDeleteConfirmation?.cardIDs == ["rw-ax-1"] })
+        try await settleMgmtLoop()
+        #expect(pressMgmtAXElement(identifier: "hud.filter.ready", in: harness.panel))
+        #expect(try await waitUntil {
+            harness.coordinator.statusFilter == .ready && harness.coordinator.pendingDeleteConfirmation == nil
+        })
+        try await settleMgmtLoop()
+        #expect(!hasMgmtAXIdentifier("hud.confirmDelete.bar", in: harness.panel))
+
+        #expect(pressMgmtAXElement(identifier: "hud.filter.all", in: harness.panel))
+        #expect(try await waitUntil { harness.coordinator.statusFilter == .all })
+        try await settleMgmtLoop()
+
+        #expect(pressMgmtAXElement(identifier: "hud.card.delete.rw-ax-1", in: harness.panel))
+        #expect(try await waitUntil { harness.coordinator.pendingDeleteConfirmation?.cardIDs == ["rw-ax-1"] })
+        try await settleMgmtLoop()
+
+        harness.coordinator.toggleCheck(for: "rw-ax-2")
+        #expect(harness.coordinator.pendingDeleteConfirmation == nil)
+        try await settleMgmtLoop()
+        #expect(!hasMgmtAXIdentifier("hud.confirmDelete.bar", in: harness.panel))
+        #expect(mgmtAXHasSelectedAncestor(identifier: "hud.card.archive.rw-ax-2", in: harness.panel))
+
+        harness.coordinator.toggleCheck(for: "rw-ax-1")
+        try await settleMgmtLoop()
+        #expect(!mgmtAXHasSelectedAncestor(identifier: "hud.card.archive.rw-ax-1", in: harness.panel))
+        #expect(hasMgmtAXIdentifier("hud.card.archive.rw-ax-1", in: harness.panel))
+        #expect(hasMgmtAXIdentifier("hud.card.delete.rw-ax-1", in: harness.panel))
+
+        weak var weakHostedView: NSView?
+        autoreleasepool {
+            weakHostedView = harness.panel.contentView?.subviews.first
+            harness.panel.orderOut(nil)
+        }
+        try await settleMgmtLoop(iterations: 4, slice: 0.02)
+        #expect(!harness.panel.isVisible)
+        #expect(harness.panel.contentView?.subviews.isEmpty == true)
+        #expect(weakHostedView == nil)
     }
 }
