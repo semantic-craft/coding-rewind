@@ -63,7 +63,7 @@
 
 - **两阶段划词探测与非激活暂存胶囊 `SelectionPopupController.swift`**，参照 MIT 项目 `GaimsDevSoftware/linuxpop` 与 `p0deje/Maccy`，仅针对白名单宿主 `com.google.antigravity`、`com.openai.codex` 与 `com.google.GeminiMacOS` 响应拖拽（距离不少于 6pt）、双击或 Shift 扩展选区手势（含 Shift 方向键扩选），浏览器与普通单次点击一律忽略。第一阶段探测完全只读，零剪贴板触碰且零 `CGEvent` 投递，排除编辑器、终端与输入框后在选区居中展示带 `.nonactivatingPanel` 的胶囊按钮（`com.google.antigravity` 与 `com.google.GeminiMacOS` 默认锚定于选区上方 8pt，靠近屏幕顶端时下翻；`com.openai.codex` 默认锚定于选区下方 8pt 以避让 ChatGPT 顶部原生选区栏，靠近屏幕底端时上翻），点击或按下捕获热键时原位反馈“暂存中…”与“已同步 / 待同步”并在 900 毫秒后自动收起，不额外抢焦或展开主 HUD；仅在配置缺失或报错时唤起非激活 HUD 给出提示。
 - **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，触发捕获（默认 `⌃⌥⇧⌘S`，即 `Hyper+S`）时先读取焦点元素或聊天页面 `AXWebArea` 的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时，从选区所属 `AXWebArea` 的本机会话 URL（`http://127.0.0.1:<port>/c/<uuid>` 或 `https://127.0.0.1/c/<uuid>`）确认编号，再由 Core 读取对应 transcript；不能定位消息时不附带猜测的上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
-- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`Esc` 分级收起（优先退出删前确认条，再关闭浮窗）以及区分 `待整理` 与 `AI 已整理` 状态徽标。每张卡片常驻行内归档与删除图标按钮及右键上下文菜单（归档、复制正文、查看来源、删除），勾选栏提供批量归档（`⌘E`）与删除（`⌘⌫` 弹出底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；刷新期间对正在删除中的卡片抑制重现，已成功删除卡片若远端列表暂存未清空则在本地过滤不复活。
+- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`⌘I` 切换停靠式“脉络”预览抽屉（展示完整未截断选中原文、来源标题与时间、可一键复制的 `Session ID`、会话开场白 `Session Opening` 或网页开头导语 `Page Lead`、紧邻提问、近期轮次与 AI 笔记，按 `inFlightCaptureEntries -> OfflineOutbox -> LocalNotesStore + Memos /comments` 三层懒加载）、三级 `Esc` 收起（优先退出删前确认条，其次收起脉络抽屉，再关闭浮窗）以及区分 `待整理` 与 `AI 已整理` 状态徽标。外部跳转由显式 `SourceLocator` 建模：`http(s)` 网页展示“打开原网页”并核对 `NSWorkspace.shared.open` 返回值（失败弹出错误横幅），Antigravity 会话（`conversation://<uuid>`）在浮窗提供一键“复制会话 ID”与“唤醒 Antigravity”（同时保留 `⌘Return` 接聊提示词内 `[出处](conversation://<uuid>)` 原生可点击）。每张卡片常驻行内脉络、来源动作、归档与删除按钮及右键上下文菜单，勾选栏提供批量归档（`⌘E`）与删除（`⌘⌫` 弹出底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；刷新期间对正在删除中的卡片抑制重现，已成功删除卡片若远端列表暂存未清空则在本地过滤不复活。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获（默认 `⌃⌥⇧⌘S`）与浮窗（默认 `⌃⌥R`）两个动作；启动时通过 `CodingRewind.captureSelectionShortcutSchemaVersion` 执行一次性 v2 迁移，仅将未自定义的旧版默认 `⌃⌥S` 平滑升级至 `⌃⌥⇧⌘S`，保留用户显式清空或自定义组合。`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单、划词胶囊及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
 - **一键创建宿主对话与结论回写闭环**，勾选卡片按下 `⌘Return`，由 `ConversationPrompt` 组装包含每张卡片标识（中文 `- 卡片 ID：\`<id>\``、英文 `- Clip ID: \`<id>\``）、脉络抬头、原始选段及出处链接的共享 Markdown 提示词；当 `aiAccessMode == .readWrite` 时，末尾附带闭环说明，提示宿主 AI 在归纳推演后可凭卡片 ID 调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新生成的提纲草稿暂存回 Coding Rewind（`aiAccessMode == .readOnly` 时省略该回写说明）。`AppCoordinator` 唯一持有目标与归档意图，HUD、菜单与快捷键调用同一个 `launchChecked(in:)`。目标偏好保存到 `conversation-host.json`，默认 Antigravity。已有任一宿主请求时始终先恢复它，不能切换目标覆盖已保存的意图。只有确认宿主实际收件后才允许归档。Antigravity 继续由官方 sidecar 调用 `agentapi new-conversation`，Codex 走下述官方队列与 App 唤醒链路。
 - **AI 接入与权限面板**，在桌面端“设置 → 插件与权限”内设“AI 接入与权限”（`AI Access & Permissions`）分区，展示本机 MCP 二进制状态、只读与读写切换开关（原子写入 `<dataDir>/config.json` 的 `ai_access_mode` 字段并保留 `memos_url`，默认 `"read_write"`；当环境变量 `CODING_REWIND_AI_ACCESS` 非空时覆盖磁盘配置、禁用界面开关并展示环境管理提示）以及一键复制标准零明文 `mcpServers` JSON 配置按钮（面向 Claude Desktop、Cursor、Codex、Antigravity 等宿主）。
@@ -76,7 +76,7 @@
 
 位于 `extensions/web-clipper/`，零外部 npm 依赖且空闲态零额外模块加载，覆盖任意 `http://*/*`、`https://*/*` 网页并对 `chatgpt.com`、`chat.openai.com`、`claude.ai` 与 `gemini.google.com` 提供对话脉络提取：
 
-- **纯函数提取层 `extractors.mjs`**，仅在实际保存选区时按需懒加载。参照 MIT 项目 `revivalstack/ai-chat-exporter`、`pionxzh/chatgpt-exporter`、`kepano/defuddle` 与 `mixmark-io/turndown`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、Shiki / Expressive Code 逐行换行、GitHub `table.highlight` 代码表格、图片相对链接、GFM 任务列表、`<mark>`、`<kbd>` 与 `<details>/<summary>` 的 Markdown，自动剥离语法高亮器行号列并清洗普通网页 `og:site_name` 标题后缀；在 AI 聊天站点通过声明式 `TURN_ADAPTERS` 提取紧邻前序用户提问与截至当前消息的最近 4 轮问答文本，总长截断在 4000 字符以内。
+- **纯函数提取层 `extractors.mjs`**，仅在实际保存选区时按需懒加载。参照 MIT 项目 `revivalstack/ai-chat-exporter`、`pionxzh/chatgpt-exporter`、`obsidianmd/obsidian-clipper`、`kepano/defuddle` 与 `mixmark-io/turndown`，把 DOM `Selection` 清洗转换为保留围栏代码块语言标识、Shiki / Expressive Code 逐行换行、GitHub `table.highlight` 代码表格、图片相对链接、GFM 任务列表、`<mark>`、`<kbd>` 与 `<details>/<summary>` 的 Markdown，自动剥离语法高亮器行号列并清洗普通网页 `og:site_name` 标题后缀；在 AI 聊天站点通过声明式 `TURN_ADAPTERS` 提取会话 ID、整个会话第 1 轮用户消息（`Session Opening`，约 300 字）、紧邻前序提问与截至当前消息的最近 4 轮问答文本（总长截断在 4000 字符以内）；在普通 `#source/web` 网页提取 `h1`、最近小标题、页面导语及正文开头 3 至 5 行（`Page Lead`，约 300 字），并按 W3C URL Fragment Text Directives 规范在 `sourceUrl` 生成词边界对齐的 `#:~:text=[prefix-,]textStart[,textEnd][,-suffix]` 锚点（幂等替换已有 `:~:` 并保留原有 `#hash`）。
 - **页面内单动作暂存胶囊、范围控制与后台直连投递 `content.js`、`background.js`、`memos_payload.mjs` 与 `options.js`**，参照 MIT 项目 `mem0ai/mem0-chrome-extension`、`obsidianmd/obsidian-clipper`、`crimx/ext-saladict`、`floating-ui/floating-ui` 与 `ChatGPTBox-dev/chatGPTBox`，通过 `GestureGate` 仅对主按键拖拽、双击、Shift 扩展选区及键盘选区展示 Shadow DOM 隔离的“暂存”胶囊，避让可编辑输入框与在线代码编辑器（放行 `readonly` 与 `aria-readonly="true"`），按 `Range.getClientRects()` 单行上方居中、多行正向尾行下方或反向首行上方就近锚定，并在脚本重注入时调用 `__CODING_REWIND_HOOK__.dispose()` 清理旧宿主与监听器。选项页支持切换胶囊生效范围（全部网页 / 仅 AI 聊天网站 / 关闭）与排除域名列表（默认排除 Google Docs/Sheets/Slides、Figma、Canva），右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）与 `Alt+Shift+S` 在任意页面始终可用。后台 Service Worker 直接携带 `Authorization: Bearer <token>` 写入 `Memos` REST 接口，断网或服务端 5xx 时在 `chrome.storage.local` 缓存最多 50 条待发记录并幂等重试；只有队列写入成功才反馈待同步，本地存储拒绝会显示保存失败。
 
 ### 4. Antigravity 2.x 官方插件与单二进制 CLI / MCP
@@ -127,18 +127,24 @@ Antigravity 成功只认结构化回执中的会话编号。Codex 成功必须�
 
 当通过 `create_snippet`（或 `coding-rewind create`）暂存提纲、草稿或总结时，默认来源标签为 `#source/agent`（默认出处标题为 `AI Synthesis`）：若调用时已提供任一结构化抬头（`Title`、`Session`、`Context` 或非空 `Keywords`），首行直接写入 `#rewind/ready #source/<platform>`（及可选 `#<tag>`）并输出引用块抬头与 100% 原样正文；若未提供结构化抬头，则写入 `#rewind/pending #source/<platform>`（及可选 `#<tag>`）与 `> **Source:** ...`，交由云端增强器异步补齐。
 
-### 2. 挂载会话上下文评论与 AI 笔记评论（`append_snippet_note`）
+### 2. 挂载会话与页面导语上下文评论及 AI 笔记评论（`append_snippet_note`）
 
-若存在非空的前序提问或近期对话轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入 `PRIVATE` 评论：
+若存在非空的会话 ID、会话首轮开场提问、普通网页导语、紧邻提问或近期对话轮次，客户端从创建响应 `name` 字段取出 `serverId`，调用 `POST /api/memos/<serverId>/comments?commentId=<clientClipId>-ctx` 写入 `PRIVATE` 评论（代码围栏感知解析，空字段与空小节省略，`### Session Opening` 与 `### Page Lead` 互斥）：
 
 ```markdown
 <!-- rewind-context-v1 -->
 Session Title: <sessionTitle>
+Session ID: <sessionID>
 Prompt: <prompt>
+
+### Session Opening
+<first user message of the session, ~300 chars>
 
 ### Recent Turns
 <up to 4 preceding User/Assistant turns>
 ```
+
+普通网页（`#source/web`）提取到非空 `Page Lead` 时同样打上 `#rewind/has-ctx` 并写入 `### Page Lead` 小节供浮窗预览与 `rewind-enricher` 摘要消费；完全不含任何上下文或导语时省略 `#rewind/has-ctx` 且不发送空白评论。
 
 当通过 `append_snippet_note`（或 `coding-rewind note`）向已有片段追加推演结论或批注时，生成满足同一 `<= 36` ASCII 字节正则的 `noteCommentId`，调用 `POST /api/memos/<serverId>/comments?commentId=<noteCommentId>` 写入首行带 `<!-- rewind-note-v1 -->` 标记的 `PRIVATE` 评论：
 
