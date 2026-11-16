@@ -39,7 +39,7 @@
 3. 浏览器扩展 `extensions/web-clipper` 从 ChatGPT、Claude、Gemini 页面提取选区 Markdown、清洗后的会话标题、前序提问与最近 4 轮对话，由后台直连 `POST /api/memos?memoId=<clientClipId>` 与评论接口，右上角显示 2.2 秒轻提示且不抢焦点、不弹协议确认框。
 4. 目标不可达时，桌面端写入 `outbox.jsonl`、网页端写入 `chrome.storage.local` 离线队列，恢复连接后通过相同 `memoId` 幂等冲刷且不产生重复记录。
 
-本轮实机验收仅覆盖 ChatGPT 与 Gemini，Claude 按用户要求排除。
+本轮说明：`extensions/web-clipper` 已随包内置 `claude.ai` 与 ChatGPT、Gemini 同构的对话轮次适配器（`TURN_ADAPTERS`）并通过自动化提取单测；现阶段实机浏览器验收已覆盖 ChatGPT 与 Gemini，`claude.ai` 实机验收按用户安排暂未纳入本轮。
 
 ## M3　云端 AI 脉络定锚、72 小时浮窗回顾与数据可控
 
@@ -54,17 +54,17 @@
 3. 按下 `⌃⌥R` 唤出启用 `LSUIElement` 与 `.nonactivatingPanel` 的毛玻璃浮窗，正确展示近 72 小时内未标记 `#rewind/synthesized` 的卡片及其状态徽标，离线状态下基于 `hot_cache.json` 瞬时打开。
 4. 用户可通过自托管 `Memos` 网页端或标准 REST 接口导出单条及全部记录，删除记录后刷新浮窗不再残留旧条目。
 
-## M4　自然语言检索与 Antigravity 互动成文
+## M4　自然语言检索、互动成文与 AI 闭环回写
 
 **目标**
 
-打通从毛玻璃浮窗和原生 `/mcp` 到 **Google Antigravity App 2.x** 的推演追问与对照写稿闭环，全链路凭据经钥匙串隔离保护。
+打通从毛玻璃浮窗与单二进制 `coding-rewind`（CLI 及 7 工具领域 MCP）到 **Google Antigravity App 2.x**、Codex 等宿主的推演追问、对照写稿与受控结论回写闭环，全链路凭据经钥匙串隔离保护，物理删除能力严格保留给人工操作。
 
 **可执行验收**
 
-1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端经官方 sidecar 调用 `agentapi new-conversation`，传入含脉络抬头、原文与回链的提示词，并以成功回执和真实桌面会话共同验收。
-2. 插件安装器将辅助二进制拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，sidecar 使用官方配置；升级移除本插件生成的旧快照 Hook，保留不属于该处理器的配置。
-3. 单二进制 `coding-rewind`（CLI 与 `coding-rewind mcp`）在 `CODING_REWIND_QA=1` 下严格隔离至 `com.codingrewind.memos.qa` 钥匙串服务并忽略开发凭据，不落盘明文令牌即可将 4 个领域工具（`list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`）接入 Antigravity `/rewind` 与其他 MCP 宿主供检索与成文引用。
+1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端为每张卡片注入标识（`- 卡片 ID` / `- Clip ID`）、脉络抬头、原文与回链，并在 `ai_access_mode` 为 `read_write` 时附带调用 `append_snippet_note` 或 `create_snippet` 回写结论的引导（`read_only` 时省略该引导），经官方 sidecar 调用 `agentapi new-conversation`（或经 Codex 官方队列链路）创建新对话，以成功回执和真实桌面会话共同验收。
+2. 插件安装器将辅助二进制 `coding-rewind-sidecar` 与 `coding-rewind` 拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，sidecar 使用官方配置，`skills/rewind/SKILL.md` 准确描述全部 7 个 MCP 领域工具、只读权限边界与按卡片 ID 回写闭环；升级移除本插件生成的旧快照 Hook，保留不属于该处理器的配置。
+3. 桌面浮窗支持单条或批量独立归档（`⌘E`）与物理删除（`⌘⌫` 展开底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；单二进制 `coding-rewind` 提供 `list`、`search`、`get`、`create`、`update`、`note`、`archive`、`delete <id>` 八个终端子命令，并在 `CODING_REWIND_QA=1` 下严格隔离至 `com.codingrewind.memos.qa` 钥匙串服务且忽略开发凭据。内嵌 `coding-rewind mcp` 不落盘明文令牌即可向 Antigravity `/rewind` 与其他 MCP 宿主暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`、`create_snippet`、`update_snippet_metadata`、`append_snippet_note` 七个领域工具：`update_snippet_metadata` 100% 逐字节保留选中原文，`append_snippet_note` 使用 `<!-- rewind-note-v1 -->` 评论与 `<!-- rewind-context-v1 -->` 严格隔离，`read_only` 模式下立即拒绝全部 4 个写入工具（保留 3 个只读工具），且物理删除（`delete`）严格限定为桌面 HUD 与终端 CLI 的人工操作，绝不通过 MCP 暴露。
 4. 运行 `./scripts/check` 与 `./scripts/build-app-bundle.sh` 全部退出码为 0。
 
 ## 远期候选边界
@@ -73,4 +73,4 @@
 
 ## 桌面入口与设置验收
 
-后续修复按 [代码质量与验收标准](code-quality.md) 检查。首次启动默认显示 Dock，隐藏设置立即生效且重启保持。菜单栏系统许可关闭时，从 Finder 重开仍能找到设置中的恢复说明。菜单、HUD 与 `⌘,` 只打开一个设置窗口。连接字段的环境来源、非法地址反馈和保存后的读回应分别验证。
+后续修复按 [代码质量与验收标准](code-quality.md) 检查。首次启动默认显示 Dock，隐藏设置立即生效且重启保持。菜单栏系统许可关闭时，从 Finder 重开仍能找到设置中的恢复说明。菜单、HUD 与 `⌘,` 只打开一个设置窗口。连接字段的环境来源、非法地址反馈和保存后的读回应分别验证；“设置 → 插件与权限”中的“AI 接入与权限”分区须分别验证本地 MCP 状态展示、只读与读写开关实时写入 `<dataDir>/config.json`（保留 `memos_url` 且零令牌落盘）、`CODING_REWIND_AI_ACCESS` 环境变量覆盖时的禁用与提示，以及一键复制零明文 MCP JSON 配置。

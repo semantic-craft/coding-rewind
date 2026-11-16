@@ -22,22 +22,28 @@ AI 对话中的摘录、提示词与前文脉络往往涉及未发表思考或�
 
 ### 1. 唯一持久层与私密可见度
 
-所有片段通过 HTTPS 发送至用户自己在阿里云轻量服务器上部署的原版 `usememos/memos` 实例，创建片段与挂载上下文评论时 `visibility` 均固定设为 `PRIVATE`，不经过任何第三方托管 SaaS 收藏平台。
+所有片段（含 Agent 经 `create_snippet` 暂存的提纲草稿，默认标记 `#source/agent`）、采集上下文评论（`<!-- rewind-context-v1 -->`）与 AI 追加笔记评论（`<!-- rewind-note-v1 -->`）均通过 HTTPS 发送至用户自己在阿里云轻量服务器上部署的原版 `usememos/memos` 实例，`visibility` 固定设为 `PRIVATE`，不经过任何第三方托管 SaaS 收藏平台。
 
-### 2. AI 脉络增强与原文零篡改边界
+### 2. AI 脉络增强、受控写入与原文零篡改边界
 
 VPS 内部的 `rewind-enricher` 仅读取带 `#rewind/pending` 的新片段及其 `<!-- rewind-context-v1 -->` 评论，调用用户在服务端 `.env` 中自行配置的 OpenAI 兼容模型接口生成四项结构化引用头 `Title`、`Session`、`Context` 与 `Keywords`。增强器生成的说明固定写在顶部 Markdown 引用块内，下方用户选中的原始文本逐字原样保留，确保日后回顾时一眼分清哪部分是当时保存的原话、哪部分是 AI 归纳的背景。
+
+客户端向外部 Agent 开放写入时执行同样严格的边界约束：
+
+- **元数据改写绝不动原文**，`update_snippet_metadata`（及 `coding-rewind update`）只允许重写首行标签与顶部引用块元数据（`Title`、`Session`、`Context`、`Keywords`），正文 `<verbatim_selected_markdown>` 100% 逐字节原样保留。
+- **AI 批注独立挂载**，`append_snippet_note`（及 `coding-rewind note`）通过 `POST /api/memos/<serverId>/comments?commentId=<noteCommentId>` 写入首行带 `<!-- rewind-note-v1 -->` 的 `PRIVATE` 评论（纯本机模式下写入 `<dataDir>/local_notes.json`），既不篡改主记录原文，也与采集上下文评论 `<!-- rewind-context-v1 -->` 严格隔离，由 `get_snippet` 单独解析为 `notes` 返回。
+- **只读开关与禁止 MCP 物理删除**，物理删除（`delete`）严格保留给桌面 HUD 与终端 CLI 的人工操作，绝不通过 `coding-rewind mcp` 向 AI 暴露；用户可随时在“设置 → 插件与权限 → AI 接入与权限”切换为只读（`ai_access_mode: "read_only"`）或设置环境变量 `CODING_REWIND_AI_ACCESS=read_only`（非空非法值同样按故障关闭降级为 `read_only`），实时阻断 `create_snippet`、`update_snippet_metadata`、`append_snippet_note` 与 `archive_snippet` 全部 4 个写入工具。
 
 ### 3. 客户端本地缓存与离线队列
 
 客户端不维护第二套长期业务数据库，仅保留最小运行态文件：
 
-- **macOS 桌面端**，在 `~/Library/Application Support/CodingRewind/` 下存放最近热流镜像 `hot_cache.json`、断网待发队列 `outbox.jsonl` 及仅含服务地址的 `config.json`。
+- **macOS 桌面端与 CLI / MCP**，在 `~/Library/Application Support/CodingRewind/` 下存放最近热流镜像 `hot_cache.json`、断网待发队列 `outbox.jsonl`、纯本机模式下的笔记文件 `local_notes.json`，以及仅存储 `memos_url` 与 `ai_access_mode`（`"read_only"` | `"read_write"`，默认 `"read_write"`，严禁存储任何访问令牌）的 `config.json`。设置页一键复制的 MCP JSON 配置同样只含固定二进制路径与参数，不含任何密钥。
 - **浏览器扩展端**，在 `chrome.storage.local` 存放用户配置的 `Memos` 地址、访问令牌以及上限 50 条的断网待发队列 `outbox`，重放成功后即刻移出队列。
 
 ### 4. 一键接聊的短期请求与宿主记录
 
-勾选卡片并点击开聊后，应用将原文、标题、脉络和出处组成提示词，交给所选的 Antigravity 或 Codex 创建新会话并发送。接聊不经过剪贴板。
+勾选卡片并点击开聊后，应用将卡片标识（`- 卡片 ID` / `- Clip ID`）、原文、标题、脉络和出处组成提示词（读写模式下附带 `append_snippet_note` / `create_snippet` 回写说明，只读模式下省略），交给所选的 Antigravity 或 Codex 创建新会话并发送。接聊不经过剪贴板。
 
 `<dataDir>/handoff/` 与 `<dataDir>/codex-handoff/` 分别保存两种宿主的请求，使用 `0700` 目录与 `0600` 文件。请求正文只用于本次交接，处理完成或过期后清除。回执保存请求编号、状态和成功时的会话编号，不保存提示词。进程中断后，无法确认的请求不会自动重发。
 
@@ -56,6 +62,6 @@ Codex 接聊通过官方 app-server 的私有标准输入管道传递完整提�
 
 ## 导出、删除与留存期限
 
-1. **自主导出**，由于全部片段以标准 Markdown 与清晰标签存于用户自托管的 `usememos/memos`，用户可随时通过 `Memos` 原生界面或 `/api/memos` 接口批量导出包含原文、脉络抬头、上下文评论、出处链接与时间戳的完整数据。
-2. **单条与全量删除**，通过桌面端毛玻璃浮窗、`coding-rewind delete <id>` 或在 `Memos` 中删除记录（或清空带 `#rewind/` 标签条目）时，关联的上下文评论随主记录一并移除，本机 `hot_cache.json` 与 `outbox.jsonl` 同步移除对应条目。为防止离线删漏导致重连复活，已同步至 `Memos` 的卡片在断网或未配置云端时拒绝离线物理删除，仅未上传的本地暂存可直接从离线队列清除。卸载浏览器扩展或清理浏览器本地存储会清除扩展内未发送的离线队列，已成功同步至 `Memos` 的记录不受影响。
+1. **自主导出**，由于全部片段以标准 Markdown 与清晰标签存于用户自托管的 `usememos/memos`，用户可随时通过 `Memos` 原生界面或 `/api/memos` 接口批量导出包含原文、脉络抬头、`<!-- rewind-context-v1 -->` 上下文评论、`<!-- rewind-note-v1 -->` AI 笔记评论、出处链接与时间戳的完整数据。
+2. **单条与全量删除**，物理删除仅限桌面端毛玻璃浮窗、终端 `coding-rewind delete <id>` 或 `Memos` 网页界面人工执行（绝不通过 MCP 向 AI 暴露）；删除记录（或清空带 `#rewind/` 标签条目）时，关联的上下文评论与 AI 笔记评论随主记录一并移除，本机 `hot_cache.json`、`outbox.jsonl` 与 `local_notes.json` 同步清理对应条目。为防止离线删漏导致重连复活，已同步至 `Memos` 的卡片在断网或未配置云端时拒绝离线物理删除，仅未上传的本地暂存可直接从离线队列清除。卸载浏览器扩展或清理浏览器本地存储会清除扩展内未发送的离线队列，已成功同步至 `Memos` 的记录不受影响。
 3. **热窗口冷却而非静默删除**，超过 72 小时的记录以及标记为 `#rewind/synthesized` 的已成文记录只是自然退出桌面毛玻璃热流浮窗，不会在后台被自动删除，用户仍可在 `Memos` 或通过 Antigravity `/rewind` 技能随时检索调阅。

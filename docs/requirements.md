@@ -85,7 +85,8 @@
 | 开源协议 | 决定 | 2026-11-11 | 全仓采用 MIT License 公开维护，严禁混入 GPL、AGPL、Commons Clause 或无许可源码 |
 | 统一后端与反胶水收敛 | 决定 | 2026-11-11 | 以阿里云轻量服务器自托管原版 `usememos/memos` 为唯一事实源，配合轻量幂等 AI 语境增强器与原生 `/mcp`，砍掉冗余本地 SQLite 业务库、重复自建编辑器与手写 MCP 服务 |
 | 极薄客户端与宿主协同 | 决定 | 2026-11-11 | macOS 端保持约三百五十行非激活毛玻璃菜单栏 HUD，网页端采用直连 Memos REST API 的 MV3 薄扩展，勾选卡片后经 `agentapi new-conversation` 与 `/rewind` 交回 Antigravity 完成场景 A 追问与场景 C 写稿 |
-| 单二进制 CLI 与领域 MCP 收敛 | 决定 | 2026-11-15 | 淘汰远端 41 个通用 Memos MCP 工具与 `memos-mcp-bridge.sh`，提供共用 `CodingRewindCore` 的单二进制 `coding-rewind`（CLI + 暴露 4 个领域工具的 `mcp` 子命令），支持按参数读取超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并替换 `servers.json` 接线 |
+| 单二进制 CLI 与领域 MCP 收敛 | 决定 | 2026-11-15 | 淘汰远端 41 个通用 Memos MCP 工具与 `memos-mcp-bridge.sh`，提供共用 `CodingRewindCore` 的单二进制 `coding-rewind`（CLI + 内嵌领域 `mcp` 子命令），支持按参数读取超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并替换 `servers.json` 接线 |
+| 向 AI 开放的三层写入与闭环入口 | 决定 | 2026-11-16 | 将 `coding-rewind mcp` 由 4 个领域工具扩展至 7 个（新增 `create_snippet`、`update_snippet_metadata`、`append_snippet_note`，绝不向 MCP 暴露物理删除），CLI 同步补齐 `create`、`update`、`note` 子命令；在“设置 → 插件与权限”新增“AI 接入与权限”分区（本地 MCP 状态、只读与读写权限开关、一键复制零明文 MCP JSON 配置）；`⌘Return` 接聊提示词携带卡片 ID 并在读写开启时引导宿主 AI 回写笔记或暂存新提纲 |
 
 ## 已记录的产品方向
 
@@ -109,7 +110,7 @@ MVP 闭环围绕四步主链路构建：
 1. **桌面与网页双端无感暂存**，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文弹出非激活“暂存”胶囊，或在任意 macOS 应用中按 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区并关联当前会话提问与近 4 轮记录；在 ChatGPT、Claude、Gemini 网页中通过选区上方“暂存”胶囊、右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 提取选区 Markdown 与近 4 轮对话直连写入 `Memos`，全程不抢焦点、不弹自定义协议确认框。
 2. **异步幂等 AI 脉络定锚**，VPS 端 `rewind-enricher` 读取片段及上下文评论，生成精炼标题、原会话主题、上下文摘要与关键词引用头，100% 保留用户选中原文一字不改。
 3. **72 小时毛玻璃热流速览与离线兜底**，按 `⌃⌥R` 呼出非激活毛玻璃面板查看近 72 小时热流卡片，断网时依赖 `hot_cache.json` 与 `outbox.jsonl` 实现毫秒级打开和后续幂等重放。
-4. **无缝接入主力宿主开展 A 与 C**，在 HUD 多选卡片按 `⌘Return` 带完整上下文拉起 Antigravity 或 Codex 新对话，或通过 `coding-rewind`（CLI 与 `coding-rewind mcp` 四个领域工具）检索引用片段辅助成文。
+4. **无缝接入主力宿主开展 A 与 C 并闭环回写**，在 HUD 多选卡片按 `⌘Return` 携带卡片 ID 与完整上下文拉起 Antigravity 或 Codex 新对话，或通过 `coding-rewind`（8 个 CLI 子命令与受只读/读写权限控制的 `coding-rewind mcp` 七个领域工具）检索引用片段、追加 AI 笔记、更新元数据或暂存新提纲草稿，让推演结论流回浮窗（物理删除仅保留给桌面端与终端人工操作，绝不向 MCP 暴露）。
 5. **数据自主可控**，依托自托管 `usememos/memos` 支持随时查看、导出、归档和彻底删除单条或全部记录。
 
 ## 当前非目标
@@ -153,4 +154,17 @@ MVP 闭环围绕四步主链路构建：
 
 > 1 .淘汰远端 41 个通用 Memos 工具。2. 允许 Agent 传入参数读取超过 72 小时或已标记 #rewind/synthesized 的历史片段。 3. 倾向于一步到位做出同二进制的 coding-rewind（同时包含 CLI 与 mcp 子命令并替换 servers.json 中的 memos-mcp-bridge.sh）
 
-已拍板：退役 `scripts/memos-mcp-bridge.sh`、`npx mcp-remote` 及远端 41 个通用 Memos MCP 工具，由共用 `CodingRewindCore` 的原生单二进制 `coding-rewind`（固定安装路径 `~/Library/Application Support/CodingRewind/bin/coding-rewind`）同时提供 CLI（`list`、`search`、`get`、`archive`）与内嵌 `coding-rewind mcp` stdio 服务（仅暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 四个领域工具），默认聚焦近 72 小时活跃片段，同时支持按参数查询超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并在断网时回退读取本机 `hot_cache.json` 与 `outbox.jsonl`。
+已拍板：退役 `scripts/memos-mcp-bridge.sh`、`npx mcp-remote` 及远端 41 个通用 Memos MCP 工具，由共用 `CodingRewindCore` 的原生单二进制 `coding-rewind`（固定安装路径 `~/Library/Application Support/CodingRewind/bin/coding-rewind`）同时提供 CLI（`list`、`search`、`get`、`archive`，后于 PR #36 补入人工与终端专用的 `delete`）与内嵌 `coding-rewind mcp` stdio 服务（首批暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 四个领域工具），默认聚焦近 72 小时活跃片段，同时支持按参数查询超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并在断网时回退读取本机 `hot_cache.json` 与 `outbox.jsonl`。
+
+## 2026-11-16 向 AI 开放的三层写入与闭环入口
+
+用户在当前会话拍板确认向 AI 开放受控写入能力与推演回流闭环：
+
+- **标记**，决定
+- **日期**，2026-11-16
+
+已拍板按协议层、应用可见层与工作流闭环三层落地：
+
+1. **协议层（MCP 与 CLI 领域写入扩展）**，将 `coding-rewind mcp` 由 4 个领域工具扩展为 7 个领域工具，在保留 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 的基础上新增 `create_snippet`（AI 直接暂存提纲、草稿或归纳结果，默认标记 `#source/agent`）、`update_snippet_metadata`（仅更新标题、会话主题、上下文摘要、关键词、自定义标签以及归档/取消归档状态，100% 逐字节保留选中原文不改动）与 `append_snippet_note`（通过首行带 `<!-- rewind-note-v1 -->` 的 Memos 私密评论追加 AI 笔记，与采集上下文评论 `<!-- rewind-context-v1 -->` 严格隔离，纯本机模式下存于 `<dataDir>/local_notes.json` 并由 `get_snippet` 解析返回 `notes`）。CLI 同步新增 `create`、`update`、`note` 子命令，形成 `list`、`search`、`get`、`create`、`update`、`note`、`archive`、`delete` 八个子命令。物理删除 `delete` 严格限定为桌面 HUD 与终端 CLI 的人工操作，绝不通过 MCP 向 AI 暴露。
+2. **应用可见层（AI 接入与权限面板）**，在桌面端“设置 → 插件与权限”下新增“AI 接入与权限”（`AI Access & Permissions`）分区，直观展示本机 MCP 服务就绪状态、只读与读写权限切换开关（持久化于 `<dataDir>/config.json` 的 `ai_access_mode` 字段，取值为 `"read_only"` 或 `"read_write"`，默认 `"read_write"`，绝不存储任何访问令牌；支持通过环境变量 `CODING_REWIND_AI_ACCESS=read_only|read_write` 覆盖并在界面禁用开关及标明环境管理来源，只读模式下 `coding-rewind mcp` 拒绝全部 4 个写入类工具 `create_snippet`、`update_snippet_metadata`、`append_snippet_note` 与 `archive_snippet`），以及面向 Claude Desktop、Cursor、Codex、Antigravity 等宿主的一键复制零明文 MCP JSON 配置按钮。
+3. **工作流闭环（接聊携带卡片 ID 与结论回流）**，浮窗勾选卡片按下 `⌘Return` 生成的宿主接聊提示词为每张卡片附带标识（中文 `- 卡片 ID`、英文 `- Clip ID`），并在开启 AI 读写权限时于末尾提示宿主 AI 可在推演成文后调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新整理的提纲草稿暂存回 Coding Rewind，使对话产出直接流回 HUD 热流池（只读模式下省略该回写引导）。
