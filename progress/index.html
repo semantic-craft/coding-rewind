@@ -3,8 +3,21 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-17T13:04:20.022485Z</p>
-<p>Main: <code>main: 7ef0e855c04dead6fa5f9c5650a740fcf362950a</code></p>
+<p>Observed: 2026-11-17T13:24:32.813507Z</p>
+<p>Main: <code>main: ea779fb95d09adadf746b8d6f59bcff1883cdcc7</code></p>
+<section id="release-060"><h2>0.6.0 正式发布（公证装订、浮窗接聊草稿框、直连 DeepSeek 官方 V4.1 Flash、来源留底与脉络抽屉）</h2>
+<article id="release-060-publication"><h3>v0.6.0 公证装订公开发布与公开包零凭据校验</h3><span class="badge">done</span><p>经 PR #43（合并提交 ea779fb95d09adadf746b8d6f59bcff1883cdcc7）将全端表面版本统一提升至 0.6.0（macOS build 9、单二进制 coding-rewind CLI/MCP 0.6.0、Antigravity 插件清单 0.6.0、Chrome Web Clipper 0.6.0 / 0.6.0.0），归入 PR #39（来源留底、W3C 文本锚点与浮窗脉络抽屉）、PR #40（发布公证装订流水线）、PR #41（浮窗可编辑接聊草稿框）与 PR #42（直连 DeepSeek 官方 V4.1 Flash API），通过全仓 ./scripts/check 六道门禁后打标 v0.6.0。运行 ./scripts/package-release.sh --notarize 完成 Developer ID（TeamIdentifier LQAVR62TK2）硬化运行时签名、Apple Notary 受理（submission_id b25dcd6e-4550-434a-9a0f-ee2d717ddf81，notary_status Accepted）与 stapler 离线票据装订，拆包核验确认不含 DeveloperCredentials.plist 且通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID），公开发布 GitHub Release v0.6.0 并上传双端压缩包与 SHA256SUMS.txt。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/43">pull 43: 全端表面版本号提升至 0.6.0（macOS build 9、CLI/MCP 0.6.0、插件 0.6.0、Web Clipper 0.6.0 / 0.6.0.0），通过 ./scripts/check 六道门禁后 squash 合并至 main。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/ea779fb95d09adadf746b8d6f59bcff1883cdcc7">commit ea779fb95d09adadf746b8d6f59bcff1883cdcc7: PR #43 合并提交并打标 v0.6.0，汇总 PR #39、#40、#41、#42 全部交付。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.6.0">release v0.6.0: 正式发布 Coding Rewind v0.6.0 公证装订双端压缩包与 SHA256SUMS.txt。</a></li>
+<li>note 2026-11-17 v0.6.0 Apple Notary 公证装订与公开产物拆包核验: submission_id b25dcd6e-4550-434a-9a0f-ee2d717ddf81（Accepted）；CodingRewind-v0.6.0-macos-arm64.zip（4222571 字节，SHA-256 15bbf0fc5ce7e85c26fd4649783a113e36e79371e742673fd01453a1a0050258）拆包确认不含 DeveloperCredentials.plist，Info.plist 读回 0.6.0 build 9，通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID）；CodingRewind-WebClipper-v0.6.0.zip（65111 字节，SHA-256 0400c1ed112dd93a32714b933f9e227e6e8eaa391cc009d419b0721ff5e611a8）；SHA256SUMS.txt（203 字节，SHA-256 1dd3f26eaf26f14b40b53e767456fb9f78cd882564415bed35e8158d5d1d2a24）。</li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/issues/14">issue 14: 跨浏览器生命周期与剩余实机覆盖继续单列跟踪。</a></li>
+</ul><p>Next: </p></article>
+<article id="release-060-local-upgrade-and-cleanup"><h3>本机 /Applications 升级至公证版 0.6.0（build 9）与测试构建/开发残留清理</h3><span class="badge">done</span><p>停止旧版后台进程并移除旧包后，直接将公开公证压缩包 CodingRewind-v0.6.0-macos-arm64.zip 解包安装至 /Applications/CodingRewind.app（0.6.0 build 9，CDHash e0a5bcd0a0d78f7a772432c0405c7ae4fa2eb66b），通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID）。以 --background 静默拉起（PID 57876）后，自动将 Contents/Helpers 下的 coding-rewind（SHA-256 4ca47547d08ce0e7fcbcf22211755f3be54e7d96f5185c8a6f7ffe4555492063）与 coding-rewind-sidecar（SHA-256 001922f80175706a31b26a4e362a778b7a2418fb28983a4a14a8d392e5e9deae）同步至 ~/Library/Application Support/CodingRewind/bin/（cmp 逐字节一致，coding-rewind --version 输出 coding-rewind 0.6.0），并将 ~/.gemini/config/plugins/coding-rewind/plugin.json 刷新为 0.6.0。随后彻底删除仓库 .build/、Vendor/KeyboardShortcuts/.build/、单测残留 ~/Library/Preferences/dev.codingrewind.tests.upgrade-integrity.plist、QA 缓存 ~/Library/Caches/dev.codingrewind.app.qa 及已合并临时分支引用，保留用户正式运行配置与热缓存不变。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.6.0">release v0.6.0: 直接使用公证装订正式包 CodingRewind-v0.6.0-macos-arm64.zip 替换安装 /Applications/CodingRewind.app。</a></li>
+<li>note 2026-11-17 本机公证版 0.6.0 覆盖升级与测试残留清零核验: /Applications/CodingRewind.app 主程序 SHA-256 a7df9966e9eb4dca5c86676eaa59690d345d28200a584e46c5af8316b744f0c3，CDHash e0a5bcd0a0d78f7a772432c0405c7ae4fa2eb66b，stapler validate 与 spctl Notarized Developer ID 通过，后台运行 PID 57876；bin/coding-rewind 与 bin/coding-rewind-sidecar 同 Contents/Helpers cmp 一致；git status --ignored -s 仅剩受管技能链接目录 .agents/，~/Library 仅保留正式版 dev.codingrewind.app。</li>
+</ul><p>Next: </p></article>
+</section>
 <section id="hud-draft-and-deepseek-v41-flash"><h2>浮窗接聊可编辑草稿框与云端直连 DeepSeek 官方 V4.1 Flash（PR #41 / #42）</h2>
 <article id="hud-draft-and-deepseek-impl"><h3>浮窗可编辑接聊草稿框（方案 A）与直连 DeepSeek 官方 V4.1 Flash（PR #41 / #42）</h3><span class="badge">done</span><p>完成两项改造并合入 main（PR #41 提交 21e76bb，PR #42 提交 7ef0e85）：（1）浮窗勾选卡片按 ⌘Return 或点击「开始对话」不再直发宿主，改为先展开可编辑多行接聊草稿框（光标定位于顶部指令处，支持 Esc 返回列表并保留同选集未发送手工修改、恢复默认、.nonactivatingPanel 编辑快捷键与中文输入法未上屏 Esc 保护），主按钮（⌘Return / 复制并唤醒 Antigravity 或 Codex）复制修改后文本并协作切换焦点供手动粘贴发送，次按钮保留「直接新建对话」；（2）停用 DashScope 中转，将 deploy/vps/ 默认配置与云端实例统一切换为直连 DeepSeek 官方 API（https://api.deepseek.com，模型 deepseek-flash 即 DeepSeek-V4.1-Flash，自动注入 thinking.type=disabled 与 json_object）。全仓 ./scripts/check 六道门禁与 check_swiftui_perf.py（0 告警）全部通过。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/41">pull 41: 落地浮窗可编辑接聊草稿框（方案 A）与云端 DashScope DeepSeek V4.1 Flash 模型切换，通过 ./scripts/check 六道门禁与 SwiftUI 静态性能检查后 squash 合入 main。</a></li>
@@ -501,6 +514,7 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.6.0">v0.6.0</a> 2026-11-17T13:17:46Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.5.0">v0.5.0</a> 2026-11-16T10:13:02Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.4.0">v0.4.0</a> 2026-11-15T23:55:24Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.3.2">v0.3.2</a> 2026-11-15T15:05:05Z (draft: False, prerelease: False)</li>
