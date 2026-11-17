@@ -468,20 +468,25 @@
           "evidence": [
             {
               "kind": "file",
-              "note": "已就绪的新版 enricher.py 与 docker-compose.yml（默认 AI_MODEL=deepseek-v4.1-flash）。",
+              "note": "远端 /srv/data/apps/coding-rewind/enricher/enricher.py（SHA-256 a2a6fa3139510d93f82e374ebcfeab659f9b0331335852ada9e365f5b51d3d12）与本地仓库逐字节一致。",
               "ref": "deploy/vps/enricher/enricher.py"
             },
             {
+              "kind": "file",
+              "note": "远端 /srv/data/apps/coding-rewind/docker-compose.yml（SHA-256 bf259059dbf1501436ccdbebd9b9eff72ae0cbf731ce0c41b49f1c35396be5fa）与本地仓库逐字节一致。",
+              "ref": "deploy/vps/docker-compose.yml"
+            },
+            {
               "kind": "note",
-              "note": "已盘点远端 aliyun-research 工作目录 /srv/data/apps/coding-rewind 现行 AI_MODEL=qwen-plus 并实测 deepseek-v4.1-flash 返回 HTTP 200 JSON；随后本机 1Password SSH Agent 会话自动锁定（communication with agent failed），待解锁后完成文件同步与容器重建。",
-              "ref": "2026-11-17 远端 aliyun-research 容器盘点与 1Password 锁定阻塞记录"
+              "note": "aliyun-research:/srv/data/apps/coding-rewind 执行 13/13 单测通过，原子切换 .env AI_MODEL=deepseek-v4.1-flash（保留 0600 权限且零重启 coding-rewind-memos-1），重建 coding-rewind-rewind-enricher-1（镜像 sha256:ba4db2cfb0f115503dc20c3b5f3ee4e2625d4fb7903c3a9163cba10a28a99fe1，healthy，/healthz 200）；真实写入 #rewind/pending + rewind-context-v1（含 Session Opening 与 Prompt）验收片段后经 5s 轮询自动由百炼 deepseek-v4.1-flash 生成 Title/Session/Context/Keywords 并翻转 #rewind/ready，原文逐字节一致（VERBATIM_EXACT_MATCH=1），验收片段已 DELETE 彻底清理。",
+              "ref": "2026-11-17 aliyun-research 生产容器切换与端到端剪藏摘要实测"
             }
           ],
           "id": "vps-enricher-deepseek-v41-flash-rollout",
-          "next": "在本机解锁 1Password 后将 deploy/vps/enricher/enricher.py 与 deploy/vps/docker-compose.yml 同步至 aliyun-research:/srv/data/apps/coding-rewind，把该目录 .env 的 AI_MODEL 更新为 deepseek-v4.1-flash 并执行 sudo docker compose up -d --build rewind-enricher。",
-          "status": "blocked",
-          "summary": "已在远端生产容器内用现有百炼业务空间端点与密钥实测确认 deepseek-v4.1-flash（enable_thinking: false + json_object）返回 HTTP 200 合法 JSON，且查明远端 /srv/data/apps/coding-rewind/.env 当前显式固定 AI_MODEL=qwen-plus；准备同步新版文件与切换 .env 时本机 1Password SSH Agent 自动锁定超时，需解锁 1Password 后执行最终容器重建。",
-          "title": "远端 VPS（aliyun-research）enricher 同步与 AI_MODEL=deepseek-v4.1-flash 切换"
+          "next": "",
+          "status": "done",
+          "summary": "将 deploy/vps/ 最新配置与 enricher.py 同步至 aliyun-research:/srv/data/apps/coding-rewind（SHA-256 逐字节一致，目标机 13/13 单测通过，清理历史残留备份与字节码缓存），将 .env 的 AI_MODEL 由 qwen-plus 原子更新为 deepseek-v4.1-flash（启用 REWIND_SUMMARY_LANGUAGE=auto），在不重启 coding-rewind-memos-1 的前提下完成 coding-rewind-rewind-enricher-1 原位重建与健康检查（/healthz 200，未签名 POST /webhook 正确拦截返回 401）。真实写入带 Session Opening 与 Prompt 的 #rewind/pending 验收片段后，容器在 5 秒轮询周期内调用百炼业务空间端点 deepseek-v4.1-flash 生成准确结构化抬头、翻转为 #rewind/ready 且 100% 保留原文字节，验收片段已即时 DELETE 清理零残留。",
+          "title": "远端 VPS（aliyun-research）enricher 同步与 AI_MODEL=deepseek-v4.1-flash 上线实测"
         }
       ],
       "title": "浮窗接聊可编辑草稿框与云端百炼 DeepSeek V4.1 Flash 切换（PR #41）"
@@ -561,10 +566,10 @@
             }
           ],
           "id": "provenance-web-extension-and-vps-rollout",
-          "next": "在桌面 Chrome 的 chrome://extensions 刷新本地解包扩展并实机划选普通网页核验 #:~:text= 滚屏标黄，按需将最新 deploy/vps/enricher/enricher.py 同步至远端 VPS 容器。",
+          "next": "在桌面 Chrome 的 chrome://extensions 刷新本地解包扩展并实机划选普通网页核验 #:~:text= 滚屏标黄。",
           "status": "unverified",
-          "summary": "新版 Web Clipper 的 Page Lead / #:~:text= 提取与 enricher.py 章节级代码剥离已完成 75 项扩展单测、12 项增强器单测及本机四端离线载荷联调，但尚未在登录态桌面 Chrome 重载解包扩展进行真实网页划词跳转验收，亦未部署替换远端 VPS 上的运行态 enricher 容器（旧容器对新评论格式保持前向兼容）。",
-          "title": "桌面浏览器解包扩展重载与远端 VPS enricher 同步实机待验"
+          "summary": "远端 aliyun-research 的 rewind-enricher 已随 PR #41 同步升级并完成 Session Opening / Page Lead 端到端实测；新版 Web Clipper 的 Page Lead / #:~:text= 提取已完成 75 项扩展单测及本机四端离线载荷联调，尚待在登录态桌面 Chrome 重载解包扩展进行真实网页划词跳转点检。",
+          "title": "桌面浏览器解包扩展重载实机待验（远端 VPS enricher 已同步）"
         }
       ],
       "title": "来源开头留底、W3C 文本锚点与浮窗脉络抽屉（PR #39）"
