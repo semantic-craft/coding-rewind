@@ -968,7 +968,7 @@ class EnricherUnitTests(unittest.TestCase):
         self.assertNotIn("enable_thinking", generic_payload)
         self.assertNotIn("thinking", generic_payload)
 
-        # Verify main() defaults AI_MODEL to deepseek-v4.1-flash against DashScope
+        # Verify main() defaults AI_BASE_URL to https://api.deepseek.com and AI_MODEL to deepseek-flash
         captured: dict = {}
 
         class _DummyServer:
@@ -982,7 +982,7 @@ class EnricherUnitTests(unittest.TestCase):
             os.environ.pop("AI_MODEL", None)
             os.environ.pop("AI_BASE_URL", None)
             os.environ["MEMOS_ACCESS_TOKEN"] = "memos-tok"
-            os.environ["AI_API_KEY"] = "dashscope-tok"
+            os.environ["AI_API_KEY"] = "deepseek-tok"
 
             class _NoopThread:
                 def __init__(self, *args, **kwargs) -> None:
@@ -999,8 +999,8 @@ class EnricherUnitTests(unittest.TestCase):
             enricher.create_http_server = _capture_server  # type: ignore[assignment]
             enricher.main()
             svc = captured["service"]
-            self.assertEqual(svc.ai_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
-            self.assertEqual(svc.ai_model, "deepseek-v4.1-flash")
+            self.assertEqual(svc.ai_base_url, "https://api.deepseek.com")
+            self.assertEqual(svc.ai_model, "deepseek-flash")
         finally:
             os.environ.clear()
             os.environ.update(orig_env)

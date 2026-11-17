@@ -18,7 +18,7 @@ cp .env.example .env
 2. 编辑 `.env`，填写兼容 OpenAI 接口的摘要模型参数与密钥。
 
 - `AI_API_KEY`，必填，模型调用密钥，未填写时 `rewind-enricher` 无法启动。
-- `AI_BASE_URL` 与 `AI_MODEL`，模型接口地址与模型名，默认使用阿里云百炼（DashScope）兼容端点（共享域名 `https://dashscope.aliyuncs.com/compatible-mode/v1` 或业务空间域名 `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`）与 `deepseek-v4.1-flash`（若直连 DeepSeek 官方 `https://api.deepseek.com`，模型名改为 `deepseek-flash`）。
+- `AI_BASE_URL` 与 `AI_MODEL`，模型接口地址与模型名，默认直连 DeepSeek 官方接口 `https://api.deepseek.com` 与 `deepseek-flash`（对应 `DeepSeek-V4.1-Flash` 非思考 JSON 模式；亦兼容其他 OpenAI `chat/completions` 端点）。
 - `REWIND_SUMMARY_LANGUAGE`，摘要语种模式，可选 `auto`（按剪藏正文自动判定中文或英文）、`zh-Hans` 或 `en`。
 - `MEMOS_IMAGE`、`MEMOS_DATA_DIR`、`MEMOS_BIND_ADDR`、`MEMOS_PORT`、`ENRICHER_BIND_ADDR` 与 `ENRICHER_PORT`，镜像版本、数据卷目录及监听端口，默认仅绑定 `127.0.0.1`。
 
