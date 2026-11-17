@@ -6,7 +6,7 @@ import Foundation
 
 public enum AntigravityIntegration {
     public static let pluginName = "coding-rewind"
-    public static let pluginVersion = "0.5.0"
+    public static let pluginVersion = "0.6.0"
 
     public enum Status: Equatable, Sendable {
         case installed(pluginDirectoryURL: URL)
