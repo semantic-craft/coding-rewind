@@ -135,4 +135,81 @@ extension AppStrings {
         case .en: return "Retry"
         }
     }
+
+    static func draftComposerTitle(count: Int, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "接聊草稿（已选 \(count) 条）"
+        case .en: return "Chat Draft (\(count) selected)"
+        }
+    }
+
+    static func draftComposerSubtitle(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "发送前可调整提示词 · 按 Esc 返回片段列表"
+        case .en: return "Adjust prompt before sending · Esc returns to clips"
+        }
+    }
+
+    static func draftEditorAccessibilityLabel(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "接聊提示词草稿"
+        case .en: return "Continue-conversation prompt draft"
+        }
+    }
+
+    static func draftResetButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "恢复默认"
+        case .en: return "Reset"
+        }
+    }
+
+    static func draftResetHelp(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "恢复为所选片段的默认提示词"
+        case .en: return "Reset to the default prompt for selected clips"
+        }
+    }
+
+    static func draftCloseLabel(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "返回片段列表"
+        case .en: return "Back to Clips"
+        }
+    }
+
+    static func draftBackButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "返回列表"
+        case .en: return "Back"
+        }
+    }
+
+    static func draftCopyAndWakeButton(hostName: String, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "复制并唤醒 \(hostName)"
+        case .en: return "Copy & Wake \(hostName)"
+        }
+    }
+
+    static func draftCopyAndWakeHelp(hostName: String, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "复制修改后的提示词并唤醒 \(hostName)，便于手动粘贴发送 (⌘↵)"
+        case .en: return "Copy edited draft and wake \(hostName) to paste and send manually (⌘↵)"
+        }
+    }
+
+    static func draftSendDirectButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "直接新建对话"
+        case .en: return "Send to New Chat"
+        }
+    }
+
+    static func draftSendDirectHelp(hostName: String, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "使用当前草稿在 \(hostName) 中直接创建并发送新对话"
+        case .en: return "Directly create and send a new chat in \(hostName) using this draft"
+        }
+    }
 }

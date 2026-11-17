@@ -225,6 +225,26 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                     break
                 }
             }
+            coord.onActivateHostApp = { [weak self] host in
+                let bundleID: String
+                switch host {
+                case .antigravity: bundleID = AppBundleID.antigravity
+                case .codex: bundleID = AppBundleID.codex
+                }
+                guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
+                    return false
+                }
+                self?.hudPanel?.orderOut(nil)
+                if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                    .first(where: { !$0.isTerminated }) {
+                    NSApplication.shared.yieldActivation(to: running)
+                    _ = running.activate()
+                }
+                let config = NSWorkspace.OpenConfiguration()
+                config.activates = true
+                NSWorkspace.shared.openApplication(at: appURL, configuration: config)
+                return true
+            }
             coord.onOpenConversation = { reference in
                 guard reference.host == .codex,
                       let threadID = UUID(uuidString: reference.id),
@@ -376,13 +396,58 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             triggerCapture(preferInPlacePopup: false)
         case .launchConversation, .launchIn:
             guard let coord = coordinator, !coord.isLaunchingConversation else { return }
-            if coord.cards.isEmpty {
-                hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+            let host: ConversationHost?
+            if case .launchIn(let target) = command { host = target } else { host = nil }
+
+            if coord.hasActiveHandoffConversation {
+                Task { @MainActor [weak self] in
+                    let outcome = await coord.launchChecked(in: host)
+                    guard let self else { return }
+                    self.statusItemController?.refreshIcon()
+                    if outcome == nil || coord.isErrorBanner {
+                        self.presentHUDNonActivating()
+                    }
+                }
+                return
             }
+
+            if coord.conversationDraft != nil {
+                if let host {
+                    coord.selectConversationDraftHost(host)
+                }
+                hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+                hudPanel?.focusDraftEditorIfPresent()
+                statusItemController?.refreshIcon()
+                return
+            }
+
+            if coord.openConversationDraft(in: host) {
+                hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+                hudPanel?.focusDraftEditorIfPresent()
+                statusItemController?.refreshIcon()
+            } else {
+                statusItemController?.refreshIcon()
+                if coord.cards.isEmpty {
+                    hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+                } else {
+                    presentHUDNonActivating()
+                }
+            }
+        case .copyDraftAndWakeHost:
+            guard let coord = coordinator, !coord.isLaunchingConversation else { return }
+            hudPanel?.commitDraftEditorIfPresent()
+            let woke = coord.copyConversationDraftAndWakeHost()
+            statusItemController?.refreshIcon()
+            if woke {
+                hudPanel?.orderOut(nil)
+            } else {
+                presentHUDNonActivating()
+            }
+        case .sendConversationDraft:
+            guard let coord = coordinator, !coord.isLaunchingConversation else { return }
+            hudPanel?.commitDraftEditorIfPresent()
             Task { @MainActor [weak self] in
-                let host: ConversationHost?
-                if case .launchIn(let target) = command { host = target } else { host = nil }
-                let outcome = await coord.launchChecked(in: host)
+                let outcome = await coord.sendConversationDraft()
                 guard let self else { return }
                 self.statusItemController?.refreshIcon()
                 if outcome == nil || coord.isErrorBanner {

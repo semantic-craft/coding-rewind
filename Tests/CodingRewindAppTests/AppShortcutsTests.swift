@@ -58,13 +58,16 @@ struct AppShortcutsTests {
         let operations = try #require(menu.items.first { $0.title == "操作" }?.submenu)
         let launch = try #require(operations.items.first { $0.keyEquivalent == "\r" })
         let action = try #require(launch.action)
+        #expect(NSApplication.shared.sendAction(action, to: launch.target, from: launch))
+        #expect(coordinator.conversationDraft != nil)
+        #expect(try coordinator.handoffStore(for: .antigravity).current() == nil)
         let persistedIntent: Bool = await withCheckedContinuation { continuation in
             coordinator.onWakeHost = { host in
                 #expect(host == .antigravity)
                 do {
                     let store = coordinator.handoffStore(for: host)
                     guard let current = try store.current() else {
-                        Issue.record("Menu launch did not persist a handoff")
+                        Issue.record("Direct draft send did not persist a handoff")
                         continuation.resume(returning: !archive)
                         return
                     }
@@ -75,7 +78,7 @@ struct AppShortcutsTests {
                     continuation.resume(returning: !archive)
                 }
             }
-            #expect(NSApplication.shared.sendAction(action, to: launch.target, from: launch))
+            delegate.perform(.sendConversationDraft)
         }
         #expect(persistedIntent == archive)
         #expect(try coordinator.handoffStore(for: .antigravity).current()?.markSynthesized == archive)
@@ -582,9 +585,20 @@ struct AppShortcutsTests {
         #expect(settings.connectionDraft.saveMessage == nil)
         settings.window?.close()
 
+        coord.checkedCardIDs = []
+        delegate.perform(.launchIn(.codex))
+        #expect(hud.isVisible)
+        #expect(coord.isErrorBanner)
+        hud.orderOut(nil)
+
         coord.checkedCardIDs = [card.id]
         delegate.perform(.launchIn(.codex))
-        for _ in 0..<40 where !hud.isVisible {
+        #expect(hud.isVisible)
+        #expect(coord.conversationDraft?.targetHost == .codex)
+        #expect(!coord.isErrorBanner)
+
+        delegate.perform(.sendConversationDraft)
+        for _ in 0..<40 where !coord.isErrorBanner {
             try await Task.sleep(for: .milliseconds(10))
         }
         #expect(hud.isVisible)
