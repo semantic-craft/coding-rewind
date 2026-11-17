@@ -12,6 +12,8 @@ public enum AppCommand: Equatable, Sendable {
     case captureSelectionHotkey
     case launchConversation
     case launchIn(ConversationHost)
+    case copyDraftAndWakeHost
+    case sendConversationDraft
     case refreshHotStream
     case openMemosWeb
     case installOrRepairPlugin

@@ -143,6 +143,25 @@ public enum CardDetailLoadState: Equatable, Sendable {
     case failed(partial: CardDetail?, message: String)
 }
 
+public struct ConversationDraft: Equatable, Sendable {
+    public var cardIDs: [String]
+    public var text: String
+    public var isEdited: Bool
+    public var targetHost: ConversationHost?
+
+    public init(
+        cardIDs: [String],
+        text: String,
+        isEdited: Bool = false,
+        targetHost: ConversationHost? = nil
+    ) {
+        self.cardIDs = cardIDs
+        self.text = text
+        self.isEdited = isEdited
+        self.targetHost = targetHost
+    }
+}
+
 @MainActor
 @Observable
 public final class AppCoordinator {
@@ -175,7 +194,17 @@ public final class AppCoordinator {
     private var conversationHostURL: URL { paths.dataDirectoryURL.appendingPathComponent("conversation-host.json") }
     public private(set) var activeConversationHost: ConversationHost?
     public private(set) var confirmedConversation: ConversationReference?
-    public var effectiveConversationHost: ConversationHost { activeConversationHost ?? conversationHost }
+    public private(set) var conversationDraft: ConversationDraft?
+    @ObservationIgnored private var stashedEditedDraft: ConversationDraft?
+    public var effectiveConversationHost: ConversationHost {
+        activeConversationHost ?? conversationDraft?.targetHost ?? conversationHost
+    }
+    public var hasActiveHandoffConversation: Bool {
+        if activeConversationHost != nil || canEndUnarchivedConversation || canEndUnconfirmedConversation {
+            return true
+        }
+        return (try? activeConversation()) != nil
+    }
     public var conversationActionTitle: String {
         L10n.conversationActionTitle(
             isLaunching: isLaunchingConversation,
@@ -249,6 +278,7 @@ public final class AppCoordinator {
     public var onOpenURL: (@MainActor (URL) -> Bool)?
     public var onCopyText: (@MainActor (String) -> Void) = { _ in }
     public var onWakeHost: (@MainActor (ConversationHost) -> Void)?
+    public var onActivateHostApp: (@MainActor (ConversationHost) -> Bool)?
     public var onOpenConversation: (@MainActor (ConversationReference) -> Bool)?
 
     public init(
@@ -347,6 +377,7 @@ public final class AppCoordinator {
             bannerMessage = L10n.banner(activeBannerNotice, in: language)
             isUpdatingBannerFromNotice = false
         }
+        refreshUneditedConversationDraftIfNeeded()
     }
 
     public func recordStartupWarning(_ message: String) {
@@ -393,6 +424,7 @@ public final class AppCoordinator {
     public func focusAndCheckCard(id: String) {
         guard cards.contains(where: { $0.id == id }) else { return }
         pendingDeleteConfirmation = nil
+        dismissConversationDraft()
         focusedCardID = id
         checkedCardIDs.insert(id)
     }
@@ -627,10 +659,13 @@ public final class AppCoordinator {
                 checkedCardIDs.remove(clientClipId)
                 checkedCardIDs.insert(saved.id)
                 focusedCardID = saved.id
+                let idRemap = (saved.id == clientClipId) ? [:] : [clientClipId: saved.id]
                 if saved.id != clientClipId {
                     try? LocalNotesStore(fileURL: paths.localNotesFileURL).remapCardID(from: clientClipId, to: saved.id)
                 }
                 remapCardDetailState(from: clientClipId, to: saved.id)
+                reconcilePendingDeleteConfirmation(idRemapping: idRemap)
+                reconcileConversationDraftState(idRemapping: idRemap)
                 reconcileInspectedCardVisibility()
                 if inspectedCardID == saved.id, cachedCardDetails[saved.id]?.isCompleteFromServer != true {
                     reloadCardDetail(id: saved.id)
@@ -659,6 +694,8 @@ public final class AppCoordinator {
                         ? previousFocusedCardID
                         : cards.first?.id
                 }
+                reconcilePendingDeleteConfirmation()
+                reconcileConversationDraftState()
             }
             let rewindError = (error as? RewindError) ?? .ioError(error.localizedDescription)
             setBanner(.rewindError(rewindError), isError: true)
@@ -677,6 +714,7 @@ public final class AppCoordinator {
                 focusedCardID = cards.first?.id
             }
             reconcilePendingDeleteConfirmation()
+            reconcileConversationDraftState()
             reconcileInspectedCardVisibility()
             pruneRemovedCardDetails()
             if let currentInspected = inspectedCardID {
@@ -702,11 +740,13 @@ public final class AppCoordinator {
                 focusedCardID = cards.first?.id
             }
             reconcilePendingDeleteConfirmation()
+            reconcileConversationDraftState()
             invalidateAndReconcileCardDetailsAfterRefresh()
         } catch {
             guard canPublishRefresh(ticket) else { return }
             cards = Self.mergeCards(cached: cards, pendingOutbox: activeOutboxEntries())
             reconcilePendingDeleteConfirmation()
+            reconcileConversationDraftState()
             reconcileInspectedCardVisibility()
             pruneRemovedCardDetails()
             setBanner(.syncFailedShowingLocal, isError: true)
@@ -842,6 +882,7 @@ public final class AppCoordinator {
             focusedCardID = cards.first?.id
         }
         reconcilePendingDeleteConfirmation(idRemapping: remappedIDs)
+        reconcileConversationDraftState(idRemapping: remappedIDs)
         reconcileInspectedCardVisibility()
         if let currentInspected = inspectedCardID,
            flushedTargetIDs.contains(currentInspected),
@@ -855,7 +896,163 @@ public final class AppCoordinator {
     }
 
     @discardableResult
-    public func launchChecked(in requestedHost: ConversationHost? = nil, waitSeconds: TimeInterval = 40) async -> ConversationLaunchResult? {
+    public func openConversationDraft(in requestedHost: ConversationHost? = nil) -> Bool {
+        guard !isLaunchingConversation, !isMutatingCards, !hasActiveHandoffConversation else {
+            return false
+        }
+        pendingDeleteConfirmation = nil
+        closeCardPreview()
+        let selected = cards.filter { checkedCardIDs.contains($0.id) }
+        guard !selected.isEmpty else {
+            setBanner(.selectAtLeastOneCard, isError: true)
+            return false
+        }
+        let effectiveAIAccessMode = paths.resolveAIAccessMode(environment: environment)
+        aiAccessMode = effectiveAIAccessMode
+        let selectedIDs = selected.map(\.id)
+        if var existing = conversationDraft, existing.cardIDs == selectedIDs, existing.isEdited {
+            if let requestedHost {
+                existing.targetHost = requestedHost
+            }
+            conversationDraft = existing
+            stashedEditedDraft = existing
+            bannerMessage = nil
+            isErrorBanner = false
+            return true
+        }
+        if var stashed = stashedEditedDraft, stashed.cardIDs == selectedIDs, stashed.isEdited {
+            if let requestedHost {
+                stashed.targetHost = requestedHost
+            }
+            conversationDraft = stashed
+            stashedEditedDraft = stashed
+            bannerMessage = nil
+            isErrorBanner = false
+            return true
+        }
+        stashedEditedDraft = nil
+        let prompt = ConversationPrompt.buildPrompt(
+            for: selected,
+            language: language,
+            aiAccessMode: effectiveAIAccessMode
+        )
+        conversationDraft = ConversationDraft(
+            cardIDs: selectedIDs,
+            text: prompt,
+            isEdited: false,
+            targetHost: requestedHost
+        )
+        bannerMessage = nil
+        isErrorBanner = false
+        return true
+    }
+
+    public func updateConversationDraftText(_ text: String) {
+        guard var draft = conversationDraft, draft.text != text else { return }
+        draft.text = text
+        draft.isEdited = true
+        conversationDraft = draft
+        stashedEditedDraft = draft
+    }
+
+    public func selectConversationDraftHost(_ host: ConversationHost) {
+        conversationHost = host
+        if var draft = conversationDraft {
+            draft.targetHost = host
+            conversationDraft = draft
+            if draft.isEdited {
+                stashedEditedDraft = draft
+            }
+        }
+    }
+
+    public func resetConversationDraft() {
+        guard let draft = conversationDraft else { return }
+        stashedEditedDraft = nil
+        let checked = cards.filter { checkedCardIDs.contains($0.id) }
+        let targetCards: [RewindCard]
+        if !checked.isEmpty {
+            targetCards = checked
+        } else {
+            let idSet = Set(draft.cardIDs)
+            targetCards = cards.filter { idSet.contains($0.id) }
+        }
+        guard !targetCards.isEmpty else {
+            conversationDraft = nil
+            setBanner(.selectAtLeastOneCard, isError: true)
+            return
+        }
+        let effectiveAIAccessMode = paths.resolveAIAccessMode(environment: environment)
+        aiAccessMode = effectiveAIAccessMode
+        let prompt = ConversationPrompt.buildPrompt(
+            for: targetCards,
+            language: language,
+            aiAccessMode: effectiveAIAccessMode
+        )
+        conversationDraft = ConversationDraft(
+            cardIDs: targetCards.map(\.id),
+            text: prompt,
+            isEdited: false,
+            targetHost: draft.targetHost
+        )
+    }
+
+    public func dismissConversationDraft() {
+        if let draft = conversationDraft, draft.isEdited {
+            stashedEditedDraft = draft
+        }
+        if conversationDraft != nil {
+            conversationDraft = nil
+        }
+    }
+
+    @discardableResult
+    public func copyConversationDraftAndWakeHost(in requestedHost: ConversationHost? = nil) -> Bool {
+        guard !isLaunchingConversation, let draft = conversationDraft else { return false }
+        let cleaned = draft.text.replacingOccurrences(of: "\0", with: "")
+        guard !cleaned.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            setBanner(.emptyConversationDraft, isError: true)
+            return false
+        }
+        let host = activeConversationHost ?? requestedHost ?? draft.targetHost ?? conversationHost
+        onCopyText(cleaned)
+        conversationDraft = nil
+        stashedEditedDraft = nil
+        let wokeHost: Bool
+        if let onActivateHostApp {
+            wokeHost = onActivateHostApp(host)
+        } else if let onWakeHost {
+            onWakeHost(host)
+            wokeHost = true
+        } else {
+            wokeHost = false
+        }
+        setBanner(
+            wokeHost ? .copiedDraftAndWokeHost(host) : .copiedDraftHostUnavailable(host),
+            isError: !wokeHost
+        )
+        return wokeHost
+    }
+
+    @discardableResult
+    public func sendConversationDraft(
+        in requestedHost: ConversationHost? = nil,
+        waitSeconds: TimeInterval = 40
+    ) async -> ConversationLaunchResult? {
+        guard let draft = conversationDraft else { return nil }
+        return await launchChecked(
+            in: requestedHost ?? draft.targetHost,
+            customPrompt: draft.text,
+            waitSeconds: waitSeconds
+        )
+    }
+
+    @discardableResult
+    public func launchChecked(
+        in requestedHost: ConversationHost? = nil,
+        customPrompt: String? = nil,
+        waitSeconds: TimeInterval = 40
+    ) async -> ConversationLaunchResult? {
         guard !isLaunchingConversation, !isMutatingCards else { return nil }
         pendingDeleteConfirmation = nil
         isLaunchingConversation = true
@@ -871,28 +1068,58 @@ public final class AppCoordinator {
                 channel = hostChannel(for: existingHost)
                 current = existing
             } else {
-                host = requestedHost ?? conversationHost
+                host = requestedHost ?? conversationDraft?.targetHost ?? conversationHost
                 channel = hostChannel(for: host)
-                let selected = cards.filter { checkedCardIDs.contains($0.id) }
-                guard !selected.isEmpty else {
-                    setBanner(.selectAtLeastOneCard, isError: true)
-                    return nil
+                let promptToSend: String
+                let targetCardIDs: [String]
+                if let customPrompt {
+                    let sanitized = customPrompt.replacingOccurrences(of: "\0", with: "")
+                    guard !sanitized.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        setBanner(.emptyConversationDraft, isError: true)
+                        return nil
+                    }
+                    let liveIDSet = Set(cards.map(\.id))
+                    if let draft = conversationDraft {
+                        targetCardIDs = draft.cardIDs.filter { liveIDSet.contains($0) }
+                        guard !targetCardIDs.isEmpty || draft.isEdited else {
+                            conversationDraft = nil
+                            setBanner(.selectAtLeastOneCard, isError: true)
+                            return nil
+                        }
+                    } else {
+                        targetCardIDs = cards.filter { checkedCardIDs.contains($0.id) }.map(\.id)
+                        guard !targetCardIDs.isEmpty else {
+                            setBanner(.selectAtLeastOneCard, isError: true)
+                            return nil
+                        }
+                    }
+                    promptToSend = sanitized
+                } else {
+                    let selected = cards.filter { checkedCardIDs.contains($0.id) }
+                    guard !selected.isEmpty else {
+                        setBanner(.selectAtLeastOneCard, isError: true)
+                        return nil
+                    }
+                    let effectiveAIAccessMode = paths.resolveAIAccessMode(environment: environment)
+                    aiAccessMode = effectiveAIAccessMode
+                    promptToSend = ConversationPrompt.buildPrompt(
+                        for: selected,
+                        language: language,
+                        aiAccessMode: effectiveAIAccessMode
+                    )
+                    targetCardIDs = selected.map(\.id)
                 }
                 if let failureBanner = channel.readinessFailure() {
                     setBanner(failureBanner, isError: true)
                     return nil
                 }
-                let effectiveAIAccessMode = paths.resolveAIAccessMode(environment: environment)
-                aiAccessMode = effectiveAIAccessMode
                 current = try channel.store.submit(
-                    prompt: ConversationPrompt.buildPrompt(
-                        for: selected,
-                        language: language,
-                        aiAccessMode: effectiveAIAccessMode
-                    ),
-                    cardIDs: selected.map(\.id),
-                    markSynthesized: markSynthesizedOnLaunch
+                    prompt: promptToSend,
+                    cardIDs: targetCardIDs,
+                    markSynthesized: markSynthesizedOnLaunch && !targetCardIDs.isEmpty
                 )
+                conversationDraft = nil
+                stashedEditedDraft = nil
             }
             let store = channel.store
             activeConversationHost = host
@@ -948,7 +1175,7 @@ public final class AppCoordinator {
                         }
                         setBanner(
                             opened
-                                ? .sentToNewConversation(count: current.cardIDs.count, host: host)
+                                ? .sentToNewConversation(count: max(1, current.cardIDs.count), host: host)
                                 : .sentOpenConversationFailed(host),
                             isError: !opened
                         )
@@ -1249,6 +1476,8 @@ public final class AppCoordinator {
         }
         updateLocalCards { $0.removeAll { removedIDs.contains($0.id) } }
         focusedCardID = nextFocusedCardID(afterRemoving: removedIDs, previousFilteredIDs: previousFilteredIDs)
+        reconcilePendingDeleteConfirmation()
+        reconcileConversationDraftState()
     }
 
     private func nextFocusedCardID(
@@ -1355,6 +1584,7 @@ public final class AppCoordinator {
             return
         }
         guard filteredCards.contains(where: { $0.id == id }) else { return }
+        dismissConversationDraft()
         focusedCardID = id
         inspectedCardID = id
         if let cached = cachedCardDetails[id], cached.isCompleteFromServer {
@@ -1472,9 +1702,73 @@ public final class AppCoordinator {
         if pendingDeleteConfirmation != nil {
             pendingDeleteConfirmation = nil
         }
+        dismissConversationDraft()
         if inspectedCardID != nil {
             inspectedCardID = nil
         }
+    }
+
+    private func remapAndDeduplicateCardIDs(_ rawIDs: [String], idRemapping: [String: String]) -> [String] {
+        var seen: Set<String> = []
+        var remapped: [String] = []
+        for rawID in rawIDs {
+            let resolved = idRemapping[rawID] ?? rawID
+            if seen.insert(resolved).inserted {
+                remapped.append(resolved)
+            }
+        }
+        return remapped
+    }
+
+    private func reconcileConversationDraftState(idRemapping: [String: String] = [:]) {
+        let liveIDSet = Set(cards.map(\.id))
+        if var stashed = stashedEditedDraft {
+            let mapped = remapAndDeduplicateCardIDs(stashed.cardIDs, idRemapping: idRemapping)
+                .filter { liveIDSet.contains($0) }
+            if mapped.isEmpty {
+                stashedEditedDraft = nil
+            } else {
+                stashed.cardIDs = mapped
+                stashedEditedDraft = stashed
+            }
+        }
+        guard var draft = conversationDraft else { return }
+        let mappedIDs = remapAndDeduplicateCardIDs(draft.cardIDs, idRemapping: idRemapping)
+        let liveIDs = mappedIDs.filter { liveIDSet.contains($0) }
+        if draft.isEdited {
+            draft.cardIDs = liveIDs
+            conversationDraft = draft
+            if !liveIDs.isEmpty {
+                stashedEditedDraft = draft
+            } else {
+                stashedEditedDraft = nil
+            }
+            return
+        }
+        let targetIDSet = Set(liveIDs)
+        let targetCards = cards.filter { targetIDSet.contains($0.id) }
+        guard !targetCards.isEmpty else {
+            conversationDraft = nil
+            return
+        }
+        let effectiveAIAccessMode = paths.resolveAIAccessMode(environment: environment)
+        aiAccessMode = effectiveAIAccessMode
+        let prompt = ConversationPrompt.buildPrompt(
+            for: targetCards,
+            language: language,
+            aiAccessMode: effectiveAIAccessMode
+        )
+        conversationDraft = ConversationDraft(
+            cardIDs: targetCards.map(\.id),
+            text: prompt,
+            isEdited: false,
+            targetHost: draft.targetHost
+        )
+    }
+
+    private func refreshUneditedConversationDraftIfNeeded() {
+        guard let draft = conversationDraft, !draft.isEdited else { return }
+        reconcileConversationDraftState()
     }
 
     private func cancelActiveDetailTask() {
@@ -1558,6 +1852,7 @@ public final class AppCoordinator {
         do {
             try paths.saveAIAccessMode(mode)
             aiAccessMode = mode
+            refreshUneditedConversationDraftIfNeeded()
             setBanner(.savedAIAccessMode(mode), isError: false)
         } catch {
             setErrorBanner(error)
@@ -1701,7 +1996,12 @@ public final class AppCoordinator {
                 byID[parsed.id] = parsed
             }
         }
-        return byID.values.sorted { $0.createdAt > $1.createdAt }
+        return byID.values.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt > rhs.createdAt
+            }
+            return lhs.id < rhs.id
+        }
     }
 
     private func setBanner(_ notice: BannerNotice, isError: Bool) {

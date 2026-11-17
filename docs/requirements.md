@@ -88,6 +88,7 @@
 | 单二进制 CLI 与领域 MCP 收敛 | 决定 | 2026-11-15 | 淘汰远端 41 个通用 Memos MCP 工具与 `memos-mcp-bridge.sh`，提供共用 `CodingRewindCore` 的单二进制 `coding-rewind`（CLI + 内嵌领域 `mcp` 子命令），支持按参数读取超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并替换 `servers.json` 接线 |
 | 向 AI 开放的三层写入与闭环入口 | 决定 | 2026-11-16 | 将 `coding-rewind mcp` 由 4 个领域工具扩展至 7 个（新增 `create_snippet`、`update_snippet_metadata`、`append_snippet_note`，绝不向 MCP 暴露物理删除），CLI 同步补齐 `create`、`update`、`note` 子命令；在“设置 → 插件与权限”新增“AI 接入与权限”分区（本地 MCP 状态、只读与读写权限开关、一键复制零明文 MCP JSON 配置）；`⌘Return` 接聊提示词携带卡片 ID 并在读写开启时引导宿主 AI 回写笔记或暂存新提纲 |
 | 来源开头留底、浮窗脉络抽屉与分平台回溯 | 决定 | 2026-11-16 | 不采用高权限打扰且不可检索的截图留底；AI 对话额外留存会话 ID 与首轮开场白（`Session Opening`，前 300 字），普通网页提取 `h1`、导语及正文开头数行（`Page Lead`）喂给 `enricher.py` 并生成 W3C `#:~:text=` 精确到句子的高亮回跳链接；浮窗内增设停靠式“脉络”预览抽屉（原地看完整原文、开头留底、提问与笔记），并以 `SourceLocator` 区分网页打开与 Antigravity 会话 ID 复制 |
+| 浮窗可编辑接聊草稿框与云端 DeepSeek V4.1 Flash | 决定 | 2026-11-17 | 勾选卡片按 `⌘Return`（或点击“开始对话”）不再直接发往宿主 Agent，而是先在浮窗内展开可编辑多行接聊草稿框（`Esc` 返回列表），主操作默认一键复制修改后的提示词并唤醒所选宿主（Antigravity / Codex）手动粘贴发送，次按钮保留“直接新建对话”；云端 `rewind-enricher` 对接阿里云百炼 DashScope 兼容接口时默认模型切换为 `deepseek-v4.1-flash`（非思考 JSON 模式，直连 DeepSeek 官方 API 时对应 `deepseek-flash`） |
 
 ## 已记录的产品方向
 
@@ -111,7 +112,7 @@ MVP 闭环围绕四步主链路构建：
 1. **桌面与网页双端无感暂存**，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文弹出非激活“暂存”胶囊，或在任意 macOS 应用中按 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区并关联当前会话提问与近 4 轮记录；在 ChatGPT、Claude、Gemini 网页中通过选区上方“暂存”胶囊、右键菜单、`⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 提取选区 Markdown 与近 4 轮对话直连写入 `Memos`，全程不抢焦点、不弹自定义协议确认框。
 2. **异步幂等 AI 脉络定锚**，VPS 端 `rewind-enricher` 读取片段及上下文评论，生成精炼标题、原会话主题、上下文摘要与关键词引用头，100% 保留用户选中原文一字不改。
 3. **72 小时毛玻璃热流速览与离线兜底**，按 `⌃⌥R` 呼出非激活毛玻璃面板查看近 72 小时热流卡片，断网时依赖 `hot_cache.json` 与 `outbox.jsonl` 实现毫秒级打开和后续幂等重放。
-4. **无缝接入主力宿主开展 A 与 C 并闭环回写**，在 HUD 多选卡片按 `⌘Return` 携带卡片 ID 与完整上下文拉起 Antigravity 或 Codex 新对话，或通过 `coding-rewind`（8 个 CLI 子命令与受只读/读写权限控制的 `coding-rewind mcp` 七个领域工具）检索引用片段、追加 AI 笔记、更新元数据或暂存新提纲草稿，让推演结论流回浮窗（物理删除仅保留给桌面端与终端人工操作，绝不向 MCP 暴露）。
+4. **无缝接入主力宿主开展 A 与 C 并闭环回写**，在 HUD 多选卡片按 `⌘Return` 先在浮窗内展开带卡片 ID 与完整上下文的可编辑接聊草稿框（默认一键复制修改后提示词并唤醒 Antigravity 或 Codex 粘贴发送，可选直接新建对话），或通过 `coding-rewind`（8 个 CLI 子命令与受只读/读写权限控制的 `coding-rewind mcp` 七个领域工具）检索引用片段、追加 AI 笔记、更新元数据或暂存新提纲草稿，让推演结论流回浮窗（物理删除仅保留给桌面端与终端人工操作，绝不向 MCP 暴露）。
 5. **数据自主可控**，依托自托管 `usememos/memos` 支持随时查看、导出、归档和彻底删除单条或全部记录。
 
 ## 当前非目标
@@ -169,3 +170,15 @@ MVP 闭环围绕四步主链路构建：
 1. **协议层（MCP 与 CLI 领域写入扩展）**，将 `coding-rewind mcp` 由 4 个领域工具扩展为 7 个领域工具，在保留 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet` 的基础上新增 `create_snippet`（AI 直接暂存提纲、草稿或归纳结果，默认标记 `#source/agent`）、`update_snippet_metadata`（仅更新标题、会话主题、上下文摘要、关键词、自定义标签以及归档/取消归档状态，100% 逐字节保留选中原文不改动）与 `append_snippet_note`（通过首行带 `<!-- rewind-note-v1 -->` 的 Memos 私密评论追加 AI 笔记，与采集上下文评论 `<!-- rewind-context-v1 -->` 严格隔离，纯本机模式下存于 `<dataDir>/local_notes.json` 并由 `get_snippet` 解析返回 `notes`）。CLI 同步新增 `create`、`update`、`note` 子命令，形成 `list`、`search`、`get`、`create`、`update`、`note`、`archive`、`delete` 八个子命令。物理删除 `delete` 严格限定为桌面 HUD 与终端 CLI 的人工操作，绝不通过 MCP 向 AI 暴露。
 2. **应用可见层（AI 接入与权限面板）**，在桌面端“设置 → 插件与权限”下新增“AI 接入与权限”（`AI Access & Permissions`）分区，直观展示本机 MCP 服务就绪状态、只读与读写权限切换开关（持久化于 `<dataDir>/config.json` 的 `ai_access_mode` 字段，取值为 `"read_only"` 或 `"read_write"`，默认 `"read_write"`，绝不存储任何访问令牌；支持通过环境变量 `CODING_REWIND_AI_ACCESS=read_only|read_write` 覆盖并在界面禁用开关及标明环境管理来源，只读模式下 `coding-rewind mcp` 拒绝全部 4 个写入类工具 `create_snippet`、`update_snippet_metadata`、`append_snippet_note` 与 `archive_snippet`），以及面向 Claude Desktop、Cursor、Codex、Antigravity 等宿主的一键复制零明文 MCP JSON 配置按钮。
 3. **工作流闭环（接聊携带卡片 ID 与结论回流）**，浮窗勾选卡片按下 `⌘Return` 生成的宿主接聊提示词为每张卡片附带标识（中文 `- 卡片 ID`、英文 `- Clip ID`），并在开启 AI 读写权限时于末尾提示宿主 AI 可在推演成文后调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新整理的提纲草稿暂存回 Coding Rewind，使对话产出直接流回 HUD 热流池（只读模式下省略该回写引导）。
+
+## 2026-11-17 浮窗可编辑接聊草稿框与云端 DeepSeek V4.1 Flash 切换
+
+用户在当前会话明确接聊发送前调整环节与云端摘要模型切换要求：
+
+> 1 .接聊交互方式：你更倾向于 方案 A（浮窗内先弹出可编辑草稿框，默认一键复制并唤醒 Antigravity 去粘贴发送，可选保留直接建会话按钮），
+> 2. 云端的AI用的是qwen的 dashscope key，那么模型你要看一下deepseek最新的官方文档，给我改成用deepseek官方最新的 4.1 flash
+
+已拍板：
+
+1. **接聊发送前草稿框（方案 A）**，浮窗勾选片段后按 `⌘Return` 或点击“开始对话”不再直接触发宿主 Agent 创建会话，而是先在浮窗内展开可编辑多行接聊草稿框（按 `Esc` 或点击“返回列表”退回卡片列表，未发送的手工修改在同一选集下保留，可随时“恢复默认”）；主操作（`⌘Return` / “复制并唤醒 Antigravity”或“复制并唤醒 Codex”）将调整后的文本写入剪贴板并激活目标宿主供手动粘贴发送，同时保留“直接新建对话”次要按钮按编辑后文本创建新会话。
+2. **云端摘要模型切换为 DeepSeek V4.1 Flash**，核对阿里云百炼（DashScope）与 DeepSeek 官方文档后，将 `deploy/vps/` 默认 `AI_MODEL` 由 `qwen-plus` 切换为百炼兼容端点的 `deepseek-v4.1-flash`（自动注入 `"enable_thinking": false` 配合 `json_object` 非流式结构化输出；直连 `api.deepseek.com` 时对应 `deepseek-flash` 与 `{"thinking": {"type": "disabled"}}`）。

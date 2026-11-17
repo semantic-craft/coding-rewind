@@ -189,7 +189,12 @@ public struct MemosClient: Sendable {
             }
             pageToken = decoded.nextPageToken
         } while pageToken?.isEmpty == false
-        return cardsByID.values.sorted { $0.createdAt > $1.createdAt }
+        return cardsByID.values.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt {
+                return lhs.createdAt > rhs.createdAt
+            }
+            return lhs.id < rhs.id
+        }
     }
 
     /// Probes the list endpoint with one record to confirm the URL, token and response shape.

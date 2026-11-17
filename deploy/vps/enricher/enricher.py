@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Literal
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 import base64, hashlib, hmac, json, os, re, sys, threading, time, urllib.request
 
 SummaryLanguage = Literal["zh-Hans", "en", "auto"]
@@ -208,6 +208,37 @@ def _parse_ai_json(raw_text: str) -> dict:
     raise ValueError("AI response did not contain a JSON object")
 
 
+def _build_chat_completion_payload(
+    ai_base_url: str, ai_model: str, sys_prompt: str, user_prompt: str
+) -> dict:
+    payload: dict = {
+        "model": ai_model,
+        "temperature": 0.2,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": sys_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    model_lower = (ai_model or "").strip().lower()
+    is_deepseek_model = model_lower.startswith("deepseek") or "/deepseek" in model_lower
+    if (
+        is_deepseek_model
+        and "r1" not in model_lower
+        and "reasoner" not in model_lower
+    ):
+        host = (urlparse(ai_base_url or "").hostname or "").lower()
+        if host == "api.deepseek.com" or host.endswith(".deepseek.com"):
+            payload["thinking"] = {"type": "disabled"}
+        elif (
+            host == "aliyuncs.com"
+            or host.endswith(".aliyuncs.com")
+            or "dashscope" in host
+        ):
+            payload["enable_thinking"] = False
+    return payload
+
+
 def _json_req(method: str, url: str, token: str, payload: dict | None = None, timeout: float = 20.0) -> dict:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Accept": "application/json", "Authorization": f"Bearer {token}", **({"Content-Type": "application/json"} if data else {})}
@@ -254,11 +285,16 @@ class EnricherService:
             "captured_chat_context": ctx_text or None,
             "source": parsed["source_line"] or None,
         }, ensure_ascii=False)
-        ai_resp = _json_req("POST", f"{self.ai_base_url.rstrip('/')}/chat/completions", self.ai_api_key, {
-            "model": self.ai_model, "temperature": 0.2, "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": sys_prompt}, {"role": "user", "content": prompt}],
-        })
-        raw_json = ai_resp["choices"][0]["message"]["content"]
+        req_payload = _build_chat_completion_payload(
+            self.ai_base_url, self.ai_model, sys_prompt, prompt
+        )
+        ai_resp = _json_req(
+            "POST",
+            f"{self.ai_base_url.rstrip('/')}/chat/completions",
+            self.ai_api_key,
+            req_payload,
+        )
+        raw_json = ai_resp["choices"][0]["message"].get("content") or ""
         _json_req(
             "PATCH",
             f"{base}/api/memos/{memo_id}?updateMask=content",
@@ -336,7 +372,7 @@ def main() -> None:
         memos_token=os.environ["MEMOS_ACCESS_TOKEN"],
         ai_base_url=os.environ.get("AI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         ai_api_key=os.environ["AI_API_KEY"],
-        ai_model=os.environ.get("AI_MODEL", "qwen-plus"),
+        ai_model=os.environ.get("AI_MODEL", "deepseek-v4.1-flash"),
         webhook_secret=os.environ.get("REWIND_WEBHOOK_SECRET", ""),
         poll_interval=float(os.environ.get("POLL_INTERVAL_SECONDS", "5")),
         ctx_wait_seconds=float(os.environ.get("CTX_WAIT_SECONDS", "15")),

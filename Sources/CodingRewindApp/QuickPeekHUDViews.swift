@@ -66,8 +66,15 @@ public final class QuickPeekHUDPanel: NSPanel {
     public override var canBecomeMain: Bool { false }
 
     public override func cancelOperation(_ sender: Any?) {
+        guard !hasMarkedTextInput else { return }
         if coordinator.pendingDeleteConfirmation != nil {
             coordinator.cancelDeleteConfirmation()
+            return
+        }
+        if coordinator.conversationDraft != nil {
+            guard !coordinator.isLaunchingConversation else { return }
+            resignTextInputIfNeeded()
+            coordinator.dismissConversationDraft()
             return
         }
         if coordinator.inspectedCardID != nil {
@@ -98,13 +105,23 @@ public final class QuickPeekHUDPanel: NSPanel {
         guard isVisible, event.type == .keyDown else {
             return super.performKeyEquivalent(with: event)
         }
+        let modifiers = relevantModifiers(for: event)
         if hasMarkedTextInput {
+            if modifiers.isEmpty || event.keyCode == 53 {
+                return false
+            }
             return super.performKeyEquivalent(with: event)
         }
-        let modifiers = relevantModifiers(for: event)
         if event.keyCode == 53, modifiers.isEmpty {
             if coordinator.pendingDeleteConfirmation != nil {
                 coordinator.cancelDeleteConfirmation()
+                return true
+            }
+            if coordinator.conversationDraft != nil {
+                if !coordinator.isLaunchingConversation {
+                    resignTextInputIfNeeded()
+                    coordinator.dismissConversationDraft()
+                }
                 return true
             }
             if coordinator.inspectedCardID != nil {
@@ -112,7 +129,20 @@ public final class QuickPeekHUDPanel: NSPanel {
                 return true
             }
         }
-        if !isEditingTextInput {
+        if (event.keyCode == 36 || event.keyCode == 76), modifiers == [.command] {
+            if coordinator.conversationDraft != nil {
+                guard !coordinator.isLaunchingConversation else { return true }
+                commitDraftEditorIfPresent()
+                resignTextInputIfNeeded()
+                onCommand(.copyDraftAndWakeHost)
+                return true
+            }
+            if !coordinator.checkedCardIDs.isEmpty || coordinator.hasActiveHandoffConversation {
+                onCommand(.launchConversation)
+                return true
+            }
+        }
+        if !isEditingTextInput, coordinator.conversationDraft == nil {
             if event.keyCode == 51 || event.keyCode == 117 {
                 if modifiers == [.command] {
                     Task { @MainActor [weak self] in
@@ -144,15 +174,26 @@ public final class QuickPeekHUDPanel: NSPanel {
     public override func sendEvent(_ event: NSEvent) {
         if isVisible,
            event.type == .keyDown,
-           !hasMarkedTextInput,
-           !isEditingTextInput,
-           coordinator.pendingDeleteConfirmation != nil,
-           event.keyCode == 36 || event.keyCode == 76,
-           relevantModifiers(for: event).isEmpty {
-            Task { @MainActor [weak self] in
-                await self?.coordinator.confirmPendingDelete()
+           !hasMarkedTextInput {
+            let modifiers = relevantModifiers(for: event)
+            if event.keyCode == 53,
+               modifiers.isEmpty,
+               coordinator.conversationDraft != nil {
+                if !coordinator.isLaunchingConversation {
+                    resignTextInputIfNeeded()
+                    coordinator.dismissConversationDraft()
+                }
+                return
             }
-            return
+            if !isEditingTextInput,
+               coordinator.pendingDeleteConfirmation != nil,
+               event.keyCode == 36 || event.keyCode == 76,
+               modifiers.isEmpty {
+                Task { @MainActor [weak self] in
+                    await self?.coordinator.confirmPendingDelete()
+                }
+                return
+            }
         }
         super.sendEvent(event)
     }
@@ -293,6 +334,34 @@ public final class QuickPeekHUDPanel: NSPanel {
         makeKeyAndOrderFront(nil)
     }
 
+    public func focusDraftEditorIfPresent() {
+        mountContentIfNeeded()
+        frosted.layoutSubtreeIfNeeded()
+        guard let editor = Self.findDraftTextView(in: frosted) else { return }
+        _ = makeFirstResponder(editor)
+    }
+
+    public func commitDraftEditorIfPresent() {
+        guard let editor = Self.findDraftTextView(in: frosted),
+              editor.hasMarkedText() else {
+            return
+        }
+        editor.unmarkText()
+        coordinator.updateConversationDraftText(editor.string)
+    }
+
+    private static func findDraftTextView(in view: NSView) -> DraftPromptTextView? {
+        if let draft = view as? DraftPromptTextView {
+            return draft
+        }
+        for child in view.subviews {
+            if let found = findDraftTextView(in: child) {
+                return found
+            }
+        }
+        return nil
+    }
+
     public func toggle(anchorFrame: NSRect? = nil) {
         if isVisible {
             orderOut(nil)
@@ -427,190 +496,199 @@ public struct QuickPeekHUDRootView: View {
                 .background((coordinator.isErrorBanner ? Color.orange : Color.green).opacity(0.15))
                 .clipShape(RoundedRectangle(cornerRadius: 7))
             }
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField(AppStrings.searchPlaceholder(in: lang), text: $coordinator.searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($isSearchFocused)
-                    .accessibilityLabel(AppStrings.searchAccessibilityLabel(in: lang))
-                    .accessibilityIdentifier("hud.search")
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Color.primary.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-
-            HStack(spacing: 12) {
-                ForEach(StatusFilter.allCases, id: \.self) { filter in
-                    Button(filter.label(in: lang)) { coordinator.statusFilter = filter }
-                        .rewindButtonRole(.toolbar)
-                        .font(.system(size: 11, weight: coordinator.statusFilter == filter ? .semibold : .regular))
-                        .foregroundStyle(coordinator.statusFilter == filter ? Color.accentColor : Color.secondary)
-                        .accessibilityAddTraits(coordinator.statusFilter == filter ? .isSelected : [])
-                        .accessibilityIdentifier("hud.filter.\(filter.rawValue)")
-                }
-            }
-
-            if coordinator.filteredCards.isEmpty {
-                emptyStateView
+            if let draft = coordinator.conversationDraft {
+                HUDConversationDraftView(
+                    coordinator: coordinator,
+                    draft: draft,
+                    language: lang,
+                    onCommand: onCommand
+                )
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 7) {
-                        ForEach(coordinator.filteredCards) { cardRow($0) }
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField(AppStrings.searchPlaceholder(in: lang), text: $coordinator.searchText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .focused($isSearchFocused)
+                        .accessibilityLabel(AppStrings.searchAccessibilityLabel(in: lang))
+                        .accessibilityIdentifier("hud.search")
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Color.primary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                HStack(spacing: 12) {
+                    ForEach(StatusFilter.allCases, id: \.self) { filter in
+                        Button(filter.label(in: lang)) { coordinator.statusFilter = filter }
+                            .rewindButtonRole(.toolbar)
+                            .font(.system(size: 11, weight: coordinator.statusFilter == filter ? .semibold : .regular))
+                            .foregroundStyle(coordinator.statusFilter == filter ? Color.accentColor : Color.secondary)
+                            .accessibilityAddTraits(coordinator.statusFilter == filter ? .isSelected : [])
+                            .accessibilityIdentifier("hud.filter.\(filter.rawValue)")
                     }
                 }
-            }
 
-            if let inspectedCard = coordinator.inspectedCard {
-                HUDCardInspectorView(
-                    card: inspectedCard,
-                    detailState: coordinator.cardDetailState(for: inspectedCard.id),
-                    language: lang,
-                    onCopyText: { coordinator.copyClipText(inspectedCard.verbatimText) },
-                    onSourceAction: { coordinator.performSourceAction(for: inspectedCard) },
-                    onWakeAntigravity: { coordinator.wakeAntigravity() },
-                    onCopySessionID: { coordinator.copySessionID($0) },
-                    onRetry: { coordinator.reloadCardDetail(id: inspectedCard.id) },
-                    onClose: { coordinator.closeCardPreview() }
-                )
-                .id(inspectedCard.id)
-            }
+                if coordinator.filteredCards.isEmpty {
+                    emptyStateView
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 7) {
+                            ForEach(coordinator.filteredCards) { cardRow($0) }
+                        }
+                    }
+                }
 
-            if coordinator.canEndUnarchivedConversation {
-                Button(AppStrings.keepClipsSkipArchiveButton(in: lang)) {
-                    coordinator.endUnarchivedConversation()
-                }
-                .rewindButtonRole(.secondary)
-            }
-            if coordinator.canEndUnconfirmedConversation {
-                Button(
-                    AppStrings.clearUnconfirmedButton(
-                        hostName: coordinator.effectiveConversationHost.displayName,
-                        in: lang
+                if let inspectedCard = coordinator.inspectedCard {
+                    HUDCardInspectorView(
+                        card: inspectedCard,
+                        detailState: coordinator.cardDetailState(for: inspectedCard.id),
+                        language: lang,
+                        onCopyText: { coordinator.copyClipText(inspectedCard.verbatimText) },
+                        onSourceAction: { coordinator.performSourceAction(for: inspectedCard) },
+                        onWakeAntigravity: { coordinator.wakeAntigravity() },
+                        onCopySessionID: { coordinator.copySessionID($0) },
+                        onRetry: { coordinator.reloadCardDetail(id: inspectedCard.id) },
+                        onClose: { coordinator.closeCardPreview() }
                     )
-                ) {
-                    coordinator.endUnconfirmedConversation()
+                    .id(inspectedCard.id)
                 }
-                .rewindButtonRole(.secondary)
-            }
-            if coordinator.confirmedConversation?.host == .codex {
-                Button(AppStrings.openCodexChatButton(in: lang)) {
-                    coordinator.reopenConfirmedConversation()
-                }
-                .rewindButtonRole(.secondary)
-            }
-            if let pending = coordinator.pendingDeleteConfirmation {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color.red)
-                    Text(
-                        AppStrings.deleteConfirmationMessage(
-                            count: pending.cardIDs.count,
-                            allOfflinePending: pending.allOfflinePending,
-                            in: lang
-                        )
-                    )
-                    .font(.system(size: 11.5))
-                    .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 4)
-                    Button(AppStrings.cancelButton(in: lang)) {
-                        coordinator.cancelDeleteConfirmation()
+
+                if coordinator.canEndUnarchivedConversation {
+                    Button(AppStrings.keepClipsSkipArchiveButton(in: lang)) {
+                        coordinator.endUnarchivedConversation()
                     }
                     .rewindButtonRole(.secondary)
-                    .accessibilityIdentifier("hud.confirmDelete.cancel")
-                    Button(AppStrings.confirmDeleteButton(in: lang)) {
-                        Task { @MainActor in
-                            await coordinator.confirmPendingDelete()
-                        }
-                    }
-                    .buttonStyle(RewindDestructiveButtonStyle())
-                    .accessibilityIdentifier("hud.confirmDelete.confirm")
-                    .disabled(coordinator.isMutatingCards)
                 }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.red.opacity(0.10))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(Color.red.opacity(0.35), lineWidth: 1)
+                if coordinator.canEndUnconfirmedConversation {
+                    Button(
+                        AppStrings.clearUnconfirmedButton(
+                            hostName: coordinator.effectiveConversationHost.displayName,
+                            in: lang
+                        )
+                    ) {
+                        coordinator.endUnconfirmedConversation()
+                    }
+                    .rewindButtonRole(.secondary)
+                }
+                if coordinator.confirmedConversation?.host == .codex {
+                    Button(AppStrings.openCodexChatButton(in: lang)) {
+                        coordinator.reopenConfirmedConversation()
+                    }
+                    .rewindButtonRole(.secondary)
+                }
+                if let pending = coordinator.pendingDeleteConfirmation {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color.red)
+                        Text(
+                            AppStrings.deleteConfirmationMessage(
+                                count: pending.cardIDs.count,
+                                allOfflinePending: pending.allOfflinePending,
+                                in: lang
+                            )
+                        )
+                        .font(.system(size: 11.5))
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 4)
+                        Button(AppStrings.cancelButton(in: lang)) {
+                            coordinator.cancelDeleteConfirmation()
                         }
-                )
-                .accessibilityElement(children: .contain)
-                .accessibilityIdentifier("hud.confirmDelete.bar")
-            }
-            Divider()
-            HStack(spacing: 10) {
-                Text(AppStrings.selectedCountText(count: coordinator.checkedCardIDs.count, in: lang))
-                    .font(.system(size: 11, weight: .medium))
-                Toggle(AppStrings.archiveOnLaunchTitle(in: lang), isOn: $coordinator.markSynthesizedOnLaunch)
-                    .toggleStyle(.checkbox)
-                    .font(.system(size: 11))
-                    .accessibilityIdentifier("hud.archiveOnLaunch")
-                    .help(AppStrings.archiveOnLaunchHelp(in: lang))
-                Spacer(minLength: 4)
-                let checkedIDs = coordinator.checkedActionableCardIDs
-                if !checkedIDs.isEmpty {
-                    let batchDisabled = coordinator.isMutatingCards
-                        || checkedIDs.contains(where: { coordinator.isCardLocked($0) })
-                    HStack(spacing: 6) {
-                        Button(AppStrings.archiveSelectedShortButton(in: lang)) {
+                        .rewindButtonRole(.secondary)
+                        .accessibilityIdentifier("hud.confirmDelete.cancel")
+                        Button(AppStrings.confirmDeleteButton(in: lang)) {
                             Task { @MainActor in
-                                await coordinator.archiveCards(ids: coordinator.checkedActionableCardIDs)
+                                await coordinator.confirmPendingDelete()
                             }
                         }
-                        .rewindButtonRole(.secondary)
-                        .accessibilityIdentifier("hud.archiveSelected")
-                        .help(AppStrings.archiveSelectedHelp(in: lang))
-                        .disabled(batchDisabled)
+                        .buttonStyle(RewindDestructiveButtonStyle())
+                        .accessibilityIdentifier("hud.confirmDelete.confirm")
+                        .disabled(coordinator.isMutatingCards)
+                    }
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.red.opacity(0.10))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.red.opacity(0.35), lineWidth: 1)
+                            }
+                    )
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("hud.confirmDelete.bar")
+                }
+                Divider()
+                HStack(spacing: 10) {
+                    Text(AppStrings.selectedCountText(count: coordinator.checkedCardIDs.count, in: lang))
+                        .font(.system(size: 11, weight: .medium))
+                    Toggle(AppStrings.archiveOnLaunchTitle(in: lang), isOn: $coordinator.markSynthesizedOnLaunch)
+                        .toggleStyle(.checkbox)
+                        .font(.system(size: 11))
+                        .accessibilityIdentifier("hud.archiveOnLaunch")
+                        .help(AppStrings.archiveOnLaunchHelp(in: lang))
+                    Spacer(minLength: 4)
+                    let checkedIDs = coordinator.checkedActionableCardIDs
+                    if !checkedIDs.isEmpty {
+                        let batchDisabled = coordinator.isMutatingCards
+                            || checkedIDs.contains(where: { coordinator.isCardLocked($0) })
+                        HStack(spacing: 6) {
+                            Button(AppStrings.archiveSelectedShortButton(in: lang)) {
+                                Task { @MainActor in
+                                    await coordinator.archiveCards(ids: coordinator.checkedActionableCardIDs)
+                                }
+                            }
+                            .rewindButtonRole(.secondary)
+                            .accessibilityIdentifier("hud.archiveSelected")
+                            .help(AppStrings.archiveSelectedHelp(in: lang))
+                            .disabled(batchDisabled)
 
-                        Button(AppStrings.deleteSelectedShortButton(in: lang)) {
-                            requestDeleteCards(
-                                ids: coordinator.checkedActionableCardIDs,
-                                bypassConfirmation: isOptionKeyHeld()
-                            )
+                            Button(AppStrings.deleteSelectedShortButton(in: lang)) {
+                                requestDeleteCards(
+                                    ids: coordinator.checkedActionableCardIDs,
+                                    bypassConfirmation: isOptionKeyHeld()
+                                )
+                            }
+                            .rewindButtonRole(.secondary)
+                            .foregroundStyle(Color.red)
+                            .accessibilityIdentifier("hud.deleteSelected")
+                            .help(AppStrings.deleteSelectedHelp(in: lang))
+                            .disabled(batchDisabled)
                         }
-                        .rewindButtonRole(.secondary)
-                        .foregroundStyle(Color.red)
-                        .accessibilityIdentifier("hud.deleteSelected")
-                        .help(AppStrings.deleteSelectedHelp(in: lang))
-                        .disabled(batchDisabled)
                     }
                 }
-            }
-            HStack(spacing: 8) {
-                Spacer()
-                let hostLabel = AppStrings.conversationHostLabel(in: lang)
-                Picker(hostLabel, selection: Binding(
-                    get: { coordinator.effectiveConversationHost },
-                    set: { coordinator.conversationHost = $0 }
-                )) {
-                    ForEach(ConversationHost.allCases, id: \.self) { host in
-                        Text(host.displayName).tag(host)
+                HStack(spacing: 8) {
+                    Spacer()
+                    let hostLabel = AppStrings.conversationHostLabel(in: lang)
+                    Picker(hostLabel, selection: Binding(
+                        get: { coordinator.effectiveConversationHost },
+                        set: { coordinator.conversationHost = $0 }
+                    )) {
+                        ForEach(ConversationHost.allCases, id: \.self) { host in
+                            Text(host.displayName).tag(host)
+                        }
                     }
-                }
-                .pickerStyle(.menu)
-                .controlSize(.small)
-                .fixedSize()
-                .labelsHidden()
-                .accessibilityLabel(hostLabel)
-                .accessibilityIdentifier("hud.conversationHost")
-                .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
-                Button {
-                    onCommand(.launchConversation)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(coordinator.conversationActionTitle)
-                        Text("⌘↵")
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .labelsHidden()
+                    .accessibilityLabel(hostLabel)
+                    .accessibilityIdentifier("hud.conversationHost")
+                    .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
+                    Button {
+                        onCommand(.launchConversation)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(coordinator.conversationActionTitle)
+                            Text("⌘↵")
+                        }
                     }
+                    .buttonStyle(RewindLaunchButtonStyle())
+                    .keyboardShortcut(.return, modifiers: [.command])
+                    .accessibilityLabel(coordinator.conversationActionTitle)
+                    .accessibilityIdentifier("hud.launch")
+                    .disabled(coordinator.checkedCardIDs.isEmpty || coordinator.isLaunchingConversation)
                 }
-                .buttonStyle(RewindLaunchButtonStyle())
-                .keyboardShortcut(.return, modifiers: [.command])
-                .accessibilityLabel(coordinator.conversationActionTitle)
-                .accessibilityIdentifier("hud.launch")
-                .disabled(coordinator.checkedCardIDs.isEmpty || coordinator.isLaunchingConversation)
             }
         }
         .environment(\.locale, lang.locale)
@@ -619,7 +697,7 @@ public struct QuickPeekHUDRootView: View {
         .padding(.bottom, 10)
         .frame(minWidth: 440, minHeight: 480)
         .onKeyPress(.space) {
-            guard !isSearchFocused else { return .ignored }
+            guard !isSearchFocused, coordinator.conversationDraft == nil else { return .ignored }
             coordinator.toggleFocusedCardCheck()
             return .handled
         }

@@ -99,6 +99,9 @@ public enum BannerNotice: Equatable, Sendable {
     case openURLFailed(String)
     case copiedSessionID(String)
     case copiedClipText
+    case copiedDraftAndWokeHost(ConversationHost)
+    case copiedDraftHostUnavailable(ConversationHost)
+    case emptyConversationDraft
     case rewindError(RewindError)
     case custom(String)
 }
@@ -610,6 +613,21 @@ public enum L10n {
             switch language {
             case .zhHans: return "已拷贝片段原文"
             case .en: return "Copied clip text."
+            }
+        case .copiedDraftAndWokeHost(let host):
+            switch language {
+            case .zhHans: return "已复制草稿并唤醒 \(host.displayName)，可直接粘贴发送"
+            case .en: return "Copied draft and woke \(host.displayName) — paste to send."
+            }
+        case .copiedDraftHostUnavailable(let host):
+            switch language {
+            case .zhHans: return "已复制草稿，但未找到 \(host.displayName)，请打开应用后粘贴发送"
+            case .en: return "Copied draft, but \(host.displayName) was not found — open the app and paste to send."
+            }
+        case .emptyConversationDraft:
+            switch language {
+            case .zhHans: return "接聊草稿不能为空"
+            case .en: return "Chat draft cannot be empty."
             }
         case .rewindError(let err):
             return rewindError(err, in: language)

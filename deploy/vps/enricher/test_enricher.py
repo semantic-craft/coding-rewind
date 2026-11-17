@@ -900,6 +900,138 @@ class EnricherUnitTests(unittest.TestCase):
             srv.shutdown()
             srv.server_close()
 
+    def test_deepseek_v4_1_flash_default_and_non_thinking_payload_by_provider(self) -> None:
+        dashscope_payload = enricher._build_chat_completion_payload(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "deepseek-v4.1-flash",
+            enricher.SYSTEM_PROMPT,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertEqual(dashscope_payload["model"], "deepseek-v4.1-flash")
+        self.assertEqual(dashscope_payload["temperature"], 0.2)
+        self.assertEqual(dashscope_payload["response_format"], {"type": "json_object"})
+        self.assertIs(dashscope_payload["enable_thinking"], False)
+        self.assertNotIn("thinking", dashscope_payload)
+
+        workspace_dashscope_payload = enricher._build_chat_completion_payload(
+            "https://ws-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            "deepseek-v4.1-flash-1017",
+            enricher.SYSTEM_PROMPT,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertIs(workspace_dashscope_payload["enable_thinking"], False)
+        self.assertNotIn("thinking", workspace_dashscope_payload)
+
+        prefixed_dashscope_payload = enricher._build_chat_completion_payload(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "siliconflow/deepseek-v3.2",
+            enricher.SYSTEM_PROMPT,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertIs(prefixed_dashscope_payload["enable_thinking"], False)
+        self.assertNotIn("thinking", prefixed_dashscope_payload)
+
+        prefixed_r1_payload = enricher._build_chat_completion_payload(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "vanchin/deepseek-r1",
+            enricher.SYSTEM_PROMPT,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertNotIn("enable_thinking", prefixed_r1_payload)
+        self.assertNotIn("thinking", prefixed_r1_payload)
+
+        official_payload = enricher._build_chat_completion_payload(
+            "https://api.deepseek.com",
+            "deepseek-flash",
+            enricher.SYSTEM_PROMPT,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertEqual(official_payload["model"], "deepseek-flash")
+        self.assertEqual(official_payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("enable_thinking", official_payload)
+
+        reasoner_payload = enricher._build_chat_completion_payload(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "deepseek-r1",
+            enricher.SYSTEM_PROMPT,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertNotIn("enable_thinking", reasoner_payload)
+        self.assertNotIn("thinking", reasoner_payload)
+
+        generic_payload = enricher._build_chat_completion_payload(
+            "https://api.openai.com/v1",
+            "gpt-4o-mini",
+            enricher.SYSTEM_PROMPT_EN,
+            '{"selected_excerpt": "x"}',
+        )
+        self.assertNotIn("enable_thinking", generic_payload)
+        self.assertNotIn("thinking", generic_payload)
+
+        # Verify main() defaults AI_MODEL to deepseek-v4.1-flash against DashScope
+        captured: dict = {}
+
+        class _DummyServer:
+            def serve_forever(self) -> None:
+                return
+
+        orig_env = os.environ.copy()
+        orig_thread = enricher.threading.Thread
+        orig_create_server = enricher.create_http_server
+        try:
+            os.environ.pop("AI_MODEL", None)
+            os.environ.pop("AI_BASE_URL", None)
+            os.environ["MEMOS_ACCESS_TOKEN"] = "memos-tok"
+            os.environ["AI_API_KEY"] = "dashscope-tok"
+
+            class _NoopThread:
+                def __init__(self, *args, **kwargs) -> None:
+                    pass
+
+                def start(self) -> None:
+                    pass
+
+            def _capture_server(service: enricher.EnricherService, host: str = "", port: int = 8090):
+                captured["service"] = service
+                return _DummyServer()
+
+            enricher.threading.Thread = _NoopThread  # type: ignore[assignment]
+            enricher.create_http_server = _capture_server  # type: ignore[assignment]
+            enricher.main()
+            svc = captured["service"]
+            self.assertEqual(svc.ai_base_url, "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            self.assertEqual(svc.ai_model, "deepseek-v4.1-flash")
+        finally:
+            os.environ.clear()
+            os.environ.update(orig_env)
+            enricher.threading.Thread = orig_thread  # type: ignore[assignment]
+            enricher.create_http_server = orig_create_server  # type: ignore[assignment]
+
+        # Verify whitespace-only / None JSON mode fallback raises cleanly without patching memo
+        state = MockBackendState()
+        state.ai_raw_content = "     "
+        srv, base_url = _start_mock_upstream(state)
+        try:
+            original_content = "#rewind/pending #source/web\n\nverbatim text"
+            state.memos["rw-blank-json"] = {
+                "name": "memos/rw-blank-json",
+                "createTime": "2026-11-17T00:00:00Z",
+                "content": original_content,
+            }
+            svc = enricher.EnricherService(
+                memos_url=base_url,
+                memos_token="memos-tok",
+                ai_base_url=f"{base_url}/v1",
+                ai_api_key="ai-tok",
+                ai_model="deepseek-v4.1-flash",
+            )
+            with self.assertRaises(ValueError):
+                svc.process_memo(state.memos["rw-blank-json"])
+            self.assertEqual(state.memos["rw-blank-json"]["content"], original_content)
+        finally:
+            srv.shutdown()
+            srv.server_close()
+
 
 if __name__ == "__main__":
     unittest.main()
