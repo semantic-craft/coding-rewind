@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-17T13:24:32.813507Z</p>
-<p>Main: <code>main: ea779fb95d09adadf746b8d6f59bcff1883cdcc7</code></p>
+<p>Observed: 2026-11-17T13:27:48.369282Z</p>
+<p>Main: <code>main: 8180aa0373cae01b3c34cd6e08ce78bd0446950f</code></p>
 <section id="release-060"><h2>0.6.0 正式发布（公证装订、浮窗接聊草稿框、直连 DeepSeek 官方 V4.1 Flash、来源留底与脉络抽屉）</h2>
 <article id="release-060-publication"><h3>v0.6.0 公证装订公开发布与公开包零凭据校验</h3><span class="badge">done</span><p>经 PR #43（合并提交 ea779fb95d09adadf746b8d6f59bcff1883cdcc7）将全端表面版本统一提升至 0.6.0（macOS build 9、单二进制 coding-rewind CLI/MCP 0.6.0、Antigravity 插件清单 0.6.0、Chrome Web Clipper 0.6.0 / 0.6.0.0），归入 PR #39（来源留底、W3C 文本锚点与浮窗脉络抽屉）、PR #40（发布公证装订流水线）、PR #41（浮窗可编辑接聊草稿框）与 PR #42（直连 DeepSeek 官方 V4.1 Flash API），通过全仓 ./scripts/check 六道门禁后打标 v0.6.0。运行 ./scripts/package-release.sh --notarize 完成 Developer ID（TeamIdentifier LQAVR62TK2）硬化运行时签名、Apple Notary 受理（submission_id b25dcd6e-4550-434a-9a0f-ee2d717ddf81，notary_status Accepted）与 stapler 离线票据装订，拆包核验确认不含 DeveloperCredentials.plist 且通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID），公开发布 GitHub Release v0.6.0 并上传双端压缩包与 SHA256SUMS.txt。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/43">pull 43: 全端表面版本号提升至 0.6.0（macOS build 9、CLI/MCP 0.6.0、插件 0.6.0、Web Clipper 0.6.0 / 0.6.0.0），通过 ./scripts/check 六道门禁后 squash 合并至 main。</a></li>
