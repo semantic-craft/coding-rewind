@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "21e76bbdd727427ab3e2e1183c526cd376bfd28d",
+    "main": "7ef0e855c04dead6fa5f9c5650a740fcf362950a",
     "open_pulls": [],
     "pulls": [
       {
@@ -323,6 +323,14 @@
         "merged": true,
         "number": 41,
         "state": "closed"
+      },
+      {
+        "base": "3b53ee8eaec7e8a14ec7bcd89b3f9b4f50a9b4b1",
+        "head": "6b498d877cbbc10fe166608e4bc68436e3defbe6",
+        "merge_commit": "7ef0e855c04dead6fa5f9c5650a740fcf362950a",
+        "merged": true,
+        "number": 42,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -381,7 +389,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-17T09:15:00.523739Z",
+  "observed_at": "2026-11-17T13:04:20.022485Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -424,8 +432,18 @@
               "ref": "Sources/CodingRewindCore/AppCoordinator.swift"
             },
             {
+              "kind": "pull",
+              "note": "将仓库默认云端提供商由 DashScope 切换为直连 DeepSeek 官方 API（https://api.deepseek.com + deepseek-flash），并补充显式 User-Agent，通过 ./scripts/check 六道门禁后 squash 合入 main。",
+              "ref": 42
+            },
+            {
+              "kind": "commit",
+              "note": "PR #42 合并提交，对齐 deploy/vps/ 默认配置、单测及规范文档。",
+              "ref": "7ef0e855c04dead6fa5f9c5650a740fcf362950a"
+            },
+            {
               "kind": "file",
-              "note": "默认模型切换为百炼兼容端点 deepseek-v4.1-flash（注入 enable_thinking: false 配合 json_object 结构化输出，兼容业务空间域名与直连 DeepSeek 官方 deepseek-flash）。",
+              "note": "默认直连 https://api.deepseek.com 与 deepseek-flash（注入 thinking.type=disabled 配合 json_object 结构化输出，亦兼容 OpenAI 协议端点）。",
               "ref": "deploy/vps/enricher/enricher.py"
             },
             {
@@ -435,15 +453,15 @@
             },
             {
               "kind": "note",
-              "note": "通过远端 coding-rewind-rewind-enricher-1 容器内真实百炼业务空间端点与生产 AI_API_KEY 实测 model=deepseek-v4.1-flash + enable_thinking=false + response_format=json_object 返回 HTTP 200 合法 JSON。",
-              "ref": "2026-11-17 阿里云百炼业务空间端点 deepseek-v4.1-flash 真实接口核验"
+              "note": "实测直连 https://api.deepseek.com/chat/completions（model=deepseek-flash + thinking.type=disabled + response_format=json_object）返回 HTTP 200 合法 JSON。",
+              "ref": "2026-11-17 DeepSeek 官方 API deepseek-flash 真实接口核验"
             }
           ],
           "id": "hud-draft-and-deepseek-impl",
           "next": "",
           "status": "done",
-          "summary": "完成两项改造并合入 main（PR #41，提交 21e76bbdd727427ab3e2e1183c526cd376bfd28d）：（1）浮窗勾选卡片按 ⌘Return 或点击「开始对话」不再直发宿主，改为先展开可编辑多行接聊草稿框（光标定位于顶部指令处，支持 Esc 返回列表并保留同选集未发送手工修改、恢复默认、.nonactivatingPanel 编辑快捷键与中文输入法未上屏 Esc 保护），主按钮（⌘Return / 复制并唤醒 Antigravity 或 Codex）复制修改后文本并协作切换焦点供手动粘贴发送，次按钮保留「直接新建对话」；（2）对照 DeepSeek 与阿里云百炼最新官方文档及生产业务空间端点实测，将 deploy/vps/ 默认模型由 qwen-plus 切换为 deepseek-v4.1-flash（自动注入 enable_thinking: false 与 json_object，直连 api.deepseek.com 时对应 deepseek-flash 与 thinking.type=disabled）。全仓 ./scripts/check 六道门禁（含 enricher 13/13、Web Clipper 75/75、Swift 全套测试）与 check_swiftui_perf.py（0 告警）全部通过。",
-          "title": "浮窗可编辑接聊草稿框（方案 A）与百炼 DeepSeek V4.1 Flash 切换（PR #41）"
+          "summary": "完成两项改造并合入 main（PR #41 提交 21e76bb，PR #42 提交 7ef0e85）：（1）浮窗勾选卡片按 ⌘Return 或点击「开始对话」不再直发宿主，改为先展开可编辑多行接聊草稿框（光标定位于顶部指令处，支持 Esc 返回列表并保留同选集未发送手工修改、恢复默认、.nonactivatingPanel 编辑快捷键与中文输入法未上屏 Esc 保护），主按钮（⌘Return / 复制并唤醒 Antigravity 或 Codex）复制修改后文本并协作切换焦点供手动粘贴发送，次按钮保留「直接新建对话」；（2）停用 DashScope 中转，将 deploy/vps/ 默认配置与云端实例统一切换为直连 DeepSeek 官方 API（https://api.deepseek.com，模型 deepseek-flash 即 DeepSeek-V4.1-Flash，自动注入 thinking.type=disabled 与 json_object）。全仓 ./scripts/check 六道门禁与 check_swiftui_perf.py（0 告警）全部通过。",
+          "title": "浮窗可编辑接聊草稿框（方案 A）与直连 DeepSeek 官方 V4.1 Flash（PR #41 / #42）"
         },
         {
           "evidence": [
@@ -468,28 +486,28 @@
           "evidence": [
             {
               "kind": "file",
-              "note": "远端 /srv/data/apps/coding-rewind/enricher/enricher.py（SHA-256 a2a6fa3139510d93f82e374ebcfeab659f9b0331335852ada9e365f5b51d3d12）与本地仓库逐字节一致。",
+              "note": "远端 /srv/data/apps/coding-rewind/enricher/enricher.py（SHA-256 18234182972757cb9695624559156a000c6bbd6a7fcea32383304cca3f2277d8）与本地仓库逐字节一致。",
               "ref": "deploy/vps/enricher/enricher.py"
             },
             {
               "kind": "file",
-              "note": "远端 /srv/data/apps/coding-rewind/docker-compose.yml（SHA-256 bf259059dbf1501436ccdbebd9b9eff72ae0cbf731ce0c41b49f1c35396be5fa）与本地仓库逐字节一致。",
+              "note": "远端 /srv/data/apps/coding-rewind/docker-compose.yml（SHA-256 a0564269a11e538bb8d2d5fb96061d1e85bda980d5dc2d6e184c62c8f4be7fef）与本地仓库逐字节一致。",
               "ref": "deploy/vps/docker-compose.yml"
             },
             {
               "kind": "note",
-              "note": "aliyun-research:/srv/data/apps/coding-rewind 执行 13/13 单测通过，原子切换 .env AI_MODEL=deepseek-v4.1-flash（保留 0600 权限且零重启 coding-rewind-memos-1），重建 coding-rewind-rewind-enricher-1（镜像 sha256:ba4db2cfb0f115503dc20c3b5f3ee4e2625d4fb7903c3a9163cba10a28a99fe1，healthy，/healthz 200）；真实写入 #rewind/pending + rewind-context-v1（含 Session Opening 与 Prompt）验收片段后经 5s 轮询自动由百炼 deepseek-v4.1-flash 生成 Title/Session/Context/Keywords 并翻转 #rewind/ready，原文逐字节一致（VERBATIM_EXACT_MATCH=1），验收片段已 DELETE 彻底清理。",
-              "ref": "2026-11-17 aliyun-research 生产容器切换与端到端剪藏摘要实测"
+              "note": "aliyun-research:/srv/data/apps/coding-rewind 执行 13/13 单测通过，原子切换 .env 为 AI_BASE_URL=https://api.deepseek.com、AI_MODEL=deepseek-flash 及官方 API 密钥（保留 0600 权限且零重启 coding-rewind-memos-1），重建 coding-rewind-rewind-enricher-1（镜像 sha256:106eeddcd47162a4f32417120b51403b4c56d80c879f91a7f40303954e28cf56，healthy，/healthz 200）；真实写入 #rewind/pending + rewind-context-v1（含 Session Opening 与 Prompt）验收片段后经 5s 轮询自动直连 api.deepseek.com（deepseek-flash）生成中文 Title/Session/Context/Keywords 并翻转 #rewind/ready，原文逐字节一致（VERBATIM_EXACT_MATCH=1），验收片段已 DELETE 彻底清理。",
+              "ref": "2026-11-17 aliyun-research 直连 DeepSeek 官方 API 切换与端到端剪藏摘要实测"
             }
           ],
           "id": "vps-enricher-deepseek-v41-flash-rollout",
           "next": "",
           "status": "done",
-          "summary": "将 deploy/vps/ 最新配置与 enricher.py 同步至 aliyun-research:/srv/data/apps/coding-rewind（SHA-256 逐字节一致，目标机 13/13 单测通过，清理历史残留备份与字节码缓存），将 .env 的 AI_MODEL 由 qwen-plus 原子更新为 deepseek-v4.1-flash（启用 REWIND_SUMMARY_LANGUAGE=auto），在不重启 coding-rewind-memos-1 的前提下完成 coding-rewind-rewind-enricher-1 原位重建与健康检查（/healthz 200，未签名 POST /webhook 正确拦截返回 401）。真实写入带 Session Opening 与 Prompt 的 #rewind/pending 验收片段后，容器在 5 秒轮询周期内调用百炼业务空间端点 deepseek-v4.1-flash 生成准确结构化抬头、翻转为 #rewind/ready 且 100% 保留原文字节，验收片段已即时 DELETE 清理零残留。",
-          "title": "远端 VPS（aliyun-research）enricher 同步与 AI_MODEL=deepseek-v4.1-flash 上线实测"
+          "summary": "停用原 DashScope 中转配置，将 deploy/vps/ 最新配置与 enricher.py 同步至 aliyun-research:/srv/data/apps/coding-rewind（SHA-256 逐字节一致，目标机 13/13 单测通过），将 .env 原子更新为直连 AI_BASE_URL=https://api.deepseek.com、AI_MODEL=deepseek-flash 与 DeepSeek 官方密钥（保留 0600 权限，启用 REWIND_SUMMARY_LANGUAGE=auto），在不重启 coding-rewind-memos-1 的前提下完成 coding-rewind-rewind-enricher-1 原位重建与健康检查（/healthz 200）。真实写入带 Session Opening 与 Prompt 的 #rewind/pending 验收片段后，容器在 5 秒轮询内直连 api.deepseek.com 的 deepseek-flash 生成准确结构化抬头、翻转为 #rewind/ready 且 100% 保留原文字节，验收片段已即时 DELETE 清理零残留。",
+          "title": "远端 VPS（aliyun-research）切换直连 DeepSeek 官方 API（deepseek-flash）上线实测"
         }
       ],
-      "title": "浮窗接聊可编辑草稿框与云端百炼 DeepSeek V4.1 Flash 切换（PR #41）"
+      "title": "浮窗接聊可编辑草稿框与云端直连 DeepSeek 官方 V4.1 Flash（PR #41 / #42）"
     },
     {
       "id": "provenance-lead-and-hud-inspector",
@@ -2676,7 +2694,8 @@
       38,
       39,
       40,
-      41
+      41,
+      42
     ]
   }
 }
