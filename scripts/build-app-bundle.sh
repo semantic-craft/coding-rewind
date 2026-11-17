@@ -4,7 +4,48 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-RAW_DIST_DIR="${DIST_DIR:-${1:-${REPO_ROOT}/.build}}"
+RELEASE_SIGNING="${CODING_REWIND_RELEASE_SIGNING:-${CODING_REWIND_NOTARIZE:-0}}"
+POSITIONAL_DIST_DIR=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --release|--notarize)
+            RELEASE_SIGNING=1
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Error: unknown option $1" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "${POSITIONAL_DIST_DIR}" ]]; then
+                echo "Error: unexpected argument $1" >&2
+                exit 1
+            fi
+            POSITIONAL_DIST_DIR="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ $# -gt 0 ]]; then
+    if [[ -n "${POSITIONAL_DIST_DIR}" || $# -gt 1 ]]; then
+        echo "Error: unexpected extra arguments: $*" >&2
+        exit 1
+    fi
+    POSITIONAL_DIST_DIR="$1"
+fi
+
+if [[ "${RELEASE_SIGNING}" == "1" && "${CODING_REWIND_QA:-0}" == "1" ]]; then
+    echo "Error: --release/--notarize cannot be combined with CODING_REWIND_QA=1" >&2
+    exit 1
+fi
+
+RAW_DIST_DIR="${DIST_DIR:-${POSITIONAL_DIST_DIR:-${REPO_ROOT}/.build}}"
 MEMOS_TOKEN_REFERENCE="${CODING_REWIND_MEMOS_TOKEN_REFERENCE:-}"
 SKIP_DEV_CREDENTIALS="${SKIP_DEVELOPER_CREDENTIALS:-0}"
 
@@ -132,38 +173,81 @@ cat > "${CONTENTS_DIR}/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+SIGN_MODE=""
 if [[ "${CODING_REWIND_QA:-0}" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.codingrewind.app.qa" "${CONTENTS_DIR}/Info.plist"
     SIGN_IDENTITY="-"
+    SIGN_MODE="adhoc"
 elif [[ -n "${CODING_REWIND_SIGN_IDENTITY:-}" ]]; then
     SIGN_IDENTITY="${CODING_REWIND_SIGN_IDENTITY}"
+    if [[ "${SIGN_IDENTITY}" == "-" ]]; then
+        if [[ "${RELEASE_SIGNING}" == "1" ]]; then
+            echo "Error: release/notarized signing cannot use ad-hoc identity '-'" >&2
+            exit 1
+        fi
+        SIGN_MODE="adhoc"
+    elif [[ "${RELEASE_SIGNING}" == "1" ]]; then
+        case "${SIGN_IDENTITY}" in
+            "Apple Development"*|"iPhone "*)
+                echo "Error: release/notarized signing requires Developer ID Application identity (got ${SIGN_IDENTITY})" >&2
+                exit 1
+                ;;
+        esac
+        SIGN_MODE="developer_id"
+    elif [[ "${SIGN_IDENTITY}" == "Developer ID Application"* ]]; then
+        SIGN_MODE="developer_id"
+    else
+        SECURITY_OUTPUT="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null || true)"
+        if echo "${SECURITY_OUTPUT}" | grep -F -- "${SIGN_IDENTITY}" | grep -q 'Developer ID Application:'; then
+            SIGN_MODE="developer_id"
+        else
+            SIGN_MODE="development"
+        fi
+    fi
 else
     SECURITY_OUTPUT="$(/usr/bin/security find-identity -v -p codesigning 2>/dev/null || true)"
     DEV_ID="$(echo "${SECURITY_OUTPUT}" | grep -E '[0-9A-Fa-f]{40} "Developer ID Application:' | grep -oE '[0-9A-Fa-f]{40}' | head -n 1 || true)"
     APPLE_DEV="$(echo "${SECURITY_OUTPUT}" | grep -E '[0-9A-Fa-f]{40} "Apple Development:' | grep -oE '[0-9A-Fa-f]{40}' | head -n 1 || true)"
     if [[ -n "${DEV_ID}" ]]; then
         SIGN_IDENTITY="${DEV_ID}"
+        SIGN_MODE="developer_id"
+    elif [[ "${RELEASE_SIGNING}" == "1" ]]; then
+        echo "Error: release/notarized signing requires a valid Developer ID Application certificate" >&2
+        exit 1
     elif [[ -n "${APPLE_DEV}" ]]; then
         SIGN_IDENTITY="${APPLE_DEV}"
+        SIGN_MODE="development"
     else
         SIGN_IDENTITY="-"
+        SIGN_MODE="adhoc"
     fi
 fi
+
+sign_target() {
+    local target="$1"
+    case "${SIGN_MODE}" in
+        adhoc)
+            codesign --force --sign - "${target}"
+            ;;
+        development)
+            codesign --force --sign "${SIGN_IDENTITY}" --timestamp=none "${target}"
+            ;;
+        developer_id)
+            codesign --force --options runtime --timestamp --sign "${SIGN_IDENTITY}" "${target}"
+            ;;
+        *)
+            echo "Error: unsupported signing mode ${SIGN_MODE}" >&2
+            exit 1
+            ;;
+    esac
+}
 
 for helper in "${HELPERS_DIR}"/*; do
     [[ -f "${helper}" ]] || continue
-    if [[ "${SIGN_IDENTITY}" == "-" ]]; then
-        codesign --force --sign - "${helper}"
-    else
-        codesign --force --sign "${SIGN_IDENTITY}" --timestamp=none "${helper}"
-    fi
+    sign_target "${helper}"
 done
 
-if [[ "${SIGN_IDENTITY}" == "-" ]]; then
-    codesign --force --sign - "${APP_BUNDLE}"
-else
-    codesign --force --sign "${SIGN_IDENTITY}" --timestamp=none "${APP_BUNDLE}"
-fi
+sign_target "${APP_BUNDLE}"
 codesign --verify --deep --strict "${APP_BUNDLE}"
 if [[ "$(/usr/bin/file -b "${MACOS_DIR}/CodingRewindApp")" != Mach-O* ]]; then
     echo "Error: the app bundle executable must be the native Mach-O application" >&2

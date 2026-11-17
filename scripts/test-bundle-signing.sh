@@ -151,4 +151,288 @@ for forbidden_path in "${APP_BUNDLE}" "${TEST_SKIP_DIST}/CodingRewind.app" "${RE
     fi
 done
 
-echo "PASS: bundle signing, localization resources, release packaging, and LaunchServices unregistration verified."
+STUB_ROOT="${TEST_ROOT}/notary-stubs"
+STUB_BIN="${STUB_ROOT}/bin"
+FAKE_HOME="${STUB_ROOT}/fake-home"
+mkdir -p "${STUB_BIN}" "${FAKE_HOME}/.local/bin"
+
+SANITIZED_PATH="$(python3 -c 'import os; home = os.path.expanduser("~"); entries = [p for p in os.environ.get("PATH", "").split(":") if p and not p.startswith(home + "/.local/bin")]; print(":".join(entries))')"
+STUB_PATH="${STUB_BIN}:${SANITIZED_PATH}"
+
+cat > "${STUB_BIN}/codesign" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${CODESIGN_LOG:-}" ]]; then
+    printf '%s\n' "$*" >> "${CODESIGN_LOG}"
+fi
+if [[ "${1:-}" == "--verify" ]]; then
+    exit 0
+fi
+if [[ "${CODESIGN_REQUIRE_RUNTIME_TS:-0}" == "1" ]]; then
+    case " $* " in
+        *" --options runtime "*) ;;
+        *)
+            echo "stub codesign: missing --options runtime in: $*" >&2
+            exit 1
+            ;;
+    esac
+    case " $* " in
+        *" --timestamp "*) ;;
+        *)
+            echo "stub codesign: missing --timestamp in: $*" >&2
+            exit 1
+            ;;
+    esac
+    case " $* " in
+        *"--timestamp=none"*)
+            echo "stub codesign: forbidden --timestamp=none in: $*" >&2
+            exit 1
+            ;;
+    esac
+fi
+exit 0
+EOF
+chmod +x "${STUB_BIN}/codesign"
+
+cat > "${FAKE_HOME}/.local/bin/macos-notary-profile" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${NOTARY_PROFILE_STUB_FAIL:-0}" == "1" ]]; then
+    echo "stub macos-notary-profile: unavailable" >&2
+    exit 1
+fi
+printf '%s\n' "${STUB_PROFILE_NAME:-ci-release-profile}"
+EOF
+chmod +x "${FAKE_HOME}/.local/bin/macos-notary-profile"
+
+cat > "${FAKE_HOME}/.local/bin/macos-notary" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ -n "${NOTARY_LOG:-}" ]]; then
+    printf '%s\n' "$*" >> "${NOTARY_LOG}"
+fi
+if [[ "${1:-}" != "submit" ]]; then
+    echo "stub macos-notary: expected submit subcommand, got $*" >&2
+    exit 1
+fi
+TARGET_APP="${2:-}"
+shift 2 || true
+PROFILE_VAL=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile)
+            PROFILE_VAL="${2:-}"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+if [[ -z "${TARGET_APP}" || ! -d "${TARGET_APP}" ]]; then
+    echo "stub macos-notary: missing target app ${TARGET_APP}" >&2
+    exit 1
+fi
+if [[ -z "${PROFILE_VAL}" ]]; then
+    echo "stub macos-notary: missing --profile" >&2
+    exit 1
+fi
+if [[ "${NOTARY_STUB_FAIL:-0}" == "1" ]]; then
+    echo "stub macos-notary: submission rejected" >&2
+    exit 1
+fi
+mkdir -p "${TARGET_APP}/Contents/_CodeSignature"
+printf '%s\n' "${PROFILE_VAL}" > "${TARGET_APP}/Contents/_CodeSignature/stapled-ticket.stub"
+EOF
+chmod +x "${FAKE_HOME}/.local/bin/macos-notary"
+
+CODESIGN_LOG_DEV="${TEST_ROOT}/codesign-devid.log"
+DEV_SIGN_DIST="${TEST_ROOT}/dev-id-dist"
+HOME="${FAKE_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODESIGN_LOG="${CODESIGN_LOG_DEV}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    SKIP_DEVELOPER_CREDENTIALS=1 \
+    "${REPO_ROOT}/scripts/build-app-bundle.sh" --release "${DEV_SIGN_DIST}" >/dev/null
+
+python3 - "${CODESIGN_LOG_DEV}" <<'PY'
+import pathlib
+import sys
+
+lines = [ln for ln in pathlib.Path(sys.argv[1]).read_text().splitlines() if ln.strip()]
+sign_lines = [ln for ln in lines if "--force" in ln]
+if len(sign_lines) < 3:
+    sys.exit(f"FAIL: expected at least 3 signing invocations, got {len(sign_lines)}")
+for ln in sign_lines:
+    if "--options runtime" not in ln or "--timestamp" not in ln or "--timestamp=none" in ln:
+        sys.exit(f"FAIL: signing line missing hardened runtime or timestamp: {ln}")
+    if " --sign - " in f" {ln} ":
+        sys.exit(f"FAIL: ad-hoc signing used in Developer ID release mode: {ln}")
+if "Contents/Helpers/" not in sign_lines[0] or "Contents/Helpers/" not in sign_lines[1]:
+    sys.exit(f"FAIL: expected helpers signed before bundle: {sign_lines}")
+if not sign_lines[2].rstrip().endswith("CodingRewind.app"):
+    sys.exit(f"FAIL: expected CodingRewind.app signed last: {sign_lines}")
+PY
+
+if CODING_REWIND_QA=1 "${REPO_ROOT}/scripts/build-app-bundle.sh" --release "${TEST_ROOT}/qa-release-fail" >/dev/null 2>&1; then
+    echo "FAIL: build-app-bundle.sh --release must reject CODING_REWIND_QA=1" >&2
+    exit 1
+fi
+
+if CODING_REWIND_SIGN_IDENTITY="-" "${REPO_ROOT}/scripts/build-app-bundle.sh" --release "${TEST_ROOT}/adhoc-release-fail" >/dev/null 2>&1; then
+    echo "FAIL: build-app-bundle.sh --release must reject ad-hoc identity '-'" >&2
+    exit 1
+fi
+
+NOTARY_LOG_PRIMARY="${TEST_ROOT}/notary-primary.log"
+NOTARIZED_OUT="${TEST_ROOT}/notarized-release"
+HOME="${FAKE_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    NOTARY_LOG="${NOTARY_LOG_PRIMARY}" \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    "${REPO_ROOT}/scripts/package-release.sh" --notarize "${NOTARIZED_OUT}" >/dev/null
+
+if ! grep -Fq "submit " "${NOTARY_LOG_PRIMARY}" || ! grep -Fq -- "--profile ci-release-profile" "${NOTARY_LOG_PRIMARY}"; then
+    echo "FAIL: package-release.sh --notarize did not invoke macos-notary with resolved profile" >&2
+    exit 1
+fi
+
+NOTARIZED_MACOS_ARCHIVE="${NOTARIZED_OUT}/CodingRewind-v${EXPECTED_VERSION}-macos-arm64.zip"
+if ! /usr/bin/unzip -Z1 "${NOTARIZED_MACOS_ARCHIVE}" | grep -Fxq "CodingRewind.app/Contents/_CodeSignature/stapled-ticket.stub"; then
+    echo "FAIL: notarized archive is missing stapled ticket from pre-zip stapling" >&2
+    exit 1
+fi
+(
+    cd "${NOTARIZED_OUT}"
+    /usr/bin/shasum -a 256 -c SHA256SUMS.txt >/dev/null
+)
+
+NOTARY_LOG_ENV="${TEST_ROOT}/notary-env.log"
+HOME="${FAKE_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    NOTARY_LOG="${NOTARY_LOG_ENV}" \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    CODING_REWIND_NOTARIZE=1 \
+    CODING_REWIND_NOTARY_PROFILE="override-profile" \
+    NOTARY_PROFILE="secondary-profile" \
+    "${REPO_ROOT}/scripts/package-release.sh" "${TEST_ROOT}/notarized-env" >/dev/null
+
+if ! grep -Fq -- "--profile override-profile" "${NOTARY_LOG_ENV}"; then
+    echo "FAIL: CODING_REWIND_NOTARY_PROFILE must take precedence over NOTARY_PROFILE and macos-notary-profile" >&2
+    exit 1
+fi
+
+NOTARY_LOG_SECONDARY="${TEST_ROOT}/notary-secondary.log"
+HOME="${FAKE_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    NOTARY_LOG="${NOTARY_LOG_SECONDARY}" \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    CODING_REWIND_NOTARIZE=1 \
+    NOTARY_PROFILE="secondary-profile" \
+    "${REPO_ROOT}/scripts/package-release.sh" "${TEST_ROOT}/notarized-secondary" >/dev/null
+
+if ! grep -Fq -- "--profile secondary-profile" "${NOTARY_LOG_SECONDARY}"; then
+    echo "FAIL: NOTARY_PROFILE must take precedence over macos-notary-profile" >&2
+    exit 1
+fi
+
+REJECTED_OUT="${TEST_ROOT}/notary-rejected"
+if HOME="${FAKE_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    NOTARY_STUB_FAIL=1 \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    "${REPO_ROOT}/scripts/package-release.sh" --notarize "${REJECTED_OUT}" >/dev/null 2>&1; then
+    echo "FAIL: package-release.sh --notarize must fail when notarization rejects" >&2
+    exit 1
+fi
+if [[ -e "${REJECTED_OUT}/CodingRewind-v${EXPECTED_VERSION}-macos-arm64.zip" || -e "${REJECTED_OUT}/SHA256SUMS.txt" ]]; then
+    echo "FAIL: rejected notarization must not leave release zip or SHA256SUMS.txt behind" >&2
+    exit 1
+fi
+
+EMPTY_HOME="${STUB_ROOT}/empty-home"
+mkdir -p "${EMPTY_HOME}"
+if HOME="${EMPTY_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    "${REPO_ROOT}/scripts/package-release.sh" --notarize "${TEST_ROOT}/missing-profile-out" >/dev/null 2>&1; then
+    echo "FAIL: package-release.sh --notarize must fail when no notary profile can be resolved" >&2
+    exit 1
+fi
+
+FALLBACK_BIN="${STUB_ROOT}/fallback-bin"
+mkdir -p "${FALLBACK_BIN}"
+cp "${STUB_BIN}/codesign" "${FALLBACK_BIN}/codesign"
+FALLBACK_LOG="${TEST_ROOT}/fallback-notarization.log"
+cat > "${FALLBACK_BIN}/xcrun" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'xcrun %s\n' "$*" >> "${FALLBACK_LOG}"
+case "${1:-} ${2:-}" in
+    "notarytool submit")
+        case " $* " in
+            *" --keychain-profile fallback-profile "*) ;;
+            *)
+                echo "stub xcrun: missing --keychain-profile fallback-profile" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    "stapler staple")
+        mkdir -p "${3}/Contents/_CodeSignature"
+        printf 'fallback-stapled\n' > "${3}/Contents/_CodeSignature/stapled-ticket.stub"
+        ;;
+    "stapler validate")
+        [[ -f "${3}/Contents/_CodeSignature/stapled-ticket.stub" ]]
+        ;;
+    *)
+        echo "stub xcrun: unexpected invocation $*" >&2
+        exit 1
+        ;;
+esac
+EOF
+cat > "${FALLBACK_BIN}/spctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'spctl %s\n' "$*" >> "${FALLBACK_LOG}"
+echo "${5}: accepted"
+echo "source=Notarized Developer ID"
+EOF
+chmod +x "${FALLBACK_BIN}/xcrun" "${FALLBACK_BIN}/spctl"
+
+HOME="${EMPTY_HOME}" \
+    PATH="${FALLBACK_BIN}:${SANITIZED_PATH}" \
+    CODESIGN_REQUIRE_RUNTIME_TS=1 \
+    FALLBACK_LOG="${FALLBACK_LOG}" \
+    CODING_REWIND_SIGN_IDENTITY="Developer ID Application: Test Signer" \
+    CODING_REWIND_NOTARIZE=1 \
+    CODING_REWIND_NOTARY_PROFILE="fallback-profile" \
+    "${REPO_ROOT}/scripts/package-release.sh" "${TEST_ROOT}/fallback-out" >/dev/null
+
+if ! grep -Fq "xcrun notarytool submit" "${FALLBACK_LOG}" || ! grep -Fq "xcrun stapler staple" "${FALLBACK_LOG}" || ! grep -Fq "spctl --assess --type execute --verbose=4" "${FALLBACK_LOG}"; then
+    echo "FAIL: fallback notarization chain did not execute notarytool + stapler + spctl" >&2
+    exit 1
+fi
+if ! /usr/bin/unzip -Z1 "${TEST_ROOT}/fallback-out/CodingRewind-v${EXPECTED_VERSION}-macos-arm64.zip" | grep -Fxq "CodingRewind.app/Contents/_CodeSignature/stapled-ticket.stub"; then
+    echo "FAIL: fallback notarized archive missing pre-zip stapled ticket" >&2
+    exit 1
+fi
+
+DRY_CI_OUT="${TEST_ROOT}/dry-ci-out"
+SKIP_DEVELOPER_CREDENTIALS=1 \
+    HOME="${EMPTY_HOME}" \
+    PATH="${STUB_PATH}" \
+    CODING_REWIND_SIGN_IDENTITY="-" \
+    "${REPO_ROOT}/scripts/package-release.sh" "${DRY_CI_OUT}" >/dev/null
+if [[ ! -s "${DRY_CI_OUT}/CodingRewind-v${EXPECTED_VERSION}-macos-arm64.zip" ]]; then
+    echo "FAIL: dry CI SKIP_DEVELOPER_CREDENTIALS=1 path failed to emit macOS release zip" >&2
+    exit 1
+fi
+
+echo "PASS: bundle signing, localization resources, release packaging, notarization, and LaunchServices unregistration verified."

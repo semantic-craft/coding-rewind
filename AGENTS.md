@@ -43,3 +43,4 @@
 
 - 全仓统一门禁运行 `./scripts/check`，依次执行静态卫生与边界检查、`swift test`、`deploy/vps/enricher` 单元测试、`extensions/web-clipper` 单元测试、Shell 语法校验与应用图标、本地化资源及发布打包校验。
 - 原生应用打包运行 `./scripts/build-app-bundle.sh`，在 `.build/CodingRewind.app` 生成内嵌 `AppIcon.icns`、`MenuBarIcon` 模板图标、`zh-Hans.lproj`/`en.lproj` 资源并启用 `LSUIElement` 的签名校验包；公开构建运行 `./scripts/package-release.sh`（自动传入 `SKIP_DEVELOPER_CREDENTIALS=1`）输出双端压缩包与 `SHA256SUMS.txt`。
+- 正式发布经 `./scripts/package-release.sh --notarize`（或默认非 QA/非 `SKIP_DEVELOPER_CREDENTIALS=1` 发布）通过 `macos-notary-profile` 解析公证凭据并完成公证、staple 与 Gatekeeper 校验后再封包。
