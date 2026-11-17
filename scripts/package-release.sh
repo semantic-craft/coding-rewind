@@ -5,7 +5,71 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 RESOLVED_REPO_ROOT="$(cd "${REPO_ROOT}" && pwd -P)"
-RAW_OUT_DIR="${OUT_DIR:-${1:-${REPO_ROOT}/.build/release-artifacts}}"
+CALLER_SKIP_DEV_CREDS="${SKIP_DEVELOPER_CREDENTIALS:-}"
+NOTARIZE_FLAG=""
+POSITIONAL_OUT_DIR=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --notarize)
+            if [[ "${NOTARIZE_FLAG}" == "0" ]]; then
+                echo "Error: cannot combine --notarize with --skip-notarize" >&2
+                exit 1
+            fi
+            NOTARIZE_FLAG="1"
+            shift
+            ;;
+        --skip-notarize)
+            if [[ "${NOTARIZE_FLAG}" == "1" ]]; then
+                echo "Error: cannot combine --notarize with --skip-notarize" >&2
+                exit 1
+            fi
+            NOTARIZE_FLAG="0"
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Error: unknown option $1" >&2
+            exit 1
+            ;;
+        *)
+            if [[ -n "${POSITIONAL_OUT_DIR}" ]]; then
+                echo "Error: unexpected argument $1" >&2
+                exit 1
+            fi
+            POSITIONAL_OUT_DIR="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ $# -gt 0 ]]; then
+    if [[ -n "${POSITIONAL_OUT_DIR}" || $# -gt 1 ]]; then
+        echo "Error: unexpected extra arguments: $*" >&2
+        exit 1
+    fi
+    POSITIONAL_OUT_DIR="$1"
+fi
+
+if [[ -n "${NOTARIZE_FLAG}" ]]; then
+    SHOULD_NOTARIZE="${NOTARIZE_FLAG}"
+elif [[ -n "${CODING_REWIND_NOTARIZE:-}" ]]; then
+    SHOULD_NOTARIZE="${CODING_REWIND_NOTARIZE}"
+elif [[ "${CODING_REWIND_QA:-0}" == "1" || "${CALLER_SKIP_DEV_CREDS}" == "1" ]]; then
+    SHOULD_NOTARIZE="0"
+else
+    SHOULD_NOTARIZE="1"
+fi
+
+if [[ "${SHOULD_NOTARIZE}" == "1" && "${CODING_REWIND_QA:-0}" == "1" ]]; then
+    echo "Error: notarization cannot be enabled with CODING_REWIND_QA=1" >&2
+    exit 1
+fi
+
+RAW_OUT_DIR="${OUT_DIR:-${POSITIONAL_OUT_DIR:-${REPO_ROOT}/.build/release-artifacts}}"
 
 FORBIDDEN_TMP="/tmp"
 FORBIDDEN_PRIVATE_TMP="/private/tmp"
@@ -43,7 +107,69 @@ cleanup() {
 }
 trap cleanup EXIT
 
-SKIP_DEVELOPER_CREDENTIALS=1 DIST_DIR="${STAGE_DIR}" "${REPO_ROOT}/scripts/build-app-bundle.sh"
+resolve_notary_profile() {
+    if [[ -n "${CODING_REWIND_NOTARY_PROFILE:-}" ]]; then
+        printf '%s\n' "${CODING_REWIND_NOTARY_PROFILE}"
+        return 0
+    fi
+    if [[ -n "${NOTARY_PROFILE:-}" ]]; then
+        printf '%s\n' "${NOTARY_PROFILE}"
+        return 0
+    fi
+    local profile_tool=""
+    if profile_tool="$(command -v macos-notary-profile 2>/dev/null)" && [[ -x "${profile_tool}" ]]; then
+        :
+    elif [[ -x "${HOME}/.local/bin/macos-notary-profile" ]]; then
+        profile_tool="${HOME}/.local/bin/macos-notary-profile"
+    else
+        echo "Error: cannot resolve notary profile; set CODING_REWIND_NOTARY_PROFILE or NOTARY_PROFILE, or install macos-notary-profile" >&2
+        return 1
+    fi
+    local resolved=""
+    resolved="$("${profile_tool}")"
+    if [[ -z "${resolved}" ]]; then
+        echo "Error: ${profile_tool} returned an empty notary profile" >&2
+        return 1
+    fi
+    printf '%s\n' "${resolved}"
+}
+
+notarize_app() {
+    local app_path="$1"
+    local profile="$2"
+    local notary_tool=""
+    if notary_tool="$(command -v macos-notary 2>/dev/null)" && [[ -x "${notary_tool}" ]]; then
+        TMPDIR="${STAGE_DIR}" "${notary_tool}" submit "${app_path}" --profile "${profile}"
+        return $?
+    elif [[ -x "${HOME}/.local/bin/macos-notary" ]]; then
+        TMPDIR="${STAGE_DIR}" "${HOME}/.local/bin/macos-notary" submit "${app_path}" --profile "${profile}"
+        return $?
+    fi
+
+    local submit_zip="${STAGE_DIR}/notary-submit.zip"
+    rm -f "${submit_zip}"
+    /usr/bin/ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${submit_zip}"
+    xcrun notarytool submit "${submit_zip}" --keychain-profile "${profile}" --wait
+    rm -f "${submit_zip}"
+    xcrun stapler staple "${app_path}"
+    xcrun stapler validate "${app_path}"
+    local spctl_out=""
+    spctl_out="$(spctl --assess --type execute --verbose=4 "${app_path}" 2>&1)"
+    echo "${spctl_out}"
+    if ! echo "${spctl_out}" | grep -q "Notarized Developer ID"; then
+        echo "Error: Gatekeeper spctl assessment did not report 'Notarized Developer ID'" >&2
+        return 1
+    fi
+}
+
+NOTARY_PROFILE_RESOLVED=""
+BUILD_ARGS=()
+if [[ "${SHOULD_NOTARIZE}" == "1" ]]; then
+    NOTARY_PROFILE_RESOLVED="$(resolve_notary_profile)"
+    BUILD_ARGS+=(--release)
+fi
+
+SKIP_DEVELOPER_CREDENTIALS=1 DIST_DIR="${STAGE_DIR}" "${REPO_ROOT}/scripts/build-app-bundle.sh" "${BUILD_ARGS[@]}"
 
 STAGED_APP="${STAGE_DIR}/CodingRewind.app"
 if [[ ! -d "${STAGED_APP}" ]]; then
@@ -78,6 +204,10 @@ CLIPPER_VERSION_NAME="$(python3 -c 'import json, sys; print(json.load(open(sys.a
 if [[ "${CLIPPER_VERSION_NAME}" != "${PLIST_VERSION}" ]]; then
     echo "Error: extensions/web-clipper/manifest.json version_name (${CLIPPER_VERSION_NAME}) does not match Info.plist CFBundleShortVersionString (${PLIST_VERSION})" >&2
     exit 1
+fi
+
+if [[ "${SHOULD_NOTARIZE}" == "1" ]]; then
+    notarize_app "${STAGED_APP}" "${NOTARY_PROFILE_RESOLVED}"
 fi
 
 MACOS_ZIP="CodingRewind-v${VERSION}-macos-arm64.zip"
