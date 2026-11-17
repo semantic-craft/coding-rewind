@@ -24,9 +24,9 @@ services:
     environment:
       MEMOS_BASE_URL: ${MEMOS_INTERNAL_URL:-http://memos:5230}
       MEMOS_ACCESS_TOKEN: ${MEMOS_ACCESS_TOKEN:?MEMOS_ACCESS_TOKEN is required}
-      AI_BASE_URL: ${AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
       AI_API_KEY: ${AI_API_KEY:?AI_API_KEY is required}
-      AI_MODEL: ${AI_MODEL:-deepseek-v4.1-flash}
+      AI_MODEL: ${AI_MODEL:-deepseek-flash}
       REWIND_SUMMARY_LANGUAGE: ${REWIND_SUMMARY_LANGUAGE:-auto}
       REWIND_WEBHOOK_SECRET: ${REWIND_WEBHOOK_SECRET:-}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-5}

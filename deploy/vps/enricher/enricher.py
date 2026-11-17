@@ -241,7 +241,12 @@ def _build_chat_completion_payload(
 
 def _json_req(method: str, url: str, token: str, payload: dict | None = None, timeout: float = 20.0) -> dict:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    headers = {"Accept": "application/json", "Authorization": f"Bearer {token}", **({"Content-Type": "application/json"} if data else {})}
+    headers = {
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}",
+        "User-Agent": "coding-rewind-enricher/1.0",
+        **({"Content-Type": "application/json"} if data else {}),
+    }
     with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers, method=method), timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
         return json.loads(raw) if raw else {}
@@ -370,9 +375,9 @@ def main() -> None:
     svc = EnricherService(
         memos_url=os.environ.get("MEMOS_BASE_URL") or os.environ.get("CODING_REWIND_MEMOS_URL") or "http://memos:5230",
         memos_token=os.environ["MEMOS_ACCESS_TOKEN"],
-        ai_base_url=os.environ.get("AI_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        ai_base_url=os.environ.get("AI_BASE_URL", "https://api.deepseek.com"),
         ai_api_key=os.environ["AI_API_KEY"],
-        ai_model=os.environ.get("AI_MODEL", "deepseek-v4.1-flash"),
+        ai_model=os.environ.get("AI_MODEL", "deepseek-flash"),
         webhook_secret=os.environ.get("REWIND_WEBHOOK_SECRET", ""),
         poll_interval=float(os.environ.get("POLL_INTERVAL_SECONDS", "5")),
         ctx_wait_seconds=float(os.environ.get("CTX_WAIT_SECONDS", "15")),

@@ -88,7 +88,7 @@
 | 单二进制 CLI 与领域 MCP 收敛 | 决定 | 2026-11-15 | 淘汰远端 41 个通用 Memos MCP 工具与 `memos-mcp-bridge.sh`，提供共用 `CodingRewindCore` 的单二进制 `coding-rewind`（CLI + 内嵌领域 `mcp` 子命令），支持按参数读取超过 72 小时或已标记 `#rewind/synthesized` 的历史片段，并替换 `servers.json` 接线 |
 | 向 AI 开放的三层写入与闭环入口 | 决定 | 2026-11-16 | 将 `coding-rewind mcp` 由 4 个领域工具扩展至 7 个（新增 `create_snippet`、`update_snippet_metadata`、`append_snippet_note`，绝不向 MCP 暴露物理删除），CLI 同步补齐 `create`、`update`、`note` 子命令；在“设置 → 插件与权限”新增“AI 接入与权限”分区（本地 MCP 状态、只读与读写权限开关、一键复制零明文 MCP JSON 配置）；`⌘Return` 接聊提示词携带卡片 ID 并在读写开启时引导宿主 AI 回写笔记或暂存新提纲 |
 | 来源开头留底、浮窗脉络抽屉与分平台回溯 | 决定 | 2026-11-16 | 不采用高权限打扰且不可检索的截图留底；AI 对话额外留存会话 ID 与首轮开场白（`Session Opening`，前 300 字），普通网页提取 `h1`、导语及正文开头数行（`Page Lead`）喂给 `enricher.py` 并生成 W3C `#:~:text=` 精确到句子的高亮回跳链接；浮窗内增设停靠式“脉络”预览抽屉（原地看完整原文、开头留底、提问与笔记），并以 `SourceLocator` 区分网页打开与 Antigravity 会话 ID 复制 |
-| 浮窗可编辑接聊草稿框与云端 DeepSeek V4.1 Flash | 决定 | 2026-11-17 | 勾选卡片按 `⌘Return`（或点击“开始对话”）不再直接发往宿主 Agent，而是先在浮窗内展开可编辑多行接聊草稿框（`Esc` 返回列表），主操作默认一键复制修改后的提示词并唤醒所选宿主（Antigravity / Codex）手动粘贴发送，次按钮保留“直接新建对话”；云端 `rewind-enricher` 对接阿里云百炼 DashScope 兼容接口时默认模型切换为 `deepseek-v4.1-flash`（非思考 JSON 模式，直连 DeepSeek 官方 API 时对应 `deepseek-flash`） |
+| 浮窗可编辑接聊草稿框与直连 DeepSeek 官方 V4.1 Flash | 决定 | 2026-11-17 | 勾选卡片按 `⌘Return`（或点击“开始对话”）不再直接发往宿主 Agent，而是先在浮窗内展开可编辑多行接聊草稿框（`Esc` 返回列表），主操作默认一键复制修改后的提示词并唤醒所选宿主（Antigravity / Codex）手动粘贴发送，次按钮保留“直接新建对话”；云端 `rewind-enricher` 停用 DashScope 中转，改为直连 DeepSeek 官方 API（`https://api.deepseek.com`，模型 `deepseek-flash` 即 `DeepSeek-V4.1-Flash`，非思考 JSON 模式） |
 
 ## 已记录的产品方向
 
@@ -181,4 +181,4 @@ MVP 闭环围绕四步主链路构建：
 已拍板：
 
 1. **接聊发送前草稿框（方案 A）**，浮窗勾选片段后按 `⌘Return` 或点击“开始对话”不再直接触发宿主 Agent 创建会话，而是先在浮窗内展开可编辑多行接聊草稿框（按 `Esc` 或点击“返回列表”退回卡片列表，未发送的手工修改在同一选集下保留，可随时“恢复默认”）；主操作（`⌘Return` / “复制并唤醒 Antigravity”或“复制并唤醒 Codex”）将调整后的文本写入剪贴板并激活目标宿主供手动粘贴发送，同时保留“直接新建对话”次要按钮按编辑后文本创建新会话。
-2. **云端摘要模型切换为 DeepSeek V4.1 Flash**，核对阿里云百炼（DashScope）与 DeepSeek 官方文档后，将 `deploy/vps/` 默认 `AI_MODEL` 由 `qwen-plus` 切换为百炼兼容端点的 `deepseek-v4.1-flash`（自动注入 `"enable_thinking": false` 配合 `json_object` 非流式结构化输出；直连 `api.deepseek.com` 时对应 `deepseek-flash` 与 `{"thinking": {"type": "disabled"}}`）。
+2. **云端摘要切换为直连 DeepSeek 官方 V4.1 Flash**，用户进一步明确直连 DeepSeek 官方接口而非继续走 DashScope：将 `deploy/vps/` 默认配置与云端实例统一切换为 `AI_BASE_URL=https://api.deepseek.com` 与 `AI_MODEL=deepseek-flash`（对应 `DeepSeek-V4.1-Flash`，自动注入 `{"thinking": {"type": "disabled"}}` 配合 `json_object` 非流式结构化输出）。
