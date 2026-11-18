@@ -632,9 +632,12 @@ struct SnippetHardeningTests {
             "vbscript:msgbox(1)",
             "coding-rewind://stash?text=abc",
             "ftp://files.example.com/doc.md",
+            "file://attacker.example.com/share/trap",
+            "FILE://192.168.1.50/smb/leak",
             "conversation://",
             "https://"
         ] {
+            #expect(MemosWireFormat.sanitizeMarkdownURL(unsafeSourceURL).isEmpty, "sanitizeMarkdownURL must reject \(unsafeSourceURL)")
             let formatted = MemosWireFormat.formatSourceLine(
                 sourceTitle: "Title",
                 sourcePlatform: "web",
@@ -652,6 +655,7 @@ struct SnippetHardeningTests {
             "http://[::1]:3000/docs",
             "https://claude.ai/chat/a%20%28b%29/c",
             "file:///Users/dev/notes/spec.md",
+            "file://localhost/Users/dev/notes/spec.md",
             "conversation://6eb720d3-188b-4783-a0c6-9592c554f3fc"
         ] {
             let formatted = MemosWireFormat.formatSourceLine(

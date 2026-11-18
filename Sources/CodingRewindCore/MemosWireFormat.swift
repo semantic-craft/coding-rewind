@@ -296,7 +296,8 @@ public enum MemosWireFormat {
             return !rest.isEmpty
         }
         if lower.hasPrefix("file://") {
-            guard let parsed = URL(string: encoded) ?? URL(string: encoded, encodingInvalidCharacters: true),
+            guard (lower.hasPrefix("file:///") || lower.hasPrefix("file://localhost/")),
+                  let parsed = URL(string: encoded) ?? URL(string: encoded, encodingInvalidCharacters: true),
                   parsed.scheme?.lowercased() == "file",
                   parsed.isFileURL,
                   !parsed.path.isEmpty else {

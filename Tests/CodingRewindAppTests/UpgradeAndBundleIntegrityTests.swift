@@ -6,9 +6,10 @@ import Darwin
 import Foundation
 import Testing
 
-@Suite(.serialized)
-@MainActor
-struct UpgradeAndBundleIntegrityTests {
+extension AppShortcutsTests {
+    @Suite(.serialized)
+    @MainActor
+    struct UpgradeAndBundleIntegrityTests {
     nonisolated private static let suiteName = "dev.codingrewind.qa.upgrade-integrity"
 
     private func makeTestRoot() throws -> URL {
@@ -431,7 +432,10 @@ struct UpgradeAndBundleIntegrityTests {
         let spoofAppURL = spoofDir.appendingPathComponent("CodingRewind.app", isDirectory: true)
         defer { AppUpdater.unregisterBundleFromLaunchServices(spoofAppURL) }
         try buildSignedApp(at: spoofAppURL, shortVersion: "0.6.0", bundleID: AppBundleID.selfApp)
-        #expect(!AppUpdater.defaultAssessNotarizedDeveloperID(spoofAppURL))
+        let spoofAccepted = await Task.detached(priority: .userInitiated) {
+            AppUpdater.defaultAssessNotarizedDeveloperID(spoofAppURL)
+        }.value
+        #expect(!spoofAccepted)
 
         // 6. Existing v0.6.0 plugin install with pre-hardening SKILL.md auto-migrates CLI read_only guidance on launch
         let pluginDataDir = root.appendingPathComponent("PluginMigData", isDirectory: true)
@@ -554,6 +558,7 @@ struct UpgradeAndBundleIntegrityTests {
         guard process.terminationStatus == 0 else {
             throw NSError(domain: "UpgradeAndBundleIntegrityTests", code: Int(process.terminationStatus))
         }
+    }
     }
 }
 
