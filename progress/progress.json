@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "95ca386b1a3ca049206f001818a7544741113da8",
+    "main": "44577ded77f939ef003f023482e48c99932010f0",
     "open_pulls": [],
     "pulls": [
       {
@@ -347,6 +347,14 @@
         "merged": true,
         "number": 44,
         "state": "closed"
+      },
+      {
+        "base": "8529e67365fe8b46107524f154848ea642bbeecb",
+        "head": "77ee933488da70216911c89cec6e4405c200bdc2",
+        "merge_commit": "44577ded77f939ef003f023482e48c99932010f0",
+        "merged": true,
+        "number": 45,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -412,7 +420,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-18T19:53:48.116867Z",
+  "observed_at": "2026-11-18T20:25:53.805943Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -445,8 +453,18 @@
               "ref": "95ca386b1a3ca049206f001818a7544741113da8"
             },
             {
+              "kind": "pull",
+              "note": "二次对抗复核补漏：阻断浏览器扩展右键菜单在密码框（含真实 Chromium 折叠 DOM 选区）下的 fallbackSelectionText 绕过、对齐双端 Source URL 写路径拦截远端 UNC/SMB 文件主机链接，并消除 UpgradeAndBundleIntegrityTests 并发抢占 @MainActor 与补齐 Tests/ 偏好域静态门禁。",
+              "ref": 45
+            },
+            {
+              "kind": "commit",
+              "note": "PR #45 合并提交，合入密码框右键回退阻断、远端文件主机 Source URL 过滤、测试套件串行隔离及 scripts/check 静态门禁。",
+              "ref": "44577ded77f939ef003f023482e48c99932010f0"
+            },
+            {
               "kind": "file",
-              "note": "Web Clipper 启用 0×0 锚点 closed Shadow DOM（兼容 document 捕获阶段 composedPath 重定向）、event.isTrusted 门控、胶囊点击 TOCTOU 二次可编辑区核验与只读/常规密码输入框全路径拦截，并限制非回环 HTTP Memos 地址与跨扩展消息来源。",
+              "note": "Web Clipper 启用 0×0 锚点 closed Shadow DOM（兼容 document 捕获阶段 composedPath 重定向）、event.isTrusted 门控、胶囊点击 TOCTOU 二次可编辑区核验与只读/常规密码输入框全路径（含右键上下文菜单回退分支）拦截，并限制非回环 HTTP Memos 地址与跨扩展消息来源。",
               "ref": "extensions/web-clipper/content.js"
             },
             {
@@ -466,38 +484,38 @@
             },
             {
               "kind": "file",
-              "note": "远端 Memos 地址在配置、请求与 HTTP 重定向边界统一强制 https://（仅回环地址允许 http://），MemosWireFormat Source URL 实施协议白名单并阻断未转义括号引发的 Markdown 链接越界注入。",
+              "note": "远端 Memos 地址在配置、请求与 HTTP 重定向边界统一强制 https://（仅回环地址允许 http://），MemosWireFormat 与 Web Clipper 的 Source URL 读写全路径实施协议白名单、拒绝远端文件主机 UNC 路径并阻断未转义括号引发的 Markdown 链接越界注入。",
               "ref": "Sources/CodingRewindCore/MemosWireFormat.swift"
             },
             {
               "kind": "file",
-              "note": "非 QA 生产自动更新拦截 .adhoc 候选包、拒绝符号链接 updates 目录并对 .developerID 候选包精确核验 spctl source=Notarized Developer ID；NativeSelectionMarkdown 禁用 XML 外部实体加载；scripts/check 同步拦截 dev.codingrewind.{qa,tests}.*.plist 残留。",
+              "note": "非 QA 生产自动更新拦截 .adhoc 候选包、拒绝符号链接 updates 目录并对 .developerID 候选包精确核验 spctl source=Notarized Developer ID；NativeSelectionMarkdown 禁用 XML 外部实体加载；scripts/check 同步静态阻断非 qa 测试偏好域字面量与运行时 dev.codingrewind.{qa,tests}.*.plist 残留。",
               "ref": "Sources/CodingRewindApp/AppUpdater.swift"
             }
           ],
           "id": "security-audit-six-findings-impl",
           "next": "",
           "status": "done",
-          "summary": "经 PR #44（合并提交 95ca386b1a3ca049206f001818a7544741113da8）落实跨端重点安全审查检出的全部 6 项问题（3 Medium、3 Low）并补齐测试偏好文件清理门禁：（1）浏览器扩展切换 0×0 宿主 closed Shadow DOM 并兼容 WHATWG 闭合影子树在 document 捕获阶段的 composedPath 重定向，拦截非受信合成事件（event.isTrusted !== true）、非主键点击、胶囊点击前页面篡改选区的 TOCTOU 竞态与常规/只读密码框提取，后台与内容脚本消息入口在存在 runtime.id 时对缺失或异源 sender.id 故障关闭；（2）DeveloperCredentialsResolver 对外部 DeveloperCredentials.plist 执行 O_NOFOLLOW + fstat（常规文件、单硬链接、当前用户属主、0600）与大小复核，剥离 DYLD_* 环境变量并默认校验 AgileBits Developer ID（TeamIdentifier 2BUA8C4S2C）硬化签名；（3）coding-rewind CLI 在 read_only（含损坏 config.json、非字符串 ai_access_mode 及非法 CODING_REWIND_AI_ACCESS 故障关闭）下于读取 stdin 前拒绝全部 5 个写删子命令，并在启动检查中自动升级已安装 v0.6.0 插件的 SKILL.md；（4）enricher.py 未配置 REWIND_WEBHOOK_SECRET 时 Webhook 故障关闭返回 401，增设套接字超时并严格校验单一 ASCII 数字 Content-Length、完整消息体与禁用 Transfer-Encoding；（5）Swift 与 Web Clipper 禁止向非回环 http:// 发送或经 3xx 重定向降级泄露 Bearer 令牌，MemosWireFormat 读写与接聊提示词收敛协议白名单并拦截未转义括号引发的 Markdown 链接越界注入；（6）非 QA 自动更新拒绝 .adhoc 替换、拦截 updates 符号链接目录并在清除隔离属性前精确校验 spctl source=Notarized Developer ID，NativeSelectionMarkdown 启用 .nodeLoadExternalEntitiesNever 防护 XXE，并将 UpgradeAndBundleIntegrityTests 收敛至固定 QA 偏好域同时在 scripts/check 阻断 dev.codingrewind.{qa,tests}.*.plist 泄漏。全仓 ./scripts/check 六道门禁与 check_swiftui_perf.py（0 告警）全部通过。",
-          "title": "跨边界安全审查 6 项修复与全仓自动化门禁回归（PR #44）"
+          "summary": "经 PR #44（95ca386b1a3ca049206f001818a7544741113da8）与二次复核 PR #45（44577ded77f939ef003f023482e48c99932010f0）落实跨端安全审查全部 6 项问题及边界补强：（1）浏览器扩展切换 0×0 宿主 closed Shadow DOM 并兼容 WHATWG 闭合影子树在 document 捕获阶段的 composedPath 重定向，拦截非受信合成事件（event.isTrusted !== true）、非主键点击、胶囊点击前页面篡改选区的 TOCTOU 竞态，并在胶囊、Hyper+S、快捷键及右键菜单（含真实 Chromium 聚焦密码框折叠 DOM 选区下的 fallbackSelectionText 分支）全路径阻断常规/只读密码框提取，后台与内容脚本消息入口对缺失或异源 sender.id 故障关闭；（2）DeveloperCredentialsResolver 对外部 DeveloperCredentials.plist 执行 O_NOFOLLOW + fstat（常规文件、单硬链接、当前用户属主、0600）与大小复核，剥离 DYLD_* 环境变量并默认校验 AgileBits Developer ID（TeamIdentifier 2BUA8C4S2C）硬化签名；（3）coding-rewind CLI 在 read_only（含损坏 config.json、非字符串 ai_access_mode 及非法 CODING_REWIND_AI_ACCESS 故障关闭）下于读取 stdin 前拒绝全部 5 个写删子命令，并在启动检查中自动升级已安装 v0.6.0 插件的 SKILL.md；（4）enricher.py 未配置 REWIND_WEBHOOK_SECRET 时 Webhook 故障关闭返回 401，增设套接字超时并严格校验单一 ASCII 数字 Content-Length、完整消息体与禁用 Transfer-Encoding；（5）Swift 与 Web Clipper 禁止向非回环 http:// 发送或经 3xx 重定向降级泄露 Bearer 令牌，MemosWireFormat 与 memos_payload.mjs 在读写双路径收敛协议白名单、拒绝远端文件主机 UNC 路径并拦截未转义括号引发的 Markdown 链接越界注入；（6）非 QA 自动更新拒绝 .adhoc 替换、拦截 updates 符号链接目录并在清除隔离属性前精确校验 spctl source=Notarized Developer ID，NativeSelectionMarkdown 启用 .nodeLoadExternalEntitiesNever 防护 XXE，UpgradeAndBundleIntegrityTests 归入 AppShortcutsTests 串行域并将 spctl 移出 @MainActor，scripts/check 同时实施 Tests/ 偏好域静态门禁与 dev.codingrewind.{qa,tests}.*.plist 物理残留检查。全仓 ./scripts/check 六道门禁（含 Web Clipper 78 项单测）与 check_swiftui_perf.py（0 告警）全部通过。",
+          "title": "跨边界安全审查 6 项修复、二次对抗补漏与全仓自动化门禁回归（PR #44、PR #45）"
         },
         {
           "evidence": [
             {
               "kind": "commit",
-              "note": "基于 PR #44 合并提交执行 ./scripts/package-release.sh --notarize 构建公证装订包并原位升级 /Applications/CodingRewind.app。",
-              "ref": "95ca386b1a3ca049206f001818a7544741113da8"
+              "note": "基于 PR #45 合并提交执行 ./scripts/package-release.sh --notarize 构建公证装订包并原位升级 /Applications/CodingRewind.app。",
+              "ref": "44577ded77f939ef003f023482e48c99932010f0"
             },
             {
               "kind": "note",
-              "note": "submission_id 13ef6957-ba2b-468b-9ab6-a6c5949d10eb（Accepted）；/Applications/CodingRewind.app（CDHash 9689a3611fb6d043ad54882a69235cd863a88ad8，主程序 SHA-256 ac7817091a993c53871d28d97572645c8b3d548927f82ca3c8d678c13804140a，不含 DeveloperCredentials.plist）通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID）；--background 启动（PID 39379）后 bin/coding-rewind（SHA-256 fd464528e9ddf35a0de7073f41a28fdb234b6d35b0413b04167fb481b00a0650）与 bin/coding-rewind-sidecar（SHA-256 40dc4ce7efe1c8d1e398c5365341c2cfb30c38773447fd4299bd8a9deb4e2116）同 Contents/Helpers cmp 一致，SKILL.md 自动补齐 CLI write/delete subcommands 边界说明，config.json 与 dev.codingrewind.app.plist 哈希未变，无交互会话下 coding-rewind list --limit 1 --json 静默读取 Keychain 完成 online 查询且 read_only 下 archive 故障关闭拒绝。",
-              "ref": "2026-11-19 本机公证升级、插件 SKILL.md 自动迁移与无交互 Keychain 读取核验"
+              "note": "submission_id 05732888-a8c1-44e1-ba1e-822bb6f92e68（Accepted）；/Applications/CodingRewind.app（CDHash 17cb9f245e8410fe86735aa58af73fedde0c18d6，主程序 SHA-256 3c02cf5c9711262638303da780dce0b7b56321995c2ce276e03609aa158778bf，不含 DeveloperCredentials.plist）通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID）；--background 启动（PID 81778）后 bin/coding-rewind（SHA-256 a065dba5c549a87c868d8a0fe25ebe0865e5caca55ca8658995b13a8c7614e0d）与 bin/coding-rewind-sidecar（SHA-256 eeaed18cb0694766973dfebd55bd9c51678f251a0e179a55aabb9fe10c185e26）同 Contents/Helpers cmp 一致，SKILL.md 包含 CLI write/delete subcommands 边界说明，config.json 与 dev.codingrewind.app.plist 哈希未变，无交互会话下 coding-rewind list --limit 1 --json 静默读取 Keychain 完成 online 查询且 read_only 下 archive 故障关闭拒绝。",
+              "ref": "2026-11-19 本机公证升级（PR #45）、辅助二进制与 SKILL.md 同步及无交互 Keychain 读取核验"
             }
           ],
           "id": "security-audit-local-notarized-upgrade",
           "next": "",
           "status": "done",
-          "summary": "基于 main（95ca386b1a3ca049206f001818a7544741113da8）执行 ./scripts/package-release.sh --notarize 完成 Developer ID（TeamIdentifier LQAVR62TK2）签名、Apple Notary 公证（submission_id 13ef6957-ba2b-468b-9ab6-a6c5949d10eb，Accepted）与 stapler 装订后覆盖升级 /Applications/CodingRewind.app（CDHash 9689a3611fb6d043ad54882a69235cd863a88ad8，零内置凭据文件），通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl Notarized Developer ID 校验。静默重启后台进程（PID 39379）后自动同步固定目录 bin/ 下的 coding-rewind 与 coding-rewind-sidecar（cmp 逐字节一致），自动刷新已安装 ~/.gemini/config/plugins/coding-rewind/skills/rewind/SKILL.md 补齐 CLI 写删子命令只读边界，完整保留既有 config.json 与用户偏好；实测无交互 shell 下新版 CDHash 的 coding-rewind 静默读取 com.codingrewind.memos 钥匙串令牌直连远端 Memos 返回 online 结果，且 CODING_REWIND_AI_ACCESS=read_only 下写删子命令按预期拦截。",
+          "summary": "基于最新 main（44577ded77f939ef003f023482e48c99932010f0）执行 ./scripts/package-release.sh --notarize 完成 Developer ID（TeamIdentifier LQAVR62TK2）签名、Apple Notary 公证（submission_id 05732888-a8c1-44e1-ba1e-822bb6f92e68，Accepted）与 stapler 装订后覆盖升级 /Applications/CodingRewind.app（CDHash 17cb9f245e8410fe86735aa58af73fedde0c18d6，零内置凭据文件），通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl Notarized Developer ID 校验。静默重启后台进程（PID 81778）后自动同步固定目录 bin/ 下的 coding-rewind 与 coding-rewind-sidecar（cmp 逐字节一致），核验 ~/.gemini/config/plugins/coding-rewind/skills/rewind/SKILL.md 含 CLI 写删子命令只读边界，完整保留既有 config.json 与用户偏好；实测无交互 shell 下新版 CDHash 的 coding-rewind 静默读取 com.codingrewind.memos 钥匙串令牌直连远端 Memos 返回 online 结果，且 CODING_REWIND_AI_ACCESS=read_only 下写删子命令按预期拦截。",
           "title": "本机 /Applications 公证包覆盖升级、辅助二进制与 SKILL.md 同步及钥匙串静默读取核验"
         },
         {
@@ -515,7 +533,7 @@
           "title": "桌面浏览器解包扩展重载与远端 VPS Webhook 配置实机待验"
         }
       ],
-      "title": "跨边界安全加固（扩展隔离、凭据签名门禁、CLI 只读对齐、Webhook 故障关闭、TLS 与公证核验，PR #44）"
+      "title": "跨边界安全加固（扩展隔离、凭据签名门禁、CLI 只读对齐、Webhook 故障关闭、TLS 与公证核验，PR #44 / #45）"
     },
     {
       "id": "release-060",
@@ -2867,7 +2885,8 @@
       41,
       42,
       43,
-      44
+      44,
+      45
     ]
   }
 }
