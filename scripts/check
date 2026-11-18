@@ -204,6 +204,10 @@ for sh_file in "${REPO_ROOT}"/scripts/*.sh; do
   [[ -e "${sh_file}" ]] || continue
   bash -n "${sh_file}"
 done
+NOTARY_CHECK="${CODING_REWIND_NOTARY_CHECK:-${HOME:-}/Projects/agent-home/tools/notary-check/check_notary_policy.py}"
+if [[ -f "${NOTARY_CHECK}" ]]; then
+  python3 -B "${NOTARY_CHECK}" "${REPO_ROOT}"
+fi
 
 echo "==> [6/6] AppIcon & MenuBarIcon geometry verification"
 mkdir -p "${REPO_ROOT}/.build"

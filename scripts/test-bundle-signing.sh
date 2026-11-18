@@ -12,6 +12,9 @@ TEST_SKIP_DIST="${TEST_ROOT}/skip-creds-qa"
 TEST_RELEASE_DIR="${TEST_ROOT}/release-out"
 
 cleanup() {
+    if [[ -x "/usr/bin/tccutil" ]]; then
+        /usr/bin/tccutil reset All dev.codingrewind.app.qa >/dev/null 2>&1 || true
+    fi
     if [[ -x "${LSREGISTER}" ]]; then
         for app_candidate in "${TEST_DIST}/CodingRewind.app" "${TEST_SKIP_DIST}/CodingRewind.app"; do
             if [[ -d "${app_candidate}" ]]; then
@@ -35,6 +38,12 @@ fi
 
 if ! echo "${CODESIGN_INFO}" | grep -q "Identifier=dev.codingrewind.app.qa"; then
     echo "FAIL: Expected Identifier=dev.codingrewind.app.qa under CODING_REWIND_QA=1" >&2
+    exit 1
+fi
+
+QA_DISPLAY_NAME="$(/usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "${APP_BUNDLE}/Contents/Info.plist" 2>/dev/null || true)"
+if [[ "${QA_DISPLAY_NAME}" != "Coding Rewind QA" ]]; then
+    echo "FAIL: Expected CFBundleDisplayName='Coding Rewind QA' under CODING_REWIND_QA=1 (got '${QA_DISPLAY_NAME}')" >&2
     exit 1
 fi
 

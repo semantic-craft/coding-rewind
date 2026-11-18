@@ -176,6 +176,15 @@ PLIST
 SIGN_MODE=""
 if [[ "${CODING_REWIND_QA:-0}" == "1" ]]; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier dev.codingrewind.app.qa" "${CONTENTS_DIR}/Info.plist"
+    /usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "${CONTENTS_DIR}/Info.plist" >/dev/null 2>&1 || true
+    /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Coding Rewind QA" "${CONTENTS_DIR}/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName Coding Rewind QA" "${CONTENTS_DIR}/Info.plist"
+    for strings_file in "${RESOURCES_DIR}"/*.lproj/InfoPlist.strings; do
+        [[ -f "${strings_file}" ]] || continue
+        /usr/bin/plutil -convert xml1 "${strings_file}"
+        /usr/bin/plutil -replace CFBundleDisplayName -string "Coding Rewind QA" "${strings_file}"
+        /usr/bin/plutil -replace CFBundleName -string "Coding Rewind QA" "${strings_file}"
+    done
     SIGN_IDENTITY="-"
     SIGN_MODE="adhoc"
 elif [[ -n "${CODING_REWIND_SIGN_IDENTITY:-}" ]]; then
