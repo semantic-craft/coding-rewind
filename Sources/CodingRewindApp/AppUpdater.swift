@@ -36,10 +36,13 @@ public final class AppUpdater {
         }
     }
 
+    public typealias CandidateGatekeeperAssessor = @Sendable (URL) -> Bool
+
     public static let automaticChecksDefaultsKey = "automaticallyChecksForUpdates"
     public static let lastCheckedTimestampDefaultsKey = "lastUpdateCheckTimestamp"
     public static let backgroundCheckIntervalSeconds: TimeInterval = 12 * 3600
     private nonisolated static let lsregisterPath = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    private nonisolated static let spctlPath = "/usr/sbin/spctl"
     private nonisolated static let swapDirectoryPrefix = ".CodingRewind-swap-"
 
     public let currentVersion: SemanticVersion
@@ -62,6 +65,7 @@ public final class AppUpdater {
     private let defaults: UserDefaults
     private let transport: any ReleaseTransport
     private let signatureInspector: any CodeSignatureInspecting
+    private let candidateGatekeeperAssessor: CandidateGatekeeperAssessor
     private let isInstallLocationWritable: @Sendable (URL) -> Bool
     private let sameVolumeCheck: @Sendable (URL, URL) -> Bool
     private let nowProvider: @Sendable () -> Date
@@ -84,6 +88,7 @@ public final class AppUpdater {
         language: AppLanguage = .zhHans,
         transport: any ReleaseTransport = URLSessionReleaseTransport(),
         signatureInspector: any CodeSignatureInspecting = SecStaticCodeSignatureInspector(),
+        candidateGatekeeperAssessor: @escaping CandidateGatekeeperAssessor = AppUpdater.defaultAssessNotarizedDeveloperID,
         isInstallLocationWritable: @escaping @Sendable (URL) -> Bool = AppUpdater.defaultIsInstallLocationWritable,
         sameVolumeCheck: @escaping @Sendable (URL, URL) -> Bool = AppUpdater.defaultSameFilesystemVolume,
         nowProvider: @escaping @Sendable () -> Date = { Date() },
@@ -102,6 +107,7 @@ public final class AppUpdater {
         self.language = language
         self.transport = transport
         self.signatureInspector = signatureInspector
+        self.candidateGatekeeperAssessor = candidateGatekeeperAssessor
         self.isInstallLocationWritable = isInstallLocationWritable
         self.sameVolumeCheck = sameVolumeCheck
         self.nowProvider = nowProvider
@@ -274,7 +280,7 @@ public final class AppUpdater {
                 "staging-\(candidate.version.description)-\(UUID().uuidString)",
                 isDirectory: true
             )
-            if mkdir(stagingDir.path, 0o700) != 0 && errno != EEXIST {
+            guard mkdir(stagingDir.path, 0o700) == 0 else {
                 throw RewindError.ioError("mkdir staging errno=\(errno)")
             }
             _ = chmod(stagingDir.path, 0o700)
@@ -314,7 +320,7 @@ public final class AppUpdater {
 
             Self.unregisterBundleFromLaunchServices(stagedAppURL)
 
-            guard let (_, expectedBundleID) = verifyBundleReplacement(
+            guard let (_, expectedBundleID) = await verifyBundleReplacement(
                 candidate: candidate,
                 candidateBundleURL: stagedAppURL,
                 cleanupURLs: [stagingDir]
@@ -362,7 +368,7 @@ public final class AppUpdater {
             return false
         }
 
-        guard let (installedSig, expectedBundleID) = verifyBundleReplacement(
+        guard let (installedSig, expectedBundleID) = await verifyBundleReplacement(
             candidate: staged.candidate,
             candidateBundleURL: staged.stagedAppURL,
             cleanupURLs: [staged.stagingDirectoryURL]
@@ -442,11 +448,19 @@ public final class AppUpdater {
             }
             guard installedSig.authority.canReplace(
                 with: copiedSig.authority,
-                expectedReleaseTeamID: expectedReleaseTeamID
+                expectedReleaseTeamID: expectedReleaseTeamID,
+                allowAdhocCandidateForQA: allowsAdhocCandidate(expectedBundleID: expectedBundleID)
             ) else {
                 Self.cleanupDirectory(swapWorkDir)
                 Self.cleanupDirectory(staged.stagingDirectoryURL)
                 state = .manualDownloadRequired(candidate: staged.candidate, reason: .signatureDowngradeBlocked)
+                return false
+            }
+            if case .developerID = copiedSig.authority,
+               !(await evaluateCandidateGatekeeper(at: sameVolumeStagedApp)) {
+                Self.cleanupDirectory(swapWorkDir)
+                Self.cleanupDirectory(staged.stagingDirectoryURL)
+                setFailure(.tamperedSignature)
                 return false
             }
         }
@@ -502,11 +516,25 @@ public final class AppUpdater {
         }
     }
 
+    private func allowsAdhocCandidate(expectedBundleID: String) -> Bool {
+        environment[StoragePaths.qaEnvironmentKey] == "1"
+            && expectedBundleID == AppBundleID.selfQAApp
+    }
+
+    private func evaluateCandidateGatekeeper(at bundleURL: URL) async -> Bool {
+        let assessor = candidateGatekeeperAssessor
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning: assessor(bundleURL))
+            }
+        }
+    }
+
     private func verifyBundleReplacement(
         candidate: GitHubReleaseCandidate,
         candidateBundleURL: URL,
         cleanupURLs: [URL]
-    ) -> (installed: InspectedCodeSignature, expectedBundleID: String)? {
+    ) async -> (installed: InspectedCodeSignature, expectedBundleID: String)? {
         let installedSig: InspectedCodeSignature
         do {
             installedSig = try signatureInspector.inspect(bundleURL: installedBundleURL)
@@ -538,10 +566,18 @@ public final class AppUpdater {
 
         guard installedSig.authority.canReplace(
             with: candidateSig.authority,
-            expectedReleaseTeamID: expectedReleaseTeamID
+            expectedReleaseTeamID: expectedReleaseTeamID,
+            allowAdhocCandidateForQA: allowsAdhocCandidate(expectedBundleID: expectedBundleID)
         ) else {
             cleanupURLs.forEach(Self.cleanupDirectory)
             state = .manualDownloadRequired(candidate: candidate, reason: .signatureDowngradeBlocked)
+            return nil
+        }
+
+        if case .developerID = candidateSig.authority,
+           !(await evaluateCandidateGatekeeper(at: candidateBundleURL)) {
+            cleanupURLs.forEach(Self.cleanupDirectory)
+            setFailure(.tamperedSignature)
             return nil
         }
 
@@ -562,7 +598,20 @@ public final class AppUpdater {
         if mkdir(updatesDir.path, 0o700) != 0 && errno != EEXIST {
             throw RewindError.ioError("mkdir updates errno=\(errno)")
         }
+        let currentUID = getuid()
+        var dirStat = stat()
+        guard lstat(updatesDir.path, &dirStat) == 0,
+              (dirStat.st_mode & S_IFMT) == S_IFDIR,
+              dirStat.st_uid == currentUID else {
+            throw RewindError.ioError("updates directory is not a private user-owned directory")
+        }
         _ = chmod(updatesDir.path, 0o700)
+        guard lstat(updatesDir.path, &dirStat) == 0,
+              (dirStat.st_mode & S_IFMT) == S_IFDIR,
+              dirStat.st_uid == currentUID,
+              (dirStat.st_mode & 0o077) == 0 else {
+            throw RewindError.ioError("updates directory failed 0700 verification")
+        }
         return updatesDir
     }
 
@@ -681,6 +730,76 @@ public final class AppUpdater {
         for case let fileURL as URL in enumerator where fileURL.pathExtension.lowercased() == "app" {
             unregisterBundleFromLaunchServices(fileURL)
             enumerator.skipDescendants()
+        }
+    }
+
+    public static nonisolated func defaultAssessNotarizedDeveloperID(_ bundleURL: URL) -> Bool {
+        guard FileManager.default.isExecutableFile(atPath: spctlPath) else {
+            return false
+        }
+        let process = Process()
+        let outPipe = Pipe()
+        let readHandle = outPipe.fileHandleForReading
+        let exitSemaphore = DispatchSemaphore(value: 0)
+        let readGroup = DispatchGroup()
+        final class OutputBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var bytes = Data()
+            func set(_ data: Data) { lock.lock(); bytes = data; lock.unlock() }
+            func get() -> Data { lock.lock(); defer { lock.unlock() }; return bytes }
+        }
+        let outputBox = OutputBox()
+
+        var spctlEnv = ProcessInfo.processInfo.environment.filter { !$0.key.uppercased().hasPrefix("DYLD_") }
+        spctlEnv["LC_ALL"] = "C"
+        process.executableURL = URL(fileURLWithPath: spctlPath)
+        process.arguments = ["--assess", "--type", "execute", "--verbose=4", bundleURL.path]
+        process.environment = spctlEnv
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = outPipe
+        process.standardError = outPipe
+        process.terminationHandler = { _ in
+            exitSemaphore.signal()
+        }
+
+        readGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            let collected = (try? readHandle.readToEnd()) ?? Data()
+            outputBox.set(collected)
+            readGroup.leave()
+        }
+
+        do {
+            try process.run()
+            try? outPipe.fileHandleForWriting.close()
+        } catch {
+            try? readHandle.close()
+            return false
+        }
+
+        if exitSemaphore.wait(timeout: .now() + 15.0) == .timedOut {
+            process.terminate()
+            let pid = process.processIdentifier
+            if pid > 0 {
+                _ = kill(pid, SIGKILL)
+            }
+            try? readHandle.close()
+            process.waitUntilExit()
+            _ = readGroup.wait(timeout: .now() + 0.5)
+            return false
+        }
+
+        process.waitUntilExit()
+        if readGroup.wait(timeout: .now() + 1.0) == .timedOut {
+            try? readHandle.close()
+            _ = readGroup.wait(timeout: .now() + 0.5)
+        }
+        guard process.terminationStatus == 0 else {
+            return false
+        }
+        let outputText = String(decoding: outputBox.get(), as: UTF8.self)
+        return outputText.split(whereSeparator: \.isNewline).contains { line in
+            line.trimmingCharacters(in: .whitespaces) == "source=Notarized Developer ID"
         }
     }
 

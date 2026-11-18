@@ -272,6 +272,7 @@ public enum AntigravityIntegration {
                 || !skillText.contains("update_snippet_metadata")
                 || !skillText.contains("append_snippet_note")
                 || !skillText.contains("archive_snippet")
+                || !skillText.contains("CLI write/delete subcommands")
                 || !skillText.contains("conversation://")
                 || skillText.contains("memo_list_memos") {
                 reasons.append(.skillMissingMemosGuidance)
@@ -364,7 +365,7 @@ public enum AntigravityIntegration {
            - Call `create_snippet` (`text`, optional `title`, `session_topic`, `context_summary`, `keywords`, `tags`, `source_url`; CLI `coding-rewind create --text ...` or `--stdin`) to stash a newly synthesized outline or draft back into Coding Rewind (`#source/agent`).
            - Call `update_snippet_metadata` (`id`, optional `title`, `session_topic`, `context_summary`, `keywords`, `add_tags`, `remove_tags`, `archived`; CLI `coding-rewind update <id> ...`) to refine metadata headers, tags, or archive state while keeping `verbatimText` 100% byte-identical.
            - Call `archive_snippet` (`id`; CLI `~/Library/Application Support/CodingRewind/bin/coding-rewind archive <id>`) when asked to mark incorporated snippets as `#rewind/synthesized`.
-        5. Respect the permission boundary: physical deletion is never exposed via MCP, and when AI access is set to `read_only` (in Settings or via `CODING_REWIND_AI_ACCESS=read_only`), all mutating MCP tools (`create_snippet`, `update_snippet_metadata`, `append_snippet_note`, `archive_snippet`) are rejected while read tools remain available.
+        5. Respect the permission boundary: physical deletion is never exposed via MCP, and when AI access is set to `read_only` (in Settings or via `CODING_REWIND_AI_ACCESS=read_only`), all mutating MCP tools (`create_snippet`, `update_snippet_metadata`, `append_snippet_note`, `archive_snippet`) and CLI write/delete subcommands (`create`, `update`, `note`, `archive`, `delete`) are rejected while read tools and `list`/`search`/`get` remain available.
         """
         try AtomicFile.writeUTF8(
             skillMarkdown + "\n",

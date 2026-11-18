@@ -6,9 +6,10 @@ import Darwin
 import Foundation
 import Testing
 
+@Suite(.serialized)
 @MainActor
 struct UpgradeAndBundleIntegrityTests {
-    private static let suiteName = "dev.codingrewind.tests.upgrade-integrity"
+    nonisolated private static let suiteName = "dev.codingrewind.qa.upgrade-integrity"
 
     private func makeTestRoot() throws -> URL {
         let url = URL(fileURLWithPath: #filePath)
@@ -20,8 +21,12 @@ struct UpgradeAndBundleIntegrityTests {
         return url
     }
 
-    private func cleanSuite() {
-        UserDefaults.standard.removePersistentDomain(forName: Self.suiteName)
+    nonisolated private static func cleanSuite() {
+        UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        _ = CFPreferencesAppSynchronize(suiteName as CFString)
+        let plistURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Preferences/\(suiteName).plist")
+        try? FileManager.default.removeItem(at: plistURL)
     }
 
     @Test func updaterRejectsCandidateWithMismatchedOrInvalidBundleShortVersion() async throws {
@@ -29,12 +34,13 @@ struct UpgradeAndBundleIntegrityTests {
         let installedURL = root.appendingPathComponent("Installed/CodingRewind.app", isDirectory: true)
         let mismatchedBuildURL = root.appendingPathComponent("Mismatched/CodingRewind.app", isDirectory: true)
         let malformedBuildURL = root.appendingPathComponent("Malformed/CodingRewind.app", isDirectory: true)
+        Self.cleanSuite()
         defer {
             for url in [installedURL, mismatchedBuildURL, malformedBuildURL] {
                 AppUpdater.unregisterBundleFromLaunchServices(url)
             }
             try? FileManager.default.removeItem(at: root)
-            cleanSuite()
+            Self.cleanSuite()
         }
 
         try buildSignedApp(at: installedURL, shortVersion: "0.3.2", bundleID: AppBundleID.selfQAApp)
@@ -97,12 +103,13 @@ struct UpgradeAndBundleIntegrityTests {
         let missingCLIURL = root.appendingPathComponent("MissingCLI/CodingRewind.app", isDirectory: true)
         let missingSidecarURL = root.appendingPathComponent("MissingSidecar/CodingRewind.app", isDirectory: true)
         let validCandidateURL = root.appendingPathComponent("ValidCandidate/CodingRewind.app", isDirectory: true)
+        Self.cleanSuite()
         defer {
             for url in [installedURL, missingCLIURL, missingSidecarURL, validCandidateURL] {
                 AppUpdater.unregisterBundleFromLaunchServices(url)
             }
             try? FileManager.default.removeItem(at: root)
-            cleanSuite()
+            Self.cleanSuite()
         }
 
         try buildSignedApp(at: installedURL, shortVersion: "0.3.2", bundleID: AppBundleID.selfQAApp)
@@ -284,6 +291,172 @@ struct UpgradeAndBundleIntegrityTests {
         #expect(!migratedSkill.contains("memo_list_memos"))
     }
 
+    @Test func productionUpdaterBlocksAdhocReplacementAndRequiresNotarizedGatekeeperAssessmentForDeveloperID() async throws {
+        let root = try makeTestRoot()
+        let installedURL = root.appendingPathComponent("InstalledProd/CodingRewind.app", isDirectory: true)
+        let candidateBuildURL = root.appendingPathComponent("CandidateProd/CodingRewind.app", isDirectory: true)
+        Self.cleanSuite()
+        defer {
+            for url in [installedURL, candidateBuildURL] {
+                AppUpdater.unregisterBundleFromLaunchServices(url)
+            }
+            try? FileManager.default.removeItem(at: root)
+            Self.cleanSuite()
+        }
+
+        try buildSignedApp(at: installedURL, shortVersion: "0.5.0", bundleID: AppBundleID.selfApp)
+        try buildSignedApp(at: candidateBuildURL, shortVersion: "0.6.0", bundleID: AppBundleID.selfApp)
+        let zipURL = root.appendingPathComponent("Artifacts-prod/CodingRewind-v0.6.0-macos-arm64.zip")
+        try zipAppBundle(at: candidateBuildURL, to: zipURL)
+        let digest = try SHA256Digest.compute(fileAt: zipURL)
+        let checksums = "\(digest.hexValue)  CodingRewind-v0.6.0-macos-arm64.zip\n"
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("ProdData", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("ProdConfig", isDirectory: true)
+        )
+        let defaults = try #require(UserDefaults(suiteName: Self.suiteName))
+
+        // 1. Non-QA production AppUpdater must block .adhoc -> .adhoc replacement
+        let adhocProdUpdater = AppUpdater(
+            paths: paths,
+            environment: [:],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 5, patch: 0),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfApp,
+            language: .en,
+            transport: StaticReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.6.0"),
+                checksumsText: checksums,
+                archiveSourceURL: zipURL
+            ),
+            signatureInspector: SecStaticCodeSignatureInspector()
+        )
+        await adhocProdUpdater.checkForUpdates(userInitiated: true)
+        if case .manualDownloadRequired(_, let reason) = adhocProdUpdater.state {
+            #expect(reason == .signatureDowngradeBlocked)
+        } else {
+            Issue.record("Expected production .adhoc candidate to be blocked with .signatureDowngradeBlocked, got \(adhocProdUpdater.state)")
+        }
+        #expect(stagingDirectories(in: paths.updatesDirectoryURL).isEmpty)
+
+        // 2. .developerID candidate failing Gatekeeper/notarization assessment must fail closed before staging
+        let team = BundleSignatureAuthority.defaultReleaseTeamID
+        let devIDInspector = FixedAuthoritySignatureInspector(
+            authority: .developerID(teamID: team),
+            bundleIdentifier: AppBundleID.selfApp
+        )
+        let unnotarizedUpdater = AppUpdater(
+            paths: paths,
+            environment: [:],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 5, patch: 0),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfApp,
+            language: .en,
+            transport: StaticReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.6.0"),
+                checksumsText: checksums,
+                archiveSourceURL: zipURL
+            ),
+            signatureInspector: devIDInspector,
+            candidateGatekeeperAssessor: { _ in false }
+        )
+        await unnotarizedUpdater.checkForUpdates(userInitiated: true)
+        #expect(unnotarizedUpdater.state == .failed("Code signature verification failed; update was rejected."))
+        #expect(stagingDirectories(in: paths.updatesDirectoryURL).isEmpty)
+
+        // 3. .developerID candidate passing Gatekeeper/notarization assessment reaches .readyToInstall
+        let notarizedUpdater = AppUpdater(
+            paths: paths,
+            environment: [:],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 5, patch: 0),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfApp,
+            language: .en,
+            transport: StaticReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.6.0"),
+                checksumsText: checksums,
+                archiveSourceURL: zipURL
+            ),
+            signatureInspector: devIDInspector,
+            candidateGatekeeperAssessor: { _ in true }
+        )
+        await notarizedUpdater.checkForUpdates(userInitiated: true)
+        if case .readyToInstall(let staged) = notarizedUpdater.state {
+            #expect(staged.candidate.version == SemanticVersion(major: 0, minor: 6, patch: 0))
+            AppUpdater.unregisterBundleFromLaunchServices(staged.stagedAppURL)
+            try? FileManager.default.removeItem(at: staged.stagingDirectoryURL)
+        } else {
+            Issue.record("Expected notarized .developerID candidate to stage cleanly, got \(notarizedUpdater.state)")
+        }
+
+        // 4. Symlinked <dataDir>/updates directory must fail closed rather than following EEXIST
+        let symlinkDataRoot = root.appendingPathComponent("SymlinkUpdatesData", isDirectory: true)
+        let symlinkPaths = try StoragePaths(
+            dataDirectoryURL: symlinkDataRoot,
+            antigravityConfigDirectoryURL: root.appendingPathComponent("SymlinkConfig", isDirectory: true)
+        )
+        let outsideTarget = root.appendingPathComponent("OutsideRedirectDir", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideTarget, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: symlinkPaths.updatesDirectoryURL, withDestinationURL: outsideTarget)
+        let symlinkUpdater = AppUpdater(
+            paths: symlinkPaths,
+            environment: [:],
+            defaults: defaults,
+            currentVersion: SemanticVersion(major: 0, minor: 5, patch: 0),
+            installedBundleURL: installedURL,
+            installedBundleIdentifier: AppBundleID.selfApp,
+            language: .en,
+            transport: StaticReleaseTransport(
+                releaseJSON: makeReleaseJSON(version: "0.6.0"),
+                checksumsText: checksums,
+                archiveSourceURL: zipURL
+            ),
+            signatureInspector: devIDInspector,
+            candidateGatekeeperAssessor: { _ in true }
+        )
+        await symlinkUpdater.checkForUpdates(userInitiated: true)
+        if case .failed = symlinkUpdater.state {
+            let leaked = (try? FileManager.default.contentsOfDirectory(atPath: outsideTarget.path)) ?? []
+            #expect(leaked.isEmpty)
+        } else {
+            Issue.record("Expected symlinked updates directory to be rejected, got \(symlinkUpdater.state)")
+        }
+
+        // 5. Real spctl assessor rejects ad-hoc bundles even when path contains 'Notarized Developer ID'
+        let spoofDir = root.appendingPathComponent("source=Notarized Developer ID", isDirectory: true)
+        let spoofAppURL = spoofDir.appendingPathComponent("CodingRewind.app", isDirectory: true)
+        defer { AppUpdater.unregisterBundleFromLaunchServices(spoofAppURL) }
+        try buildSignedApp(at: spoofAppURL, shortVersion: "0.6.0", bundleID: AppBundleID.selfApp)
+        #expect(!AppUpdater.defaultAssessNotarizedDeveloperID(spoofAppURL))
+
+        // 6. Existing v0.6.0 plugin install with pre-hardening SKILL.md auto-migrates CLI read_only guidance on launch
+        let pluginDataDir = root.appendingPathComponent("PluginMigData", isDirectory: true)
+        let pluginConfigDir = root.appendingPathComponent("PluginMigConfig", isDirectory: true)
+        let migPaths = try StoragePaths(dataDirectoryURL: pluginDataDir, antigravityConfigDirectoryURL: pluginConfigDir)
+        let dummyBin = root.appendingPathComponent("dummy-helper")
+        try AtomicFile.writeUTF8("#!/bin/sh\nexit 0\n", to: dummyBin, permissions: 0o755)
+        let installedPluginDir = try AntigravityIntegration.installOrRepair(
+            dataDirectoryURL: pluginDataDir,
+            configDirectoryURL: pluginConfigDir,
+            sourceCLIBinaryURL: dummyBin,
+            sourceSidecarBinaryURL: dummyBin,
+            language: .en
+        )
+        let skillURL = installedPluginDir.appendingPathComponent("skills/rewind/SKILL.md")
+        let legacySkill = try String(contentsOf: skillURL, encoding: .utf8)
+            .replacingOccurrences(of: " and CLI write/delete subcommands (`create`, `update`, `note`, `archive`, `delete`)", with: "")
+        try AtomicFile.writeUTF8(legacySkill, to: skillURL, permissions: 0o644)
+        let migInstaller = AntigravityPluginInstaller(paths: migPaths)
+        #expect(migInstaller.inspectStatus() == .needsInstallOrRepair([.skillMissingMemosGuidance]))
+        try migInstaller.refreshLocalizedMetadataIfInstalled(language: .en)
+        #expect(migInstaller.inspectStatus() == .installed)
+        #expect(try String(contentsOf: skillURL, encoding: .utf8).contains("CLI write/delete subcommands"))
+    }
+
     private func stagingDirectories(in updatesDir: URL) -> [URL] {
         guard let items = try? FileManager.default.contentsOfDirectory(at: updatesDir, includingPropertiesForKeys: nil) else {
             return []
@@ -404,5 +577,14 @@ private struct AlwaysValidSignatureInspector: CodeSignatureInspecting {
 
     func inspect(bundleURL: URL) throws -> InspectedCodeSignature {
         InspectedCodeSignature(authority: .adhoc, bundleIdentifier: bundleIdentifier)
+    }
+}
+
+private struct FixedAuthoritySignatureInspector: CodeSignatureInspecting {
+    let authority: BundleSignatureAuthority
+    let bundleIdentifier: String
+
+    func inspect(bundleURL: URL) throws -> InspectedCodeSignature {
+        InspectedCodeSignature(authority: authority, bundleIdentifier: bundleIdentifier)
     }
 }

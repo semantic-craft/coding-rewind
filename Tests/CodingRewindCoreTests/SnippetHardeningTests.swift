@@ -586,4 +586,155 @@ struct SnippetHardeningTests {
         let calls = HardeningMockURLProtocol.recordedCalls(suiteID: suiteID)
         #expect(calls.contains { $0.method == "PATCH" && $0.url.path == "/api/memos/rw-card-patch" && $0.url.query == "updateMask=content" })
     }
+
+    @Test func memosURLRequiresHTTPSExceptLoopbackAndMarkdownSourceURLAllowlistsSafeSchemes() async throws {
+        let dir = try makeScratchDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "https://memos.example.com/api/memos/")?.absoluteString == "https://memos.example.com")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "http://127.0.0.1:5230/api/memos")?.absoluteString == "http://127.0.0.1:5230")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "http://127.0.1.1:5230/")?.absoluteString == "http://127.0.1.1:5230")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "http://localhost:5230/")?.absoluteString == "http://localhost:5230")
+        #expect(StoragePaths.normalizedMemosBaseURL(from: "http://[::1]:5230/")?.absoluteString == "http://[::1]:5230")
+
+        for cleartextOrUnsafe in [
+            "http://memos.example.com",
+            "http://memos.example.com:5230/api/memos",
+            "http://192.168.1.25:5230",
+            "http://10.0.0.8:5230",
+            "http://0.0.0.0:5230",
+            "http://[::]:5230",
+            "https://user:secret@memos.example.com",
+            "http://user:secret@127.0.0.1:5230"
+        ] {
+            #expect(StoragePaths.normalizedMemosBaseURL(from: cleartextOrUnsafe) == nil, "\(cleartextOrUnsafe)")
+            #expect(throws: RewindError.invalidMemosURL(cleartextOrUnsafe)) {
+                try paths.saveMemosURLString(cleartextOrUnsafe)
+            }
+            #expect(paths.resolveMemosBaseURL(environment: [StoragePaths.memosURLEnvironmentKey: cleartextOrUnsafe]) == nil)
+        }
+
+        let client = makeMockClient()
+        let insecureRemote = URL(string: "http://memos.example.com:5230")!
+        await #expect(throws: RewindError.invalidMemosURL(insecureRemote.absoluteString)) {
+            try await client.verifyConnection(baseURL: insecureRemote, token: "never-send-over-http")
+        }
+
+        let now = Date(timeIntervalSince1970: 1_763_200_000)
+        for unsafeSourceURL in [
+            "javascript:alert(1)",
+            "JAVASCRIPT:fetch('https://evil.example')",
+            "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+            "vbscript:msgbox(1)",
+            "coding-rewind://stash?text=abc",
+            "ftp://files.example.com/doc.md",
+            "conversation://",
+            "https://"
+        ] {
+            let formatted = MemosWireFormat.formatSourceLine(
+                sourceTitle: "Title",
+                sourcePlatform: "web",
+                sourceURL: unsafeSourceURL,
+                capturedAt: now
+            )
+            #expect(formatted.contains("](macos://web)"), "Unsafe scheme \(unsafeSourceURL) must fall back to macos://web")
+            let parsed = MemosWireFormat.parseSourceLine("[Title](\(unsafeSourceURL)) · 2026-11-15T10:13:20Z")
+            #expect(parsed.url == nil, "Unsafe scheme \(unsafeSourceURL) must not surface on read")
+        }
+
+        for allowedSourceURL in [
+            "https://example.com/guide#:~:text=Swift",
+            "http://localhost:3000/docs",
+            "http://[::1]:3000/docs",
+            "https://claude.ai/chat/a%20%28b%29/c",
+            "file:///Users/dev/notes/spec.md",
+            "conversation://6eb720d3-188b-4783-a0c6-9592c554f3fc"
+        ] {
+            let formatted = MemosWireFormat.formatSourceLine(
+                sourceTitle: "Allowed",
+                sourcePlatform: "web",
+                sourceURL: allowedSourceURL,
+                capturedAt: now
+            )
+            #expect(formatted.contains("](\(allowedSourceURL))"))
+            let parsed = MemosWireFormat.parseSourceLine("[Allowed](\(allowedSourceURL)) · 2026-11-15T10:13:20Z")
+            #expect(parsed.url == allowedSourceURL)
+        }
+
+        // Markdown link breakout attempts in Source lines must be rejected on read and sanitized in ConversationPrompt
+        for breakoutRaw in [
+            "[Title](https://example.com) [click](javascript:alert(1)) · 2026-11-15T10:13:20Z",
+            "[Title](https://example.com)[evil](javascript:alert(1)) · 2026-11-15T10:13:20Z",
+            "[Title](https://example.com foo) · 2026-11-15T10:13:20Z"
+        ] {
+            let parsed = MemosWireFormat.parseSourceLine(breakoutRaw)
+            #expect(parsed.url == nil, "Breakout Source line must drop injected link: \(breakoutRaw)")
+        }
+
+        let tamperedCard = RewindCard(
+            id: "rw-breakout",
+            rawContent: "#rewind/ready #source/web\n\nBody",
+            status: .ready,
+            sourcePlatform: "web",
+            sourceTitle: "Web",
+            sourceURL: "javascript:alert(1)",
+            verbatimText: "Body",
+            createdAt: now
+        )
+        let promptEn = ConversationPrompt.buildPrompt(for: [tamperedCard], language: .en, aiAccessMode: .readOnly)
+        #expect(!promptEn.contains("javascript:"))
+
+        // Corrupt config.json or non-string ai_access_mode must fail closed to .readOnly while preserving memos_url
+        try AtomicFile.writeUTF8(#"{"memos_url":"https://memos.example.com","ai_access_mode":false}"#, to: paths.configFileURL)
+        #expect(paths.resolveAIAccessMode(environment: [:]) == .readOnly)
+        #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
+
+        try AtomicFile.writeUTF8("{corrupted-json", to: paths.configFileURL)
+        #expect(paths.resolveAIAccessMode(environment: [:]) == .readOnly)
+
+        // Redirect to cleartext remote HTTP must be refused immediately (returning 302 without following Location)
+        let listenFD = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        #expect(listenFD >= 0)
+        defer { if listenFD >= 0 { Darwin.close(listenFD) } }
+        var reuse: Int32 = 1
+        _ = setsockopt(listenFD, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bindRes = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(listenFD, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        #expect(bindRes == 0)
+        #expect(Darwin.listen(listenFD, 1) == 0)
+        var boundAddr = sockaddr_in()
+        var boundLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+        _ = withUnsafeMutablePointer(to: &boundAddr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.getsockname(listenFD, $0, &boundLen)
+            }
+        }
+        let redirectPort = Int(UInt16(bigEndian: boundAddr.sin_port))
+        DispatchQueue.global(qos: .userInitiated).async {
+            let connFD = Darwin.accept(listenFD, nil, nil)
+            guard connFD >= 0 else { return }
+            var reqBuf = [UInt8](repeating: 0, count: 2048)
+            _ = Darwin.read(connFD, &reqBuf, reqBuf.count)
+            let rawResp = "HTTP/1.1 302 Found\r\nLocation: http://memos.example.com:5230/api/memos?pageSize=1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            _ = rawResp.withCString { Darwin.write(connFD, $0, strlen($0)) }
+            Darwin.close(connFD)
+        }
+        let liveClient = MemosClient(session: URLSession(configuration: .ephemeral))
+        let loopbackOrigin = URL(string: "http://127.0.0.1:\(redirectPort)")!
+        await #expect(throws: RewindError.httpError(statusCode: 302, body: "")) {
+            try await liveClient.verifyConnection(baseURL: loopbackOrigin, token: "secret-bearer-tok")
+        }
+    }
 }

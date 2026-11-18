@@ -428,12 +428,20 @@
     const host = document.createElement("div");
     host.setAttribute("data-coding-rewind-ui", "1");
     host.style.cssText =
-      "position:fixed;inset:0;pointer-events:none;z-index:2147483647;user-select:none;-webkit-user-select:none;";
-    const shadow = host.attachShadow({ mode: "open" });
+      "position:fixed !important;top:0 !important;left:0 !important;width:0 !important;height:0 !important;overflow:visible !important;pointer-events:none !important;z-index:2147483647 !important;user-select:none !important;-webkit-user-select:none !important;";
+    const shadow = host.attachShadow({ mode: "closed" });
 
     const style = document.createElement("style");
     style.textContent = `
       :host {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 0 !important;
+        height: 0 !important;
+        overflow: visible !important;
+        pointer-events: none !important;
+        z-index: 2147483647 !important;
         color-scheme: light dark;
         --rw-surface: rgba(255, 255, 255, 0.96);
         --rw-text: #202124;
@@ -610,11 +618,13 @@
     applyPillVisualState("ready");
 
     listen(pillEl, "mousedown", (event) => {
+      if (!event || event.isTrusted !== true) return;
+      if (typeof event.button === "number" && event.button !== 0) return;
       suppressNextMouseUp = true;
       event.preventDefault();
       event.stopPropagation();
       if (pillState !== "ready") return;
-      void captureAndSendCurrentSelection({ morphPill: true });
+      void captureAndSendCurrentSelection({ morphPill: true, enforcePillTargetGate: true });
     });
 
     shadow.append(style, toastEl, pillEl);
@@ -799,6 +809,7 @@
         if (!isReadOnlyOrDisabledInput(cur)) return true;
       } else if (tag === "input") {
         const inputType = String(cur.type || getAttr(cur, "type") || "text").toLowerCase();
+        if (inputType === "password") return true;
         if (!NON_TEXT_INPUT_TYPES.has(inputType) && !isReadOnlyOrDisabledInput(cur)) {
           return true;
         }
@@ -867,15 +878,60 @@
     return false;
   }
 
-  function isEventInsidePill(event) {
-    return Boolean(pillEl && typeof event.composedPath === "function" && event.composedPath().includes(pillEl));
+  function isPasswordSelectionNode(node) {
+    let cur = node && node.nodeType === 1 ? node : node && (node.parentElement || node.parentNode);
+    while (cur && cur.nodeType === 1) {
+      const tag = String(cur.tagName || cur.nodeName || "").toLowerCase();
+      if (tag === "input") {
+        const inputType = String(cur.type || getAttr(cur, "type") || "text").toLowerCase();
+        if (inputType === "password") return true;
+      }
+      cur = cur.parentElement || (cur.parentNode && cur.parentNode.nodeType === 1 ? cur.parentNode : null);
+    }
+    return false;
   }
 
-  async function extractCurrentSelection() {
+  function isPasswordSelection(selection) {
+    if (!selection) return false;
+    if (isPasswordSelectionNode(selection.anchorNode) || isPasswordSelectionNode(selection.focusNode)) {
+      return true;
+    }
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== document.documentElement) {
+      const related =
+        nodeContains(active, selection.anchorNode) ||
+        nodeContains(active, selection.focusNode) ||
+        nodeContains(selection.anchorNode, active) ||
+        nodeContains(selection.focusNode, active);
+      if (related && isPasswordSelectionNode(active)) return true;
+    }
+    return false;
+  }
+
+  function isEventInsidePill(event) {
+    if (!event || !pillEl || pillState === "hidden" || pillEl.style.display === "none") {
+      return false;
+    }
+    const uiHost = shadowRootRef?.host || null;
+    if (typeof event.composedPath === "function") {
+      const path = event.composedPath();
+      if (Array.isArray(path) && (path.includes(pillEl) || (uiHost && path.includes(uiHost)))) {
+        return true;
+      }
+    }
+    return event.target === pillEl || Boolean(uiHost && event.target === uiHost);
+  }
+
+  async function extractCurrentSelection({ enforcePillTargetGate = false } = {}) {
+    if (enforcePillTargetGate && !isPillAllowedOnCurrentPage()) {
+      return null;
+    }
     const selection = window.getSelection();
     let range = null;
     let rawText = "";
     if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
+      if (isPasswordSelection(selection)) return null;
+      if (enforcePillTargetGate && isSelectionInDisallowedTarget(selection)) return null;
       range = selection.getRangeAt(0).cloneRange();
       rawText = selection.toString() || "";
     }
@@ -898,7 +954,7 @@
     return clip;
   }
 
-  async function captureAndSendCurrentSelection({ morphPill = false } = {}) {
+  async function captureAndSendCurrentSelection({ morphPill = false, enforcePillTargetGate = false } = {}) {
     if (isDisposed || inFlightSaveId !== 0) return;
     const now = Date.now();
     if (now - lastTriggerAt < 350) return;
@@ -912,7 +968,7 @@
     }
 
     try {
-      const clip = await extractCurrentSelection();
+      const clip = await extractCurrentSelection({ enforcePillTargetGate });
       if (isDisposed || saveId !== activeSaveId) return;
       if (!clip || !clip.selectedMarkdown) {
         if (morphPill && pillState === "saving") hidePill();
@@ -1093,11 +1149,12 @@
   });
 
   listen(document, "mousedown", (event) => {
+    if (!event || event.isTrusted !== true) return;
+    if (typeof event.button === "number" && event.button !== 0) return;
     if (isEventInsidePill(event)) {
       suppressNextMouseUp = true;
       return;
     }
-    if (typeof event.button === "number" && event.button !== 0) return;
     suppressNextMouseUp = false;
     pointerDown = typeof event.clientX === "number" && typeof event.clientY === "number"
       ? { clientX: event.clientX, clientY: event.clientY }
@@ -1109,6 +1166,7 @@
   }, true);
 
   listen(document, "mouseup", (event) => {
+    if (!event || event.isTrusted !== true) return;
     if (typeof event.button === "number" && event.button !== 0) return;
     if (suppressNextMouseUp) {
       suppressNextMouseUp = false;
@@ -1177,6 +1235,7 @@
   });
 
   listen(document, "keydown", (event) => {
+    if (!event || event.isTrusted !== true) return;
     if (event.key === "Escape") {
       cancelTimer(selectionCheckTimer);
       selectionCheckTimer = null;
@@ -1186,7 +1245,7 @@
     }
     if (isHyperCaptureShortcutEvent(event)) {
       const sel = window.getSelection();
-      const hasDomSel = Boolean(sel && !sel.isCollapsed && sel.toString().trim());
+      const hasDomSel = Boolean(sel && !sel.isCollapsed && sel.toString().trim() && !isPasswordSelection(sel));
       const hasRoSel = !hasDomSel && Boolean(getReadOnlyControlSelection());
       if (hasDomSel || hasRoSel) {
         event.preventDefault();
@@ -1201,6 +1260,7 @@
   }, true);
 
   listen(document, "keyup", (event) => {
+    if (!event || event.isTrusted !== true) return;
     if (event.key === "Escape" || isHyperCaptureShortcutEvent(event)) return;
     if (Boolean(event.shiftKey) || SELECTION_NAV_KEYS.has(event.key)) {
       scheduleSelectionCheck(null, KEYBOARD_SELECTION_DEBOUNCE_MS);
@@ -1209,6 +1269,9 @@
 
   listenChrome(chrome.runtime?.onMessage, (msg, _sender, sendResponse) => {
     if (!msg || typeof msg !== "object") return false;
+    if (chrome.runtime?.id && (!_sender || _sender.id !== chrome.runtime.id)) {
+      return false;
+    }
     if (msg.type === "REWIND_EXTRACT_SELECTION") {
       lastTriggerAt = Date.now();
       inFlightSaveId = 0;

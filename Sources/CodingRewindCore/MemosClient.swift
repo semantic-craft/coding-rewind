@@ -77,6 +77,36 @@ private struct UpdateMemoRequestDTO: Codable {
     let content: String
 }
 
+private final class MemosRedirectGuardDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    static let shared = MemosRedirectGuardDelegate()
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        guard let nextURL = request.url,
+              MemosWireFormat.isAllowedMemosBaseURL(nextURL) else {
+            completionHandler(nil)
+            return
+        }
+        var forwarded = request
+        if let originalURL = task.originalRequest?.url {
+            let sameOrigin = originalURL.scheme?.lowercased() == nextURL.scheme?.lowercased()
+                && originalURL.host?.lowercased() == nextURL.host?.lowercased()
+                && originalURL.port == nextURL.port
+            if !sameOrigin {
+                forwarded.setValue(nil, forHTTPHeaderField: "Authorization")
+            }
+        } else {
+            forwarded.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(forwarded)
+    }
+}
+
 public struct MemosClient: Sendable {
     public let session: URLSession
 
@@ -476,6 +506,9 @@ public struct MemosClient: Sendable {
     }
 
     private func endpointURL(baseURL: URL, path: String, queryItems: [URLQueryItem]) throws -> URL {
+        guard MemosWireFormat.isAllowedMemosBaseURL(baseURL) else {
+            throw RewindError.invalidMemosURL(baseURL.absoluteString)
+        }
         let baseStr = MemosWireFormat.normalizeBaseURLString(baseURL.absoluteString)
         let normalizedPath = path.hasPrefix("/") ? path : "/\(path)"
         guard var components = URLComponents(string: baseStr + normalizedPath) else {
@@ -484,7 +517,8 @@ public struct MemosClient: Sendable {
         if !queryItems.isEmpty {
             components.queryItems = queryItems
         }
-        guard let finalURL = components.url else {
+        guard let finalURL = components.url,
+              MemosWireFormat.isAllowedMemosBaseURL(finalURL) else {
             throw RewindError.invalidMemosURL(baseURL.absoluteString)
         }
         return finalURL
@@ -505,7 +539,7 @@ public struct MemosClient: Sendable {
             request.httpBody = body
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request, delegate: MemosRedirectGuardDelegate.shared)
         guard let http = response as? HTTPURLResponse else {
             throw RewindError.ioError("Non-HTTP response")
         }

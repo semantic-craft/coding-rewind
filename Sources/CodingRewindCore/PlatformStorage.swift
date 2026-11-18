@@ -120,12 +120,29 @@ public struct StoragePaths: Equatable, Sendable {
         let mcpServers: [String: MCPServerEntryDTO]
     }
 
-    private func readDiskConfig() -> DiskConfig {
-        guard let data = try? Data(contentsOf: configFileURL),
-              let decoded = try? JSONDecoder().decode(DiskConfig.self, from: data) else {
-            return DiskConfig(memos_url: nil, ai_access_mode: nil)
+    private func readDiskConfig() -> (config: DiskConfig, forceReadOnlyOnInvalidConfig: Bool) {
+        var st = stat()
+        if lstat(configFileURL.path, &st) != 0 {
+            if errno == ENOENT {
+                return (DiskConfig(memos_url: nil, ai_access_mode: nil), false)
+            }
+            return (DiskConfig(memos_url: nil, ai_access_mode: AIAccessMode.readOnly.rawValue), true)
         }
-        return decoded
+        guard (st.st_mode & S_IFMT) == S_IFREG,
+              let data = try? Data(contentsOf: configFileURL),
+              let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let dict = rawObject as? [String: Any] else {
+            return (DiskConfig(memos_url: nil, ai_access_mode: AIAccessMode.readOnly.rawValue), true)
+        }
+        let memosURL = dict["memos_url"] as? String
+        if let rawAccess = dict["ai_access_mode"], !(rawAccess is NSNull) {
+            guard let accessStr = rawAccess as? String,
+                  let parsedMode = Self.parseAIAccessMode(accessStr) else {
+                return (DiskConfig(memos_url: memosURL, ai_access_mode: AIAccessMode.readOnly.rawValue), true)
+            }
+            return (DiskConfig(memos_url: memosURL, ai_access_mode: parsedMode.rawValue), false)
+        }
+        return (DiskConfig(memos_url: memosURL, ai_access_mode: nil), false)
     }
 
     private func updateDiskConfig(_ mutate: (inout DiskConfig) -> Void) throws {
@@ -142,7 +159,7 @@ public struct StoragePaths: Equatable, Sendable {
         }
         defer { _ = flock(fd, LOCK_UN) }
 
-        var disk = readDiskConfig()
+        var disk = readDiskConfig().config
         mutate(&disk)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -157,7 +174,7 @@ public struct StoragePaths: Equatable, Sendable {
            !envURL.isEmpty {
             return MemosWireFormat.normalizeBaseURLString(envURL)
         }
-        guard let raw = readDiskConfig().memos_url?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let raw = readDiskConfig().config.memos_url?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else {
             return nil
         }
@@ -169,24 +186,22 @@ public struct StoragePaths: Equatable, Sendable {
     ) -> URL? {
         guard let raw = readConfiguredMemosURLString(environment: environment),
               let url = URL(string: raw),
-              let scheme = url.scheme?.lowercased(),
-              (scheme == "https" || scheme == "http"),
-              url.host?.isEmpty == false else {
+              MemosWireFormat.isAllowedMemosBaseURL(url) else {
             return nil
         }
         return url
     }
 
-    /// Returns the normalized http or https base URL for typed input, or nil when it is not a usable address.
+    /// Returns the normalized https (or loopback http) base URL for typed input, or nil when it is not a usable address.
     public static func normalizedMemosBaseURL(from rawURL: String) -> URL? {
         let trimmedInput = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmedInput),
-              let scheme = url.scheme?.lowercased(),
-              (scheme == "https" || scheme == "http"),
-              url.host?.isEmpty == false else {
+        guard let initialURL = URL(string: trimmedInput),
+              MemosWireFormat.isAllowedMemosBaseURL(initialURL),
+              let normalizedURL = URL(string: MemosWireFormat.normalizeBaseURLString(trimmedInput)),
+              MemosWireFormat.isAllowedMemosBaseURL(normalizedURL) else {
             return nil
         }
-        return URL(string: MemosWireFormat.normalizeBaseURLString(trimmedInput))
+        return normalizedURL
     }
 
     public func saveMemosURLString(_ rawURL: String) throws {
@@ -229,7 +244,11 @@ public struct StoragePaths: Equatable, Sendable {
            !envRaw.isEmpty {
             return Self.parseAIAccessMode(envRaw) ?? .readOnly
         }
-        if let diskRaw = readDiskConfig().ai_access_mode?.trimmingCharacters(in: .whitespacesAndNewlines),
+        let (disk, forceReadOnly) = readDiskConfig()
+        if forceReadOnly {
+            return .readOnly
+        }
+        if let diskRaw = disk.ai_access_mode?.trimmingCharacters(in: .whitespacesAndNewlines),
            !diskRaw.isEmpty {
             return Self.parseAIAccessMode(diskRaw) ?? .readOnly
         }

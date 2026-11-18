@@ -50,7 +50,9 @@ public enum ConversationPrompt {
                 if let ctx = card.contextSummary, !ctx.isEmpty {
                     lines.append("- 上下文脉络：\(ctx)")
                 }
-                if let url = card.sourceURL, !url.isEmpty {
+                if let rawURL = card.sourceURL,
+                   case let url = MemosWireFormat.sanitizeMarkdownURL(rawURL),
+                   !url.isEmpty {
                     lines.append("- 原文出处：[出处](\(url))（\(card.sourceTitle)）")
                 } else {
                     lines.append("- 原文出处：\(card.sourceTitle)")
@@ -84,7 +86,9 @@ public enum ConversationPrompt {
                 if let ctx = card.contextSummary, !ctx.isEmpty {
                     lines.append("- Context: \(ctx)")
                 }
-                if let url = card.sourceURL, !url.isEmpty {
+                if let rawURL = card.sourceURL,
+                   case let url = MemosWireFormat.sanitizeMarkdownURL(rawURL),
+                   !url.isEmpty {
                     lines.append("- Source: [Source](\(url)) (\(card.sourceTitle))")
                 } else {
                     lines.append("- Source: \(card.sourceTitle)")

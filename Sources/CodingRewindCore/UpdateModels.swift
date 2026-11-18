@@ -275,15 +275,22 @@ public enum BundleSignatureAuthority: Equatable, Sendable {
 
     public func canReplace(
         with candidate: BundleSignatureAuthority,
-        expectedReleaseTeamID: String = defaultReleaseTeamID
+        expectedReleaseTeamID: String = defaultReleaseTeamID,
+        allowAdhocCandidateForQA: Bool = false
     ) -> Bool {
-        Self.canReplace(installed: self, with: candidate, expectedReleaseTeamID: expectedReleaseTeamID)
+        Self.canReplace(
+            installed: self,
+            with: candidate,
+            expectedReleaseTeamID: expectedReleaseTeamID,
+            allowAdhocCandidateForQA: allowAdhocCandidateForQA
+        )
     }
 
     public static func canReplace(
         installed: BundleSignatureAuthority,
         with candidate: BundleSignatureAuthority,
-        expectedReleaseTeamID: String = defaultReleaseTeamID
+        expectedReleaseTeamID: String = defaultReleaseTeamID,
+        allowAdhocCandidateForQA: Bool = false
     ) -> Bool {
         switch (installed, candidate) {
         case (_, .unsigned), (_, .otherSigned), (.otherSigned, _):
@@ -303,13 +310,13 @@ public enum BundleSignatureAuthority: Equatable, Sendable {
         case (.adhoc, .appleDevelopment(let t2)):
             return !t2.isEmpty && t2 == expectedReleaseTeamID
         case (.adhoc, .adhoc):
-            return true
+            return allowAdhocCandidateForQA
         case (.unsigned, .developerID(let t2)):
             return !t2.isEmpty && t2 == expectedReleaseTeamID
         case (.unsigned, .appleDevelopment(let t2)):
             return !t2.isEmpty && t2 == expectedReleaseTeamID
         case (.unsigned, .adhoc):
-            return true
+            return allowAdhocCandidateForQA
         }
     }
 }

@@ -204,6 +204,11 @@ class EnricherUnitTests(unittest.TestCase):
         raw_headers = {"Webhook-Id": msg_id, "Webhook-Timestamp": ts, "Webhook-Signature": raw_sig}
         self.assertTrue(enricher.verify_webhook_signature(raw_secret, raw_headers, body, now=now))
 
+        # Empty, whitespace, or empty whsec_ key material must fail closed
+        for empty_secret in ("", "   ", "\t\n", "whsec_"):
+            self.assertFalse(enricher.verify_webhook_signature(empty_secret, headers, body, now=now))
+            self.assertFalse(enricher.verify_webhook_signature(empty_secret, {}, body, now=now))
+
     def test_verbatim_snippet_preservation(self) -> None:
         verbatim = (
             "Consider the inline formula $E = mc^2$ and display block:\n"
@@ -520,12 +525,85 @@ class EnricherUnitTests(unittest.TestCase):
             enriched_text = state.memos["rw-e2e"]["content"]
             self.assertTrue(enriched_text.startswith("#rewind/ready #source/antigravity\n\n"))
             self.assertTrue(enriched_text.endswith("\n\n" + snippet))
+
+            # Malformed, negative, oversized Content-Length and Transfer-Encoding must fail fast without hanging
+            import http.client
+            host, port = http_srv.server_address[0], http_srv.server_address[1]
+
+            def raw_post(path: str, hdrs: dict[str, str]) -> int:
+                conn = http.client.HTTPConnection(host, port, timeout=3)
+                try:
+                    conn.putrequest("POST", path)
+                    for k, v in hdrs.items():
+                        conn.putheader(k, v)
+                    conn.endheaders()
+                    resp = conn.getresponse()
+                    _ = resp.read()
+                    return resp.status
+                finally:
+                    conn.close()
+
+            self.assertEqual(raw_post("/webhook", {"Content-Length": "-1"}), 400)
+            self.assertEqual(raw_post("/webhook", {"Content-Length": "+2"}), 400)
+            self.assertEqual(raw_post("/webhook", {"Content-Length": "1_0"}), 400)
+            self.assertEqual(raw_post("/webhook", {"Content-Length": "not-an-int"}), 400)
+            self.assertEqual(raw_post("/webhook", {"Content-Length": "2097152"}), 413)
+            self.assertEqual(raw_post("/hooks/rewind", {"Transfer-Encoding": "chunked"}), 400)
+
+            # Duplicate Content-Length headers and truncated bodies must fail closed with 400
+            dup_conn = http.client.HTTPConnection(host, port, timeout=3)
+            try:
+                dup_conn.putrequest("POST", "/webhook")
+                dup_conn.putheader("Content-Length", "2")
+                dup_conn.putheader("Content-Length", "10")
+                dup_conn.endheaders(b"{}")
+                dup_resp = dup_conn.getresponse()
+                _ = dup_resp.read()
+                self.assertEqual(dup_resp.status, 400)
+            finally:
+                dup_conn.close()
+
+            short_conn = http.client.HTTPConnection(host, port, timeout=3)
+            try:
+                short_conn.putrequest("POST", "/webhook")
+                short_conn.putheader("Content-Length", "32")
+                short_conn.endheaders()
+                short_conn.sock.sendall(b"{}")
+                short_conn.sock.shutdown(1)
+                short_resp = short_conn.getresponse()
+                _ = short_resp.read()
+                self.assertEqual(short_resp.status, 400)
+            finally:
+                short_conn.close()
         finally:
             svc.stop()
             http_srv.shutdown()
             http_srv.server_close()
             upstream_srv.shutdown()
             upstream_srv.server_close()
+
+        # Unconfigured webhook_secret ("") must fail closed with 401 on both /webhook and /hooks/rewind
+        unconfigured_svc = enricher.EnricherService(
+            memos_url="http://localhost:9",
+            memos_token="memos-tok",
+            ai_base_url="https://api.deepseek.com",
+            ai_api_key="ai-tok",
+            ai_model="deepseek-flash",
+            webhook_secret="",
+        )
+        unconfigured_srv = enricher.create_http_server(unconfigured_svc, host="localhost", port=0)
+        threading.Thread(target=unconfigured_srv.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        unconf_url = f"http://localhost:{unconfigured_srv.server_address[1]}"
+        try:
+            for endpoint in ("/webhook", "/hooks/rewind"):
+                req = urllib.request.Request(f"{unconf_url}{endpoint}", data=b"{}", method="POST")
+                with self.assertRaises(urllib.error.HTTPError) as unconf_ctx:
+                    urllib.request.urlopen(req, timeout=3)
+                self.assertEqual(unconf_ctx.exception.code, 401)
+                unconf_ctx.exception.close()
+        finally:
+            unconfigured_srv.shutdown()
+            unconfigured_srv.server_close()
 
     def test_detect_and_resolve_summary_language(self) -> None:
         self.assertEqual(

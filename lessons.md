@@ -239,10 +239,10 @@
 
 - 标签：#macOS原生 #代码签名 #辅助功能 #性能治理 #门禁
 - 起因与后果：应用以 ad-hoc 方式签名时，每次重新构建会导致代码 cdhash 变化，使系统辅助功能授权留在旧签名记录中，设置界面显示已开启但系统接口实际拒绝读取；同时 macOS 27 下状态栏按钮设置 image 会触发 effectiveAppearance 观察，进而调度 refreshIcon 形成 98% CPU 空转；此外测试中使用随机 UUID 偏好域，cfprefsd 在进程退出时异步写出 42 字节空字典 plist 文件导致偏好目录持续泄漏。
-- 修复与证据：打包脚本通过 security 动态提取本机有效的 Developer ID 或 Apple Development 签名指纹实施内外双层签名，并在非系统安装路径构建结束时反注册 LaunchServices；设置界面增加一键重置失效辅助功能授权指令调用 tccutil 清理失效条目；状态栏控制器引入 IconRenderKey 结构体，仅在待发送状态或深浅外观实质改变时更新图标；测试收敛至固定 QA 偏好域并将其物理文件与 dist 目录清理纳入 scripts/check 强门禁。
-- 正确做法 `Done right`：开发机打包优先使用真实开发者身份避免临时 cdhash 失效；状态栏按钮属性变更必须做幂等防御阻断系统级反馈循环；测试套件禁止生成无界 UUID 偏好域，由门禁统一断言物理文件与构建目录零泄漏。
-- 验证点：运行 `./scripts/check` 确认全部 6 项门禁与测试通过；运行 `build-app-bundle.sh` 并通过 `codesign -dvvv -r-` 核验 anchor apple generic；检查 LaunchServices 未保留构建包路径；检查偏好设置目录无 `dev.codingrewind.qa.*.plist` 残留。
-- 复发记录：`Seen 1x (2026-11-15)`，代码签名与性能走查中定位检出。
+- 修复与证据：打包脚本通过 security 动态提取本机有效的 Developer ID 或 Apple Development 签名指纹实施内外双层签名，并在非系统安装路径构建结束时反注册 LaunchServices；设置界面增加一键重置失效辅助功能授权指令调用 tccutil 清理失效条目；状态栏控制器引入 IconRenderKey 结构体，仅在待发送状态或深浅外观实质改变时更新图标；测试统一收敛至固定 `dev.codingrewind.qa.*` 偏好域（清理时对 `UserDefaults(suiteName:)` 执行 `removePersistentDomain`、`CFPreferencesAppSynchronize` 并移除对应 plist，不得误调 `UserDefaults.standard.removePersistentDomain`），并在 [scripts/check](scripts/check) 同时拦截 `dev.codingrewind.qa.*.plist` 与 `dev.codingrewind.tests.*.plist` 残留及 `dist` 目录泄漏。
+- 正确做法 `Done right`：开发机打包优先使用真实开发者身份避免临时 cdhash 失效；状态栏按钮属性变更必须做幂等防御阻断系统级反馈循环；测试套件禁止生成无界 UUID 或脱离门禁前缀的偏好域，清理由 `UserDefaults(suiteName:)` + `CFPreferencesAppSynchronize` 执行并由门禁统一断言物理文件与构建目录零泄漏。
+- 验证点：运行 `./scripts/check` 确认全部 6 项门禁与测试通过；运行 `build-app-bundle.sh` 并通过 `codesign -dvvv -r-` 核验 anchor apple generic；检查 LaunchServices 未保留构建包路径；检查偏好设置目录无 `dev.codingrewind.qa.*.plist` 或 `dev.codingrewind.tests.*.plist` 残留。
+- 复发记录：`Seen 2x`。2026-11-15 代码签名与性能走查检出 UUID 偏好域泄漏；2026-11-18 安全加固新增 `UpgradeAndBundleIntegrityTests` 误用 `dev.codingrewind.tests.*` 前缀与 `UserDefaults.standard.removePersistentDomain` 再次留下 42 字节 plist，复核定位后对齐固定 `qa` 域与双前缀门禁。
 
 ### Electron 宿主懒加载辅助功能树与原生选区浮层避让
 
@@ -255,16 +255,16 @@
 - 验证点：运行 `./scripts/check` 通过 `SelectionPopupTests` 全部用例；运行 `codesign --verify --deep --strict /Applications/CodingRewind.app` 通过；在 `ChatGPT.app` 实机划选对话并经 WindowServer 截图确认顶部 `Add to chat | Side chat` 与底部 `暂存` 胶囊互不遮挡。
 - 复发记录：`Seen 1x (2026-11-15)`，`ChatGPT.app` 实机接入与 WindowServer 截图验收检出。
 
-### 合成 DOM 桩不能替代真实 NodeList 原型链与物理点击释放序列
+### 合成 DOM 桩不能替代真实 NodeList 原型链与 Shadow DOM 物理点击捕获序列
 
-**网页扩展单测使用轻量 DOM 桩时，类数组节点集合不得直接假定具备 `Array.prototype` 方法，且 `mousedown` 隐藏悬浮控件后必须吸收配对的物理 `mouseup`。**
+**网页扩展单测使用轻量 DOM 桩时，类数组节点集合不得假定具备 `Array.prototype` 方法，且浮层点击夹具必须模拟 `document` 捕获阶段对 `closed` Shadow Root 的 `composedPath()` 重定向与配对 `mouseup`。**
 
 - 标签：#浏览器扩展 #DOM桩 #选区捕获 #验收
-- 起因与后果：2026-11-15 扩展全网页划词与代码块提取时，[test_dom_shim.mjs](extensions/web-clipper/test_dom_shim.mjs) 将 `childNodes` 实现为普通 JS 数组，掩盖了真实 Chromium `NodeList` 不具备 `.some()` 方法的差异，导致加载真实解包扩展点击代码块暂存时抛出 `TypeError: children.some is not a function`；同时 `mousedown` 同步隐藏胶囊后，同坐标紧随到达的物理 `mouseup` 落回 `document`，15 毫秒后将胶囊二次弹出。
-- 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 统一通过 `Array.from(node.childNodes || [])` 迭代子节点；[content.js](extensions/web-clipper/content.js) 在胶囊 `mousedown` 时置位 `suppressNextMouseUp` 拦截配对 `mouseup`；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 补入无 `Array.prototype` 的 `NodeList` 用例与同坐标按下释放回归，真实 Chromium CDP 解包扩展实测代码块去行号入库与胶囊收敛通过。
-- 正确做法 `Done right`：遍历 DOM `childNodes`、`children` 或 `getClientRects()` 一律先用 `Array.from()` 归一化并在单测中注入无数组原型的 `NodeList` 夹具；在 `mousedown` 改变浮层可见性时同步处理后续 `mouseup` 穿透，改动后在真实浏览器加载解包扩展走通完整点击链路。
-- 验证点：运行 `./scripts/check` 通过 `extensions/web-clipper/test_extractors.mjs` 全部用例，并在真实 Chromium 解包扩展中完成网页正文与行号代码块的拖拽点击暂存验证。
-- 复发记录：`Seen 1x (2026-11-15)`，真实 Chromium CDP 解包扩展联调检出。
+- 起因与后果：2026-11-15 扩展全网页划词与代码块提取时，[test_dom_shim.mjs](extensions/web-clipper/test_dom_shim.mjs) 将 `childNodes` 实现为普通 JS 数组，掩盖了真实 Chromium `NodeList` 不具备 `.some()` 方法的差异，且 `mousedown` 同步隐藏胶囊后物理 `mouseup` 落回 `document` 将胶囊二次弹出；2026-11-18 将浮层宿主切换为 `attachShadow({ mode: "closed" })` 时，`test_extractors.mjs` 直接在胶囊节点派发 `mousedown` 而跳过 `document` 捕获监听与 WHATWG 闭合影子树路径隐藏（`document` 捕获阶段 `event.composedPath()` 不含 `pillEl`、仅暴露 `host`），导致真实浏览器引擎点击胶囊时先被 `document` 捕获处理器调用 `hidePill()` 吞掉点击。
+- 修复与证据：[extractors.mjs](extensions/web-clipper/extractors.mjs) 统一通过 `Array.from(node.childNodes || [])` 迭代子节点；[content.js](extensions/web-clipper/content.js) 将宿主收缩为 `0×0` `pointer-events: none !important` 锚点并在胶囊可见时同时识别 `pillEl` 与 `shadowRootRef.host`，拦截非主键点击并吸收配对 `mouseup`；[test_extractors.mjs](extensions/web-clipper/test_extractors.mjs) 在影子树节点派发事件时先执行隐藏内部节点的 `document` 捕获阶段，并经 WebKit 真实引擎验证闭合影子树命中与外部穿透。
+- 正确做法 `Done right`：遍历 DOM `childNodes`、`children` 或 `getClientRects()` 一律先用 `Array.from()` 归一化；使用 `closed` Shadow DOM 时外部 `document` 捕获监听不得假设 `event.composedPath()` 包含影子树内部节点，单测夹具须按真实捕获→目标→冒泡顺序裁剪闭合影子路径。
+- 验证点：运行 `./scripts/check` 通过 `extensions/web-clipper/test_extractors.mjs` 全部用例，并在真实浏览器引擎验证闭合影子树胶囊点击与外部点击行为。
+- 复发记录：`Seen 2x`。2026-11-15 真实 Chromium 解包扩展联调检出 `NodeList` 与 `mouseup` 二次弹出；2026-11-18 安全加固复核经真实 WebKit 引擎复现闭合 Shadow Root `composedPath()` 捕获阶段误隐藏胶囊。
 
 ### 宿主内部 Markdown 协议不得混同于系统级 LaunchServices URL Scheme
 

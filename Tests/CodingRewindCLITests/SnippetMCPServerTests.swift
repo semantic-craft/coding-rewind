@@ -249,7 +249,7 @@ struct SnippetMCPServerTests {
     }
 
     @Test("Real coding-rewind mcp session caches resolved 1Password token across multiple tools/call requests")
-    func mcpSessionCachesResolvedDeveloperCredentialsAcrossToolCalls() throws {
+    func mcpSessionCachesResolvedDeveloperCredentialsAcrossToolCalls() async throws {
         let dir = try SnippetCLIFixtures.makeIsolatedDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -332,36 +332,68 @@ struct SnippetMCPServerTests {
         ], format: .xml, options: 0)
         try AtomicFile.writeData(plistData, to: paths.developerCredentialsFileURL, permissions: 0o600)
 
-        let binary = try SnippetCLIFixtures.builtExecutableURL(named: "coding-rewind")
-        let mcpIn = Pipe()
-        let mcpOut = Pipe()
-        let mcpErr = Pipe()
-        let mcpProc = Process()
-        mcpProc.executableURL = binary
-        mcpProc.arguments = ["mcp", "--data-dir", dataDir.path]
-        mcpProc.environment = [
-            "PATH": "/usr/bin:/bin",
-            KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
-        ]
-        mcpProc.standardInput = mcpIn
-        mcpProc.standardOutput = mcpOut
-        mcpProc.standardError = mcpErr
-        try mcpProc.run()
-
         let requests = [
             #"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_snippets","arguments":{}}}"#,
             #"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_snippet","arguments":{"id":"rw-tok-1"}}}"#,
             #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"archive_snippet","arguments":{"id":"rw-tok-1"}}}"#
         ].joined(separator: "\n") + "\n"
+
+        // 1. Production subprocess refuses unsigned fake-op in DeveloperCredentials.plist
+        let binary = try SnippetCLIFixtures.builtExecutableURL(named: "coding-rewind")
+        let subIn = Pipe()
+        let subOut = Pipe()
+        let subProc = Process()
+        subProc.executableURL = binary
+        subProc.arguments = ["mcp", "--data-dir", dataDir.path]
+        subProc.environment = [
+            "PATH": "/usr/bin:/bin",
+            KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
+        ]
+        subProc.standardInput = subIn
+        subProc.standardOutput = subOut
+        subProc.standardError = FileHandle.nullDevice
+        try subProc.run()
+        subIn.fileHandleForWriting.write(Data(
+            (#"{"jsonrpc":"2.0","id":99,"method":"tools/call","params":{"name":"archive_snippet","arguments":{"id":"rw-tok-1"}}}"# + "\n").utf8
+        ))
+        try subIn.fileHandleForWriting.close()
+        let subOutData = subOut.fileHandleForReading.readDataToEndOfFile()
+        subProc.waitUntilExit()
+        #expect(subProc.terminationStatus == 0)
+        #expect(!FileManager.default.fileExists(atPath: opCountFile.path))
+        if case .object(let subObj) = try JSONValue.decode(from: subOutData),
+           case .object(let subRes) = subObj["result"] {
+            #expect(subRes["isError"] == .bool(true))
+        } else {
+            Issue.record("Expected production subprocess to reject unsigned op_executable")
+        }
+
+        // 2. With trusted executable validator, MCP session caches the resolved token across all 3 tool calls
+        let mcpIn = Pipe()
+        let mcpOut = Pipe()
+        let errCollector = OutputCollector()
+        let runTask = Task {
+            await CLIRunner.run(
+                arguments: ["coding-rewind", "mcp", "--data-dir", dataDir.path],
+                environment: [
+                    "PATH": "/usr/bin:/bin",
+                    KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
+                ],
+                inputFD: mcpIn.fileHandleForReading.fileDescriptor,
+                writeStderr: errCollector.append,
+                mcpOutputFD: mcpOut.fileHandleForWriting.fileDescriptor,
+                executableValidator: { $0.path == fakeOp.resolvingSymlinksInPath().path }
+            )
+        }
         mcpIn.fileHandleForWriting.write(Data(requests.utf8))
         try mcpIn.fileHandleForWriting.close()
-
+        let exitCode = await runTask.value
+        try? mcpOut.fileHandleForWriting.close()
+        try? mcpIn.fileHandleForReading.close()
         let outData = mcpOut.fileHandleForReading.readDataToEndOfFile()
-        let errData = mcpErr.fileHandleForReading.readDataToEndOfFile()
-        mcpProc.waitUntilExit()
 
-        #expect(mcpProc.terminationStatus == 0)
-        #expect(errData.isEmpty)
+        #expect(exitCode == 0)
+        #expect(errCollector.value().isEmpty)
 
         let lines = String(decoding: outData, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: true)
         #expect(lines.count == 3)

@@ -83,8 +83,11 @@ public enum SnippetFormatter {
             "- Status: \(record.status.rawValue) · Origin: \(record.dataOrigin.rawValue) · Platform: \(record.sourcePlatform)",
             "- Created: \(MemosWireFormat.formatISO8601UTC(record.createdAt))"
         ]
-        if let sourceURL = record.sourceURL, !sourceURL.isEmpty {
-            lines.append("- Source: [\(record.sourceTitle)](\(sourceURL))")
+        if let rawURL = record.sourceURL,
+           case let safeURL = MemosWireFormat.sanitizeMarkdownURL(rawURL),
+           !safeURL.isEmpty {
+            let safeLabel = MemosWireFormat.escapeMarkdownLinkLabel(record.sourceTitle)
+            lines.append("- Source: [\(safeLabel)](\(safeURL))")
         } else {
             lines.append("- Source: \(record.sourceTitle)")
         }

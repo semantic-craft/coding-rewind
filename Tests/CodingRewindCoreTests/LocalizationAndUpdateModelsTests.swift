@@ -444,7 +444,10 @@ struct LocalizationAndUpdateModelsTests {
         #expect(!BundleSignatureAuthority.canReplace(installed: appleDev, with: otherDevID))
 
         #expect(BundleSignatureAuthority.canReplace(installed: .adhoc, with: devID))
-        #expect(BundleSignatureAuthority.canReplace(installed: .adhoc, with: .adhoc))
+        #expect(!BundleSignatureAuthority.canReplace(installed: .adhoc, with: .adhoc))
+        #expect(!BundleSignatureAuthority.canReplace(installed: .unsigned, with: .adhoc))
+        #expect(BundleSignatureAuthority.canReplace(installed: .adhoc, with: .adhoc, allowAdhocCandidateForQA: true))
+        #expect(BundleSignatureAuthority.canReplace(installed: .unsigned, with: .adhoc, allowAdhocCandidateForQA: true))
         #expect(!BundleSignatureAuthority.canReplace(installed: .adhoc, with: .unsigned))
         #expect(!BundleSignatureAuthority.canReplace(installed: .adhoc, with: otherDevID))
 

@@ -295,6 +295,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
     public let client: MemosClient
     public let credentialTimeoutSeconds: TimeInterval
     private let preResolvedToken: DeveloperCredentialsResolver.TokenResolution?
+    private let executableValidator: DeveloperCredentialsResolver.ExecutableValidator
 
     private var outbox: OfflineOutbox {
         OfflineOutbox(fileURL: paths.outboxFileURL)
@@ -334,7 +335,8 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         bundledDeveloperCredentialsURL: URL? = nil,
         client: MemosClient = MemosClient(),
         credentialTimeoutSeconds: TimeInterval = 10.0,
-        preResolvedToken: DeveloperCredentialsResolver.TokenResolution? = nil
+        preResolvedToken: DeveloperCredentialsResolver.TokenResolution? = nil,
+        executableValidator: @escaping DeveloperCredentialsResolver.ExecutableValidator = DeveloperCredentialsResolver.isTrustedOnePasswordCLI
     ) {
         self.paths = paths
         self.environment = environment
@@ -342,6 +344,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         self.client = client
         self.credentialTimeoutSeconds = credentialTimeoutSeconds
         self.preResolvedToken = preResolvedToken
+        self.executableValidator = executableValidator
     }
 
     private func resolveToken() -> DeveloperCredentialsResolver.TokenResolution {
@@ -352,7 +355,8 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             paths: paths,
             environment: environment,
             bundledDeveloperCredentialsURL: bundledDeveloperCredentialsURL,
-            timeoutSeconds: credentialTimeoutSeconds
+            timeoutSeconds: credentialTimeoutSeconds,
+            executableValidator: executableValidator
         )
     }
 
