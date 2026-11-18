@@ -4514,6 +4514,138 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
 
     const pwExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
     assert.equal(pwExtract?.clip, null, `${pwSelector} must never be extracted`);
+    assert.equal(pwExtract?.blocked, true, `${pwSelector} must explicitly report blocked=true to stop context-menu fallback`);
+
+    // Real Chromium <input type="password"> keeps window.getSelection() collapsed while document.activeElement is the input
+    harness.setSelectionCollapsed(true);
+    harness.setActiveElement(harness.parsedDoc.querySelector(pwSelector));
+    const collapsedPwExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
+    assert.equal(collapsedPwExtract?.clip, null);
+    assert.equal(collapsedPwExtract?.blocked, true, `focused ${pwSelector} with collapsed DOM selection must still report blocked=true`);
+    harness.setSelectionCollapsed(false);
+    harness.setActiveElement(harness.parsedDoc.body);
+  }
+
+  // Ordinary editable <textarea> with collapsed DOM selection must NOT set blocked=true so context-menu fallback still works
+  harness.setSelectionCollapsed(true);
+  harness.setActiveElement(harness.parsedDoc.querySelector("#secret-editor"));
+  const textareaExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
+  assert.equal(textareaExtract?.clip, null);
+  assert.notEqual(textareaExtract?.blocked, true);
+});
+
+test("security: background context menu blocks fallbackSelectionText when content script reports blocked password input, and wire payloads reject remote file:// hosts", async () => {
+  const previousChrome = globalThis.chrome;
+  const previousSelf = globalThis.self;
+  const previousFetch = globalThis.fetch;
+  let menuClickListener = null;
+  let extractResponder = async () => ({ clip: null, blocked: true });
+  const savedOutboxes = [];
+  try {
+    globalThis.chrome = {
+      runtime: {
+        id: "rewind-ext-id",
+        onInstalled: { addListener() {} },
+        onStartup: { addListener() {} },
+        onMessage: { addListener() {} }
+      },
+      contextMenus: {
+        removeAll(cb) { if (cb) cb(); },
+        create() {},
+        onClicked: { addListener(fn) { menuClickListener = fn; } }
+      },
+      commands: { onCommand: { addListener() {} } },
+      tabs: {
+        async sendMessage(_tabId, msg) {
+          if (msg.type === "REWIND_EXTRACT_SELECTION") {
+            return extractResponder();
+          }
+          return { ok: true };
+        }
+      },
+      scripting: { async executeScript() {} },
+      storage: {
+        local: {
+          async get() { return { memosUrl: "https://127.0.0.1:9", memosToken: "tok", outbox: [] }; },
+          async set(obj) { if (obj.outbox) savedOutboxes.push(obj.outbox); }
+        }
+      }
+    };
+    globalThis.self = { addEventListener() {} };
+    globalThis.fetch = async () => { throw new Error("offline"); };
+
+    await import("./background.js?password-context-menu-block");
+    assert.equal(typeof menuClickListener, "function");
+
+    // 1. Password field (blocked: true) must NOT fall back to info.selectionText
+    menuClickListener(
+      { menuItemId: "save-to-coding-rewind", selectionText: "hunter2-secret" },
+      { id: 11, url: "https://example.com/login", title: "Login" }
+    );
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(savedOutboxes.length, 0, "blocked password selection must never fall back to info.selectionText");
+
+    // 2. First-time script injection retry that returns blocked: true must also block fallbackSelectionText
+    let calls = 0;
+    extractResponder = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("Receiving end does not exist");
+      return { clip: null, blocked: true };
+    };
+    menuClickListener(
+      { menuItemId: "save-to-coding-rewind", selectionText: "hunter2-retry-secret" },
+      { id: 12, url: "https://example.com/login", title: "Login" }
+    );
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(savedOutboxes.length, 0, "retry path blocked password selection must not save fallbackSelectionText");
+
+    // 3. Normal non-DOM selection (blocked: false) still saves via fallbackSelectionText
+    extractResponder = async () => ({ clip: null });
+    menuClickListener(
+      { menuItemId: "save-to-coding-rewind", selectionText: "Normal textarea note" },
+      { id: 13, url: "https://example.com/notes", title: "Notes" }
+    );
+    await new Promise((r) => setTimeout(r, 25));
+    assert.equal(savedOutboxes.length, 1);
+    assert.match(savedOutboxes[0][0].memoBody.content, /Normal textarea note/);
+  } finally {
+    globalThis.chrome = previousChrome;
+    globalThis.self = previousSelf;
+    globalThis.fetch = previousFetch;
+  }
+
+  for (const unsafeSource of [
+    "file://attacker.example.com/share/trap",
+    "FILE://192.168.1.50/smb/leak",
+    "conversation://",
+    "javascript:alert(1)"
+  ]) {
+    const built = buildMemosWirePayloads(
+      {
+        selectedMarkdown: "Body",
+        sourcePlatform: "web",
+        sessionTitle: "Doc",
+        sourceUrl: unsafeSource
+      },
+      { clipId: "rw-1794366666123-srcguard", createdAt: "2026-11-18T12:00:00Z" }
+    );
+    assert.match(built.memoBody.content, /^> \*\*Source:\*\* Doc · 2026-11-18T12:00:00Z$/m, `must strip unsafe sourceUrl ${unsafeSource}`);
+  }
+
+  for (const safeFileUrl of [
+    "file:///Users/dev/notes/spec.md",
+    "file://localhost/Users/dev/notes/spec.md"
+  ]) {
+    const built = buildMemosWirePayloads(
+      {
+        selectedMarkdown: "Body",
+        sourcePlatform: "web",
+        sessionTitle: "Local Spec",
+        sourceUrl: safeFileUrl
+      },
+      { clipId: "rw-1794366666123-srcsafe1", createdAt: "2026-11-18T12:00:00Z" }
+    );
+    assert.ok(built.memoBody.content.includes(`[Local Spec](${safeFileUrl})`));
   }
 });
 

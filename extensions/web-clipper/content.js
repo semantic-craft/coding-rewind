@@ -922,22 +922,27 @@
     return event.target === pillEl || Boolean(uiHost && event.target === uiHost);
   }
 
-  async function extractCurrentSelection({ enforcePillTargetGate = false } = {}) {
+  async function extractCurrentSelectionResult({ enforcePillTargetGate = false } = {}) {
     if (enforcePillTargetGate && !isPillAllowedOnCurrentPage()) {
-      return null;
+      return { clip: null, blocked: true };
     }
     const selection = window.getSelection();
     let range = null;
     let rawText = "";
     if (selection && selection.rangeCount > 0 && !selection.isCollapsed) {
-      if (isPasswordSelection(selection)) return null;
-      if (enforcePillTargetGate && isSelectionInDisallowedTarget(selection)) return null;
+      if (isPasswordSelection(selection)) return { clip: null, blocked: true };
+      if (enforcePillTargetGate && isSelectionInDisallowedTarget(selection)) {
+        return { clip: null, blocked: true };
+      }
       range = selection.getRangeAt(0).cloneRange();
       rawText = selection.toString() || "";
     }
     if (!rawText.trim()) {
+      if (isPasswordSelectionNode(document.activeElement)) {
+        return { clip: null, blocked: true };
+      }
       const roSel = getReadOnlyControlSelection();
-      if (!roSel) return null;
+      if (!roSel) return { clip: null, blocked: false };
       range = null;
       rawText = roSel.text;
     }
@@ -951,6 +956,11 @@
     if (!clip.selectedMarkdown || !clip.selectedMarkdown.trim()) {
       clip.selectedMarkdown = rawText;
     }
+    return { clip, blocked: false };
+  }
+
+  async function extractCurrentSelection(options = {}) {
+    const { clip } = await extractCurrentSelectionResult(options);
     return clip;
   }
 
@@ -1278,8 +1288,8 @@
       cancelTimer(selectionCheckTimer);
       selectionCheckTimer = null;
       hidePill();
-      extractCurrentSelection()
-        .then((clip) => sendResponse({ clip }))
+      extractCurrentSelectionResult()
+        .then(({ clip, blocked }) => sendResponse(blocked ? { clip: null, blocked: true } : { clip }))
         .catch(() => sendResponse({ clip: null }));
       return true;
     }

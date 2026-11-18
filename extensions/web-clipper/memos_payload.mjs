@@ -109,12 +109,29 @@ const ALLOWED_SOURCE_PROTOCOLS = new Set(["http:", "https:", "file:", "conversat
 
 function sanitizeMarkdownUrl(rawUrl) {
   const cleaned = String(rawUrl || "")
-    .replace(/[\u0000-\u001f\u007f]+/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, "")
     .trim();
   if (!cleaned) return "";
   try {
     const parsed = new URL(cleaned);
-    if (!ALLOWED_SOURCE_PROTOCOLS.has(parsed.protocol.toLowerCase())) {
+    const protocol = parsed.protocol.toLowerCase();
+    if (!ALLOWED_SOURCE_PROTOCOLS.has(protocol)) {
+      return "";
+    }
+    if (protocol === "file:") {
+      const host = parsed.hostname.toLowerCase();
+      const lower = cleaned.toLowerCase();
+      if (
+        (host && host !== "localhost") ||
+        (!lower.startsWith("file:///") && !lower.startsWith("file://localhost/")) ||
+        !parsed.pathname
+      ) {
+        return "";
+      }
+    } else if (protocol === "conversation:") {
+      const rest = cleaned.slice("conversation:".length).replace(/^\/+|\/+$/g, "");
+      if (!rest) return "";
+    } else if (!parsed.hostname) {
       return "";
     }
   } catch {

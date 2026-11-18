@@ -98,16 +98,18 @@ function setupMenusAndAlarms() {
 async function ensureContentScriptAndExtract(tabId) {
   try {
     const resp = await chrome.tabs.sendMessage(tabId, { type: "REWIND_EXTRACT_SELECTION" });
-    if (resp && resp.clip) return resp.clip;
+    if (resp?.blocked === true) return { clip: null, blocked: true };
+    if (resp && resp.clip) return { clip: resp.clip, blocked: false };
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["i18n.js", "content.js"]
     });
     const retryResp = await chrome.tabs.sendMessage(tabId, { type: "REWIND_EXTRACT_SELECTION" });
-    if (retryResp && retryResp.clip) return retryResp.clip;
+    if (retryResp?.blocked === true) return { clip: null, blocked: true };
+    if (retryResp && retryResp.clip) return { clip: retryResp.clip, blocked: false };
   }
-  return null;
+  return { clip: null, blocked: false };
 }
 
 export async function injectContentScriptIntoOpenTabs({
@@ -188,11 +190,16 @@ async function triggerFlushOutbox() {
 async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
   if (!tab || !tab.id) return;
   let clip = null;
+  let blocked = false;
   try {
-    clip = await ensureContentScriptAndExtract(tab.id);
+    const extracted = await ensureContentScriptAndExtract(tab.id);
+    clip = extracted?.clip || null;
+    blocked = extracted?.blocked === true;
   } catch {
     clip = null;
   }
+
+  if (blocked) return;
 
   if (!clip && fallbackSelectionText && fallbackSelectionText.trim()) {
     clip = buildFallbackClip({
