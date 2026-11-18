@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "8180aa0373cae01b3c34cd6e08ce78bd0446950f",
+    "main": "95ca386b1a3ca049206f001818a7544741113da8",
     "open_pulls": [],
     "pulls": [
       {
@@ -339,6 +339,14 @@
         "merged": true,
         "number": 43,
         "state": "closed"
+      },
+      {
+        "base": "dc8c6e7c80b7628dbb7b781c32d1e344e17ccb78",
+        "head": "790fa56947450b8edc256a6a3e5a37d14ae077c0",
+        "merge_commit": "95ca386b1a3ca049206f001818a7544741113da8",
+        "merged": true,
+        "number": 44,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -404,7 +412,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-17T13:27:48.369282Z",
+  "observed_at": "2026-11-18T19:53:48.116867Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -421,6 +429,94 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "security-audit-hardening",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "跨边界安全审查 6 项修复、对抗复核补强与 plist 残留双前缀门禁，通过 ./scripts/check 六道门禁与 SwiftUI 静态性能检查后 squash 合入 main。",
+              "ref": 44
+            },
+            {
+              "kind": "commit",
+              "note": "PR #44 合并提交，涵盖 Web Clipper、Swift Core/App/CLI、VPS enricher、规范文档与门禁脚本。",
+              "ref": "95ca386b1a3ca049206f001818a7544741113da8"
+            },
+            {
+              "kind": "file",
+              "note": "Web Clipper 启用 0×0 锚点 closed Shadow DOM（兼容 document 捕获阶段 composedPath 重定向）、event.isTrusted 门控、胶囊点击 TOCTOU 二次可编辑区核验与只读/常规密码输入框全路径拦截，并限制非回环 HTTP Memos 地址与跨扩展消息来源。",
+              "ref": "extensions/web-clipper/content.js"
+            },
+            {
+              "kind": "file",
+              "note": "DeveloperCredentialsResolver 强制 O_NOFOLLOW、单硬链接、当前用户属主、0600 权限、DYLD_* 剥离及 AgileBits 1Password CLI（2BUA8C4S2C）代码签名校验。",
+              "ref": "Sources/CodingRewindCore/DeveloperCredentialsResolver.swift"
+            },
+            {
+              "kind": "file",
+              "note": "coding-rewind CLI 在 read_only（含损坏 config.json、非字符串 ai_access_mode 与非法环境变量故障关闭）模式下同步阻断 create/update/note/archive/delete，并自动迁移已安装 v0.6.0 插件的 SKILL.md。",
+              "ref": "Sources/CodingRewindCLI/CLIRunner.swift"
+            },
+            {
+              "kind": "file",
+              "note": "rewind-enricher 在 REWIND_WEBHOOK_SECRET 为空时故障关闭拒绝 POST /webhook，并拦截重复/非纯数字/负值/超限 Content-Length、残缺消息体与 Transfer-Encoding。",
+              "ref": "deploy/vps/enricher/enricher.py"
+            },
+            {
+              "kind": "file",
+              "note": "远端 Memos 地址在配置、请求与 HTTP 重定向边界统一强制 https://（仅回环地址允许 http://），MemosWireFormat Source URL 实施协议白名单并阻断未转义括号引发的 Markdown 链接越界注入。",
+              "ref": "Sources/CodingRewindCore/MemosWireFormat.swift"
+            },
+            {
+              "kind": "file",
+              "note": "非 QA 生产自动更新拦截 .adhoc 候选包、拒绝符号链接 updates 目录并对 .developerID 候选包精确核验 spctl source=Notarized Developer ID；NativeSelectionMarkdown 禁用 XML 外部实体加载；scripts/check 同步拦截 dev.codingrewind.{qa,tests}.*.plist 残留。",
+              "ref": "Sources/CodingRewindApp/AppUpdater.swift"
+            }
+          ],
+          "id": "security-audit-six-findings-impl",
+          "next": "",
+          "status": "done",
+          "summary": "经 PR #44（合并提交 95ca386b1a3ca049206f001818a7544741113da8）落实跨端重点安全审查检出的全部 6 项问题（3 Medium、3 Low）并补齐测试偏好文件清理门禁：（1）浏览器扩展切换 0×0 宿主 closed Shadow DOM 并兼容 WHATWG 闭合影子树在 document 捕获阶段的 composedPath 重定向，拦截非受信合成事件（event.isTrusted !== true）、非主键点击、胶囊点击前页面篡改选区的 TOCTOU 竞态与常规/只读密码框提取，后台与内容脚本消息入口在存在 runtime.id 时对缺失或异源 sender.id 故障关闭；（2）DeveloperCredentialsResolver 对外部 DeveloperCredentials.plist 执行 O_NOFOLLOW + fstat（常规文件、单硬链接、当前用户属主、0600）与大小复核，剥离 DYLD_* 环境变量并默认校验 AgileBits Developer ID（TeamIdentifier 2BUA8C4S2C）硬化签名；（3）coding-rewind CLI 在 read_only（含损坏 config.json、非字符串 ai_access_mode 及非法 CODING_REWIND_AI_ACCESS 故障关闭）下于读取 stdin 前拒绝全部 5 个写删子命令，并在启动检查中自动升级已安装 v0.6.0 插件的 SKILL.md；（4）enricher.py 未配置 REWIND_WEBHOOK_SECRET 时 Webhook 故障关闭返回 401，增设套接字超时并严格校验单一 ASCII 数字 Content-Length、完整消息体与禁用 Transfer-Encoding；（5）Swift 与 Web Clipper 禁止向非回环 http:// 发送或经 3xx 重定向降级泄露 Bearer 令牌，MemosWireFormat 读写与接聊提示词收敛协议白名单并拦截未转义括号引发的 Markdown 链接越界注入；（6）非 QA 自动更新拒绝 .adhoc 替换、拦截 updates 符号链接目录并在清除隔离属性前精确校验 spctl source=Notarized Developer ID，NativeSelectionMarkdown 启用 .nodeLoadExternalEntitiesNever 防护 XXE，并将 UpgradeAndBundleIntegrityTests 收敛至固定 QA 偏好域同时在 scripts/check 阻断 dev.codingrewind.{qa,tests}.*.plist 泄漏。全仓 ./scripts/check 六道门禁与 check_swiftui_perf.py（0 告警）全部通过。",
+          "title": "跨边界安全审查 6 项修复与全仓自动化门禁回归（PR #44）"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "commit",
+              "note": "基于 PR #44 合并提交执行 ./scripts/package-release.sh --notarize 构建公证装订包并原位升级 /Applications/CodingRewind.app。",
+              "ref": "95ca386b1a3ca049206f001818a7544741113da8"
+            },
+            {
+              "kind": "note",
+              "note": "submission_id 13ef6957-ba2b-468b-9ab6-a6c5949d10eb（Accepted）；/Applications/CodingRewind.app（CDHash 9689a3611fb6d043ad54882a69235cd863a88ad8，主程序 SHA-256 ac7817091a993c53871d28d97572645c8b3d548927f82ca3c8d678c13804140a，不含 DeveloperCredentials.plist）通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl --assess（source=Notarized Developer ID）；--background 启动（PID 39379）后 bin/coding-rewind（SHA-256 fd464528e9ddf35a0de7073f41a28fdb234b6d35b0413b04167fb481b00a0650）与 bin/coding-rewind-sidecar（SHA-256 40dc4ce7efe1c8d1e398c5365341c2cfb30c38773447fd4299bd8a9deb4e2116）同 Contents/Helpers cmp 一致，SKILL.md 自动补齐 CLI write/delete subcommands 边界说明，config.json 与 dev.codingrewind.app.plist 哈希未变，无交互会话下 coding-rewind list --limit 1 --json 静默读取 Keychain 完成 online 查询且 read_only 下 archive 故障关闭拒绝。",
+              "ref": "2026-11-19 本机公证升级、插件 SKILL.md 自动迁移与无交互 Keychain 读取核验"
+            }
+          ],
+          "id": "security-audit-local-notarized-upgrade",
+          "next": "",
+          "status": "done",
+          "summary": "基于 main（95ca386b1a3ca049206f001818a7544741113da8）执行 ./scripts/package-release.sh --notarize 完成 Developer ID（TeamIdentifier LQAVR62TK2）签名、Apple Notary 公证（submission_id 13ef6957-ba2b-468b-9ab6-a6c5949d10eb，Accepted）与 stapler 装订后覆盖升级 /Applications/CodingRewind.app（CDHash 9689a3611fb6d043ad54882a69235cd863a88ad8，零内置凭据文件），通过 codesign --verify --deep --strict、xcrun stapler validate 与 spctl Notarized Developer ID 校验。静默重启后台进程（PID 39379）后自动同步固定目录 bin/ 下的 coding-rewind 与 coding-rewind-sidecar（cmp 逐字节一致），自动刷新已安装 ~/.gemini/config/plugins/coding-rewind/skills/rewind/SKILL.md 补齐 CLI 写删子命令只读边界，完整保留既有 config.json 与用户偏好；实测无交互 shell 下新版 CDHash 的 coding-rewind 静默读取 com.codingrewind.memos 钥匙串令牌直连远端 Memos 返回 online 结果，且 CODING_REWIND_AI_ACCESS=read_only 下写删子命令按预期拦截。",
+          "title": "本机 /Applications 公证包覆盖升级、辅助二进制与 SKILL.md 同步及钥匙串静默读取核验"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "issue",
+              "note": "结合桌面浏览器扩展重载与远端配置复核一并点检。",
+              "ref": 14
+            }
+          ],
+          "id": "security-audit-live-rollout-and-validation",
+          "next": "在桌面 Chrome 刷新本地解包扩展点检闭合 Shadow DOM 胶囊点击，并按需同步远端 VPS enricher.py 与核对 Caddy/.env REWIND_WEBHOOK_SECRET。",
+          "status": "unverified",
+          "summary": "桌面端公证包升级、辅助二进制与 SKILL.md 自动迁移及无交互会话下 Developer ID 新二进制静默读取 macOS Keychain 已在本机实测通过；登录态桌面 Chrome 解包扩展重载（验证真实网页下 closed Shadow DOM 胶囊点击）及远端 VPS enricher 容器同步与 Caddy/.env REWIND_WEBHOOK_SECRET 配置核对尚未在本轮执行。",
+          "title": "桌面浏览器解包扩展重载与远端 VPS Webhook 配置实机待验"
+        }
+      ],
+      "title": "跨边界安全加固（扩展隔离、凭据签名门禁、CLI 只读对齐、Webhook 故障关闭、TLS 与公证核验，PR #44）"
+    },
     {
       "id": "release-060",
       "items": [
@@ -2770,7 +2866,8 @@
       40,
       41,
       42,
-      43
+      43,
+      44
     ]
   }
 }
