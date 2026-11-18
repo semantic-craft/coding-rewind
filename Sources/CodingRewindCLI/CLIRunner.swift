@@ -35,7 +35,8 @@ public enum CLIRunner {
         writeStdout: (String) -> Void = { _ = writeUTF8($0, to: STDOUT_FILENO) },
         writeStderr: (String) -> Void = { _ = writeUTF8($0, to: STDERR_FILENO) },
         mcpOutputFD: Int32 = STDOUT_FILENO,
-        repositoryFactory: (@Sendable (StoragePaths, [String: String], URL?) -> any SnippetQuerying)? = nil
+        repositoryFactory: (@Sendable (StoragePaths, [String: String], URL?) -> any SnippetQuerying)? = nil,
+        executableValidator: @escaping DeveloperCredentialsResolver.ExecutableValidator = DeveloperCredentialsResolver.isTrustedOnePasswordCLI
     ) async -> Int32 {
         let command: CLICommand
         do {
@@ -50,7 +51,8 @@ public enum CLIRunner {
                 SnippetRepository(
                     paths: paths,
                     environment: env,
-                    bundledDeveloperCredentialsURL: bundledURL
+                    bundledDeveloperCredentialsURL: bundledURL,
+                    executableValidator: executableValidator
                 )
             }
 
@@ -114,6 +116,16 @@ public enum CLIRunner {
             }
 
         case .create(let textSource, var input, let dataDir, let json):
+            do {
+                try ensureCLIWriteAccessAllowed(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath
+                )
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
             let resolvedText: String
             do {
                 resolvedText = try resolveTextSource(textSource, inputFD: inputFD, fieldName: "snippet text")
@@ -146,6 +158,11 @@ public enum CLIRunner {
 
         case .update(let id, let patch, let dataDir, let json):
             do {
+                try ensureCLIWriteAccessAllowed(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath
+                )
                 let repo = try makeRepository(
                     dataDirOverride: dataDir,
                     environment: environment,
@@ -165,6 +182,16 @@ public enum CLIRunner {
             }
 
         case .note(let id, let textSource, let author, let dataDir, let json):
+            do {
+                try ensureCLIWriteAccessAllowed(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath
+                )
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
             let resolvedNote: String
             do {
                 resolvedNote = try resolveTextSource(textSource, inputFD: inputFD, fieldName: "note text")
@@ -200,6 +227,11 @@ public enum CLIRunner {
 
         case .archive(let id, let dataDir, let json):
             do {
+                try ensureCLIWriteAccessAllowed(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath
+                )
                 let repo = try makeRepository(
                     dataDirOverride: dataDir,
                     environment: environment,
@@ -220,6 +252,11 @@ public enum CLIRunner {
 
         case .delete(let id, let dataDir, let json):
             do {
+                try ensureCLIWriteAccessAllowed(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath
+                )
                 let repo = try makeRepository(
                     dataDirOverride: dataDir,
                     environment: environment,
@@ -266,7 +303,8 @@ public enum CLIRunner {
                             let resolution = DeveloperCredentialsResolver.resolveToken(
                                 paths: context.paths,
                                 environment: sessionEnv,
-                                bundledDeveloperCredentialsURL: context.bundledCredentialsURL
+                                bundledDeveloperCredentialsURL: context.bundledCredentialsURL,
+                                executableValidator: executableValidator
                             )
                             if case .resolved(let resolvedToken) = resolution {
                                 sessionTokenBox.set(resolvedToken)
@@ -279,7 +317,8 @@ public enum CLIRunner {
                         paths: context.paths,
                         environment: sessionEnv,
                         bundledDeveloperCredentialsURL: context.bundledCredentialsURL,
-                        preResolvedToken: preResolvedToken
+                        preResolvedToken: preResolvedToken,
+                        executableValidator: executableValidator
                     )
                 },
                 accessModeProvider: {
@@ -385,6 +424,21 @@ public enum CLIRunner {
             .appendingPathComponent("Resources", isDirectory: true)
             .appendingPathComponent("DeveloperCredentials.plist", isDirectory: false)
         return FileManager.default.isReadableFile(atPath: candidate.path) ? candidate : nil
+    }
+
+    private static func ensureCLIWriteAccessAllowed(
+        dataDirOverride: String?,
+        environment: [String: String],
+        executablePath: String?
+    ) throws {
+        let context = try resolveRepositoryContext(
+            dataDirOverride: dataDirOverride,
+            environment: environment,
+            executablePath: executablePath
+        )
+        guard context.paths.resolveAIAccessMode(environment: context.environment) == .readWrite else {
+            throw RewindError.aiWriteDisabled
+        }
     }
 
     private static func makeRepository(

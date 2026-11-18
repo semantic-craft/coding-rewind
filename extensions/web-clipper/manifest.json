@@ -73,5 +73,8 @@
       "use_dynamic_url": true
     }
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none';"
+  },
   "version_name": "0.6.0"
 }

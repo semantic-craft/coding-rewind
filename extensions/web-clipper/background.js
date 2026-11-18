@@ -273,6 +273,9 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || typeof msg !== "object") return false;
+    if (chrome.runtime?.id && (!_sender || _sender.id !== chrome.runtime.id)) {
+      return false;
+    }
     if (msg.type === "REWIND_SAVE_CLIP" && msg.clip) {
       processClipSave(msg.clip)
         .then((res) => sendResponse(res));

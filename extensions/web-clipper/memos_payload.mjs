@@ -32,13 +32,34 @@ export function generateClipId(nowMs = Date.now(), randomFn = Math.random) {
   return clipId;
 }
 
+function isLoopbackMemosHostname(hostname) {
+  const h = String(hostname || "").toLowerCase();
+  if (!h) return false;
+  if (h === "localhost" || h === "localhost." || h.endsWith(".localhost") || h.endsWith(".localhost.")) {
+    return true;
+  }
+  if (h === "[::1]") {
+    return true;
+  }
+  return /^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(h);
+}
+
 export function normalizeMemosBaseUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== "string") return "";
   const trimmed = rawUrl.trim();
   if (!trimmed) return "";
   try {
     const parsed = new URL(trimmed);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    if (parsed.username || parsed.password) {
+      return "";
+    }
+    if (parsed.protocol === "https:") {
+      if (!parsed.hostname) return "";
+    } else if (parsed.protocol === "http:") {
+      if (!isLoopbackMemosHostname(parsed.hostname)) {
+        return "";
+      }
+    } else {
       return "";
     }
     const cleanPath = parsed.pathname

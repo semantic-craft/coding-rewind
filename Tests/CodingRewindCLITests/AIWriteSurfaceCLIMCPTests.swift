@@ -315,4 +315,94 @@ struct AIWriteSurfaceCLIMCPTests {
         #expect(noteHumanOut.value().contains("### Notes"))
         #expect(noteHumanOut.value().contains("Conclusion via --stdin"))
     }
+
+    @Test("CLIRunner enforces AI read_only gate (and fail-closed invalid env) across create, update, note, archive, and delete while keeping list/search/get active")
+    func cliEnforcesReadOnlyAndFailClosedGateAcrossAllMutatingAndDeletingCommands() async throws {
+        let dir = try SnippetCLIFixtures.makeIsolatedDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let dataDir = dir.appendingPathComponent("Data", isDirectory: true)
+        let paths = try StoragePaths(
+            dataDirectoryURL: dataDir,
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config", isDirectory: true)
+        )
+        try paths.saveAIAccessMode(.readOnly)
+
+        let backend = FakeSnippetBackend(records: SnippetCLIFixtures.makeSampleRecords())
+        let expectedMsg = try #require(RewindError.aiWriteDisabled.errorDescription)
+
+        for readArgs in [
+            ["coding-rewind", "list", "--data-dir", dataDir.path, "--json"],
+            ["coding-rewind", "search", "actor", "--data-dir", dataDir.path, "--json"],
+            ["coding-rewind", "get", "rw-recent-ready", "--data-dir", dataDir.path, "--json"]
+        ] {
+            let out = OutputCollector()
+            let err = OutputCollector()
+            let code = await CLIRunner.run(
+                arguments: readArgs,
+                environment: [:],
+                now: { SnippetCLIFixtures.fixedNow },
+                writeStdout: out.append,
+                writeStderr: err.append,
+                repositoryFactory: { _, _, _ in backend }
+            )
+            #expect(code == 0, "Expected \(readArgs) to succeed in read_only mode")
+            #expect(err.value().isEmpty)
+        }
+
+        let blockedCommands: [[String]] = [
+            ["coding-rewind", "create", "--text", "blocked", "--data-dir", dataDir.path],
+            ["coding-rewind", "create", "--stdin", "--data-dir", dataDir.path],
+            ["coding-rewind", "update", "rw-recent-ready", "--title", "Blocked", "--data-dir", dataDir.path],
+            ["coding-rewind", "note", "rw-recent-ready", "--text", "blocked", "--data-dir", dataDir.path],
+            ["coding-rewind", "note", "rw-recent-ready", "--stdin", "--data-dir", dataDir.path],
+            ["coding-rewind", "archive", "rw-recent-ready", "--data-dir", dataDir.path],
+            ["coding-rewind", "delete", "rw-recent-ready", "--data-dir", dataDir.path]
+        ]
+
+        // Non-EOF pipe proves --stdin commands fail closed BEFORE attempting to read stdin
+        let openPipe = Pipe()
+        defer {
+            try? openPipe.fileHandleForWriting.close()
+            try? openPipe.fileHandleForReading.close()
+        }
+
+        for args in blockedCommands {
+            let out = OutputCollector()
+            let err = OutputCollector()
+            let code = await CLIRunner.run(
+                arguments: args,
+                environment: [:],
+                now: { SnippetCLIFixtures.fixedNow },
+                inputFD: openPipe.fileHandleForReading.fileDescriptor,
+                writeStdout: out.append,
+                writeStderr: err.append,
+                repositoryFactory: { _, _, _ in backend }
+            )
+            #expect(code == 1, "Expected \(args) to fail closed in read_only mode")
+            #expect(out.value().isEmpty)
+            #expect(err.value().contains(expectedMsg))
+        }
+
+        // Even when config.json is read_write, corrupted CODING_REWIND_AI_ACCESS must fail closed in CLI too
+        try paths.saveAIAccessMode(.readWrite)
+        for envVal in ["read_only", "corrupted_unexpected_mode"] {
+            let err = OutputCollector()
+            let code = await CLIRunner.run(
+                arguments: ["coding-rewind", "delete", "rw-recent-ready", "--data-dir", dataDir.path],
+                environment: [StoragePaths.aiAccessEnvironmentKey: envVal],
+                now: { SnippetCLIFixtures.fixedNow },
+                writeStdout: { _ in },
+                writeStderr: err.append,
+                repositoryFactory: { _, _, _ in backend }
+            )
+            #expect(code == 1)
+            #expect(err.value().contains(expectedMsg))
+        }
+
+        #expect(await backend.recordedCreateInputs.isEmpty)
+        #expect(await backend.recordedUpdateCalls.isEmpty)
+        #expect(await backend.recordedNoteCalls.isEmpty)
+        #expect(await backend.recordedArchiveIDs.isEmpty)
+    }
 }

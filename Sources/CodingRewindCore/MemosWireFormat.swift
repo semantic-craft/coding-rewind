@@ -1,8 +1,52 @@
 // SPDX-License-Identifier: MIT
 
+import Darwin
 import Foundation
 
 public enum MemosWireFormat {
+    public static func isLoopbackMemosHost(_ rawHost: String) -> Bool {
+        let trimmed = rawHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let lowered = trimmed.lowercased()
+        if lowered == "localhost" || lowered == "localhost."
+            || lowered.hasSuffix(".localhost") || lowered.hasSuffix(".localhost.") {
+            return true
+        }
+        var addr4 = in_addr()
+        if lowered.withCString({ inet_pton(AF_INET, $0, &addr4) }) == 1 {
+            return (UInt32(bigEndian: addr4.s_addr) & 0xFF00_0000) == 0x7F00_0000
+        }
+        let unbracketed: String
+        if lowered.hasPrefix("[") && lowered.hasSuffix("]") && lowered.count >= 2 {
+            unbracketed = String(lowered.dropFirst().dropLast())
+        } else {
+            unbracketed = lowered
+        }
+        var addr6 = in6_addr()
+        if unbracketed.withCString({ inet_pton(AF_INET6, $0, &addr6) }) == 1 {
+            let bytes = withUnsafeBytes(of: &addr6) { Array($0) }
+            return bytes.count == 16 && bytes.dropLast().allSatisfy({ $0 == 0 }) && bytes.last == 1
+        }
+        return false
+    }
+
+    public static func isAllowedMemosBaseURL(_ url: URL) -> Bool {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              (components.user == nil || components.user?.isEmpty == true),
+              (components.password == nil || components.password?.isEmpty == true),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host, !host.isEmpty else {
+            return false
+        }
+        switch scheme {
+        case "https":
+            return true
+        case "http":
+            return isLoopbackMemosHost(host)
+        default:
+            return false
+        }
+    }
     public static func normalizeBaseURLString(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
@@ -158,6 +202,17 @@ public enum MemosWireFormat {
         return plain.date(from: raw)
     }
 
+    public static func escapeMarkdownLinkLabel(_ raw: String) -> String {
+        raw
+            .replacingOccurrences(of: "\0", with: "")
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+    }
+
     public static func formatSourceLine(
         sourceTitle: String,
         sourcePlatform: String,
@@ -170,10 +225,7 @@ public enum MemosWireFormat {
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
         let effectiveTitle = singleLineTitle.trimmingCharacters(in: .whitespaces).isEmpty ? safePlatform : singleLineTitle
-        let escapedTitle = effectiveTitle
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "[", with: "\\[")
-            .replacingOccurrences(of: "]", with: "\\]")
+        let escapedTitle = escapeMarkdownLinkLabel(effectiveTitle)
         let sanitizedURL = sourceURL.map(sanitizeMarkdownURL) ?? ""
         let targetLink = !sanitizedURL.isEmpty ? sanitizedURL : "macos://\(safePlatform)"
         let iso = formatISO8601UTC(capturedAt)
@@ -198,19 +250,73 @@ public enum MemosWireFormat {
             if splitIndex >= labelStart && linkStart <= linkEnd {
                 let label = unescapeMarkdownLinkLabel(String(mainPart[labelStart..<splitIndex]))
                 let link = String(mainPart[linkStart..<linkEnd])
-                let exposedURL = link.hasPrefix("macos://") ? nil : link
+                let exposedURL = isAllowedParsedSourceLink(link) ? link : nil
                 return (label, exposedURL)
             }
         }
         return (unescapeMarkdownLinkLabel(mainPart.trimmingCharacters(in: .whitespaces)), nil)
     }
 
-    private static func sanitizeMarkdownURL(_ raw: String) -> String {
-        raw
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    public static func sanitizeMarkdownURL(_ raw: String) -> String {
+        let strippedControls = String(raw.unicodeScalars.filter { scalar in
+            scalar.value > 0x1F && scalar.value != 0x7F
+        })
+        let trimmed = strippedControls.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let encoded = trimmed
             .replacingOccurrences(of: #"\s+"#, with: "%20", options: .regularExpression)
             .replacingOccurrences(of: "(", with: "%28")
             .replacingOccurrences(of: ")", with: "%29")
+        guard isValidAllowedSourceURL(encoded) else { return "" }
+        return encoded
+    }
+
+    private static func isValidAllowedSourceURL(_ encoded: String) -> Bool {
+        let forbidden = CharacterSet.whitespacesAndNewlines
+            .union(.controlCharacters)
+            .union(CharacterSet(charactersIn: "()"))
+        guard !encoded.isEmpty,
+              encoded.unicodeScalars.allSatisfy({ $0.value > 0x1F && $0.value != 0x7F }),
+              encoded.rangeOfCharacter(from: forbidden) == nil else {
+            return false
+        }
+        let lower = encoded.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") {
+            guard let parsed = URL(string: encoded) ?? URL(string: encoded, encodingInvalidCharacters: true),
+                  let scheme = parsed.scheme?.lowercased(),
+                  (scheme == "http" || scheme == "https"),
+                  let host = parsed.host, !host.isEmpty else {
+                return false
+            }
+            return true
+        }
+        if lower.hasPrefix("conversation://") {
+            let rest = String(encoded.dropFirst("conversation://".count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return !rest.isEmpty
+        }
+        if lower.hasPrefix("file://") {
+            guard let parsed = URL(string: encoded) ?? URL(string: encoded, encodingInvalidCharacters: true),
+                  parsed.scheme?.lowercased() == "file",
+                  parsed.isFileURL,
+                  !parsed.path.isEmpty else {
+                return false
+            }
+            return true
+        }
+        return false
+    }
+
+    private static func isAllowedParsedSourceLink(_ link: String) -> Bool {
+        guard !link.contains(")"),
+              isValidAllowedSourceURL(link.replacingOccurrences(of: "(", with: "%28")) else {
+            return false
+        }
+        let lower = link.lowercased()
+        if lower.hasPrefix("file://") {
+            return lower.hasPrefix("file:///") || lower.hasPrefix("file://localhost/")
+        }
+        return true
     }
 
     private static func markdownLinkSplitIndex(in linkMarkdown: String) -> String.Index? {

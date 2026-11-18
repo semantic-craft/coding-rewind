@@ -105,17 +105,25 @@ def resolve_summary_language(mode: str, excerpt: str, context: str | None = None
 
 
 def verify_webhook_signature(secret: str, headers, raw_body: bytes, now: float | None = None, tolerance_seconds: int = 300) -> bool:
-    if not secret:
-        return True
+    clean_secret = (secret or "").strip()
+    if not clean_secret:
+        return False
     hdrs = {k.lower(): v for k, v in headers.items()}
     msg_id, msg_ts, sig_hdr = hdrs.get("webhook-id", ""), hdrs.get("webhook-timestamp", ""), hdrs.get("webhook-signature", "")
     if not (msg_id and msg_ts and sig_hdr):
         return False
     try:
         ts_val = int(msg_ts)
-        prefix, sep, b64 = secret.partition("_")
-        key = base64.b64decode(b64 + "=" * (-len(b64) % 4)) if (sep and prefix == "whsec") else secret.encode("utf-8")
-    except ValueError:
+        prefix, sep, b64 = clean_secret.partition("_")
+        if sep and prefix == "whsec":
+            if not b64:
+                return False
+            key = base64.b64decode(b64 + "=" * (-len(b64) % 4))
+        else:
+            key = clean_secret.encode("utf-8")
+    except (ValueError, TypeError):
+        return False
+    if not key:
         return False
     if tolerance_seconds is not None and abs((time.time() if now is None else now) - ts_val) > tolerance_seconds:
         return False
@@ -346,6 +354,8 @@ class EnricherService:
 
 def create_http_server(service: EnricherService, host: str = "", port: int = 8090) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
+        timeout = 10.0
+
         def _reply(self, code: int, body: dict) -> None:
             raw = json.dumps(body).encode("utf-8")
             self.send_response(code)
@@ -355,12 +365,45 @@ def create_http_server(service: EnricherService, host: str = "", port: int = 809
             self.wfile.write(raw)
 
         def do_GET(self) -> None:
-            self._reply(200, {"ok": True}) if self.path == "/healthz" else self._reply(404, {"ok": False})
+            route = urlparse(self.path).path
+            self._reply(200, {"ok": True}) if route == "/healthz" else self._reply(404, {"ok": False})
 
         def do_POST(self) -> None:
-            if self.path.rstrip("/") not in ("/webhook", "/hooks/rewind"):
+            route = urlparse(self.path).path.rstrip("/")
+            if route not in ("/webhook", "/hooks/rewind"):
                 return self._reply(404, {"ok": False})
-            raw_body = self.rfile.read(min(int(self.headers.get("Content-Length", "0") or 0), 1_048_576))
+            if self.headers.get("Transfer-Encoding") is not None:
+                self.close_connection = True
+                return self._reply(400, {"ok": False, "error": "unsupported Transfer-Encoding"})
+            content_lengths = self.headers.get_all("Content-Length") or []
+            if len(content_lengths) > 1:
+                self.close_connection = True
+                return self._reply(400, {"ok": False, "error": "duplicate Content-Length"})
+            if not content_lengths:
+                content_length = 0
+            else:
+                stripped_len = content_lengths[0].strip()
+                if not stripped_len or not stripped_len.isascii() or not stripped_len.isdigit():
+                    self.close_connection = True
+                    return self._reply(400, {"ok": False, "error": "invalid Content-Length"})
+                content_length = int(stripped_len)
+            if content_length > 1_048_576:
+                self.close_connection = True
+                return self._reply(413, {"ok": False, "error": "payload too large"})
+            if not (service.webhook_secret or "").strip():
+                self.close_connection = True
+                return self._reply(401, {"ok": False, "error": "invalid webhook signature"})
+            if content_length > 0:
+                try:
+                    raw_body = self.rfile.read(content_length)
+                except (TimeoutError, OSError):
+                    self.close_connection = True
+                    return
+                if len(raw_body) != content_length:
+                    self.close_connection = True
+                    return self._reply(400, {"ok": False, "error": "incomplete request body"})
+            else:
+                raw_body = b""
             if not verify_webhook_signature(service.webhook_secret, self.headers, raw_body):
                 return self._reply(401, {"ok": False, "error": "invalid webhook signature"})
             service.wake()

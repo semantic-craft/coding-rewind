@@ -675,7 +675,7 @@ struct SnippetRepositoryTests {
             "token_reference": "op://dev-vault/memos/token",
             "op_executable": fakeOpURL.path
         ], format: .xml, options: 0)
-        try validPlistData.write(to: paths.developerCredentialsFileURL)
+        try AtomicFile.writeData(validPlistData, to: paths.developerCredentialsFileURL, permissions: 0o600)
 
         let suiteID = UUID().uuidString.lowercased()
         defer { SnippetMockURLProtocol.unregister(suiteID: suiteID) }
@@ -704,7 +704,19 @@ struct SnippetRepositoryTests {
             "CODING_REWIND_KEYCHAIN_SERVICE": customKeychainService
         ]
 
-        let validOpRepo = SnippetRepository(paths: paths, environment: baseEnv, client: makeMockClient())
+        // Production default validator rejects unsigned fake-op and never falls back to personal Keychain
+        let untrustedOpRepo = SnippetRepository(paths: paths, environment: baseEnv, client: makeMockClient())
+        await #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            _ = try await untrustedOpRepo.archiveSnippet(id: "rw-safe-local")
+        }
+        #expect(SnippetMockURLProtocol.recordedRequests(suiteID: suiteID).isEmpty)
+
+        let validOpRepo = SnippetRepository(
+            paths: paths,
+            environment: baseEnv,
+            client: makeMockClient(),
+            executableValidator: { _ in true }
+        )
         let opList = try await validOpRepo.listSnippets(now: now)
         #expect(opList.resolution == .online)
         #expect(opList.snippets.map(\.id) == ["rw-remote-auth"])
@@ -713,7 +725,12 @@ struct SnippetRepositoryTests {
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([cachedCard], now: now)
 
         let failingOpEnv = baseEnv.merging(["FAKE_OP_EXIT": "1"]) { _, new in new }
-        let failingOpRepo = SnippetRepository(paths: paths, environment: failingOpEnv, client: makeMockClient())
+        let failingOpRepo = SnippetRepository(
+            paths: paths,
+            environment: failingOpEnv,
+            client: makeMockClient(),
+            executableValidator: { _ in true }
+        )
         let requestCountBeforeFailure = SnippetMockURLProtocol.recordedRequests(suiteID: suiteID).count
 
         let degradedList = try await failingOpRepo.listSnippets(now: now)
@@ -737,7 +754,8 @@ struct SnippetRepositoryTests {
             paths: paths,
             environment: timeoutEnv,
             client: makeMockClient(),
-            credentialTimeoutSeconds: 0.15
+            credentialTimeoutSeconds: 0.15,
+            executableValidator: { _ in true }
         )
         await #expect(throws: DeveloperCredentialsResolver.Failure.credentialReadTimedOut) {
             _ = try await timeoutRepo.archiveSnippet(id: "rw-safe-local")

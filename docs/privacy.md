@@ -32,7 +32,7 @@ VPS 内部的 `rewind-enricher` 仅读取带 `#rewind/pending` 的新片段及�
 
 - **元数据改写绝不动原文**，`update_snippet_metadata`（及 `coding-rewind update`）只允许重写首行标签与顶部引用块元数据（`Title`、`Session`、`Context`、`Keywords`），正文 `<verbatim_selected_markdown>` 100% 逐字节原样保留。
 - **AI 批注独立挂载**，`append_snippet_note`（及 `coding-rewind note`）通过 `POST /api/memos/<serverId>/comments?commentId=<noteCommentId>` 写入首行带 `<!-- rewind-note-v1 -->` 的 `PRIVATE` 评论（纯本机模式下写入 `<dataDir>/local_notes.json`），既不篡改主记录原文，也与采集上下文评论 `<!-- rewind-context-v1 -->` 严格隔离，由 `get_snippet` 单独解析为 `notes` 返回。
-- **只读开关与禁止 MCP 物理删除**，物理删除（`delete`）严格保留给桌面 HUD 与终端 CLI 的人工操作，绝不通过 `coding-rewind mcp` 向 AI 暴露；用户可随时在“设置 → 插件与权限 → AI 接入与权限”切换为只读（`ai_access_mode: "read_only"`）或设置环境变量 `CODING_REWIND_AI_ACCESS=read_only`（非空非法值同样按故障关闭降级为 `read_only`），实时阻断 `create_snippet`、`update_snippet_metadata`、`append_snippet_note` 与 `archive_snippet` 全部 4 个写入工具。
+- **只读开关与禁止 MCP 物理删除**，物理删除（`delete`）严格保留给桌面 HUD 与终端 CLI 的人工操作，绝不通过 `coding-rewind mcp` 向 AI 暴露；用户可随时在“设置 → 插件与权限 → AI 接入与权限”切换为只读（`ai_access_mode: "read_only"`）或设置环境变量 `CODING_REWIND_AI_ACCESS=read_only`（非空非法值同样按故障关闭降级为 `read_only`），实时阻断 `create_snippet`、`update_snippet_metadata`、`append_snippet_note`、`archive_snippet` 全部 4 个 MCP 写入工具以及 CLI 写删子命令（`create`、`update`、`note`、`archive`、`delete`）。
 
 ### 3. 客户端本地缓存与离线队列
 
@@ -54,7 +54,7 @@ Codex 接聊通过官方 app-server 的私有标准输入管道传递完整提�
 ## 凭据保护机制
 
 - **桌面端钥匙串存储**，`CodingRewindApp` 与 `coding-rewind`（CLI 及 `coding-rewind mcp`）统一通过 `CodingRewindCore` 从 macOS Security Keychain 服务 `com.codingrewind.memos` 读取或保存 `Memos` 访问令牌；`config.json`、`~/.gemini/config/plugins/coding-rewind/` 与 `~/.config/agent-mcp/servers.json` 均不写入明文令牌。
-- **可选本机开发凭据配置**，显式设置 `CODING_REWIND_MEMOS_TOKEN_REFERENCE` 构建时，包内 `DeveloperCredentials.plist`（并在首次启动时以 `0600` 权限幂等同步至 `<dataDir>/DeveloperCredentials.plist`）只保存 1Password 引用与 `op` 的绝对路径。桌面端与 `coding-rewind` 在非 QA 模式下通过 `op read --no-newline` 私有管道读取令牌，不回写钥匙串，也不设置全局环境；配置无效或 `op` 失败、超时时严禁暗中回落到个人钥匙串。未配置该构建选项的普通用户无需安装 1Password CLI。
+- **可选本机开发凭据配置**，显式设置 `CODING_REWIND_MEMOS_TOKEN_REFERENCE` 构建时，包内 `DeveloperCredentials.plist`（并在首次启动时以 `0600` 权限幂等同步至 `<dataDir>/DeveloperCredentials.plist`）只保存 1Password 引用与 `op` 的绝对路径。桌面端与 `coding-rewind` 在非 QA 模式下以 `O_NOFOLLOW` 校验该文件属主、单链接与 `0600` 权限，并核验 `op` 二进制的 AgileBits `Developer ID`（`2BUA8C4S2C`）代码签名后通过 `op read --no-newline` 私有管道读取令牌，不回写钥匙串，也不设置全局环境；配置无效或 `op` 失败、超时时严禁暗中回落到个人钥匙串。未配置该构建选项的普通用户无需安装 1Password CLI。
 - **开发与 QA 钥匙串隔离**，设置环境变量 `CODING_REWIND_QA=1` 时，桌面端与 `coding-rewind` 忽略开发凭据配置并固定访问 `com.codingrewind.memos.qa`，凭据缺失时绝不暗中回退读取个人日常钥匙串。
 - **服务端环境变量隔离**，`MEMOS_ACCESS_TOKEN`、`AI_API_KEY` 与 `REWIND_WEBHOOK_SECRET` 仅通过服务器本地未入库的 `.env` 注入容器环境，仓库只保留占位模板 `.env.example`。
 

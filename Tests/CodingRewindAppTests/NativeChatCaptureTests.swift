@@ -113,4 +113,34 @@ struct NativeChatCaptureTests {
         #expect(NativeChatAXCapture.title(host: .gemini, windowTitle: "Gemini - Current Chat") == "Current Chat")
         #expect(NativeChatAXCapture.title(host: .gemini, windowTitle: nil) == "Gemini")
     }
+
+    @Test("NativeSelectionMarkdown disables XML external entity loading (XXE)")
+    func nativeSelectionMarkdownBlocksExternalEntities() throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/xxe-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let secretFile = dir.appendingPathComponent("secret.txt")
+        let sentinel = "XXE_LOCAL_FILE_SECRET_SENTINEL"
+        try sentinel.write(to: secretFile, atomically: true, encoding: .utf8)
+
+        let xxeHTML = """
+        <?xml version="1.0"?>
+        <!DOCTYPE html [
+          <!ENTITY ext SYSTEM "\(secretFile.absoluteString)">
+        ]>
+        <html><body><span>Prefix &ext; Suffix</span></body></html>
+        """
+        let expandedAttempt = NativeSelectionMarkdown.convert(
+            html: xxeHTML,
+            plainText: "Prefix \(sentinel) Suffix"
+        )
+        #expect(expandedAttempt == nil)
+        let normalAttempt = NativeSelectionMarkdown.convert(
+            html: xxeHTML,
+            plainText: "Prefix  Suffix"
+        )
+        #expect(normalAttempt?.contains(sentinel) != true)
+    }
 }

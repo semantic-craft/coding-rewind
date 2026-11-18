@@ -184,6 +184,7 @@ public struct SecStaticCodeSignatureInspector: CodeSignatureInspecting {
         let teamID = (info[kSecCodeInfoTeamIdentifier as String] as? String) ?? ""
         let authority: BundleSignatureAuthority
         if !teamID.isEmpty,
+           (flags & SecCodeSignatureFlags.runtime.rawValue) != 0,
            Self.satisfiesRequirement(code: code, checkFlags: checkFlags, requirementString: Self.developerIDRequirement) {
             authority = .developerID(teamID: teamID)
         } else if !teamID.isEmpty,

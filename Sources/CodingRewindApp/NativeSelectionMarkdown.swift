@@ -10,7 +10,10 @@ enum NativeSelectionMarkdown {
     }
 
     static func convert(html: String, plainText: String, boldRanges: [NSRange] = []) -> String? {
-        guard let document = try? XMLDocument(xmlString: html, options: [.documentTidyHTML, .nodePreserveWhitespace]),
+        guard let document = try? XMLDocument(
+            xmlString: html,
+            options: [.documentTidyHTML, .nodePreserveWhitespace, .nodeLoadExternalEntitiesNever]
+        ),
               let body = try? document.nodes(forXPath: "//body").first else { return nil }
         let renderedPlain = render(body, markdown: false)
         if renderedPlain == plainText { return render(body, markdown: true, boldRanges: boldRanges) }

@@ -2,6 +2,7 @@
 
 import Darwin
 import Foundation
+import Security
 
 private final class LockedCredentialDataBox: @unchecked Sendable {
     private let lock = NSLock()
@@ -21,6 +22,18 @@ private final class LockedCredentialDataBox: @unchecked Sendable {
 }
 
 public enum DeveloperCredentialsResolver {
+    public typealias ExecutableValidator = @Sendable (URL) -> Bool
+
+    public static let onePasswordTeamIdentifier = "2BUA8C4S2C"
+    public static let maxConfigurationBytes = 64 * 1024
+    private static let onePasswordCLIRequirement =
+        #"identifier "com.1password.op" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "2BUA8C4S2C""#
+    private static let allowedOnePasswordPrefixes = [
+        "/opt/homebrew/",
+        "/usr/local/",
+        "/Applications/1Password.app/"
+    ]
+
     private struct Configuration: Decodable {
         let token_reference: String
         let op_executable: String
@@ -109,11 +122,65 @@ public enum DeveloperCredentialsResolver {
         return .none
     }
 
+    public static func isTrustedOnePasswordCLI(_ resolvedExecutableURL: URL) -> Bool {
+        let path = resolvedExecutableURL.path
+        guard resolvedExecutableURL.lastPathComponent == "op",
+              allowedOnePasswordPrefixes.contains(where: { path.hasPrefix($0) }) else {
+            return false
+        }
+        var st = stat()
+        guard lstat(path, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG,
+              (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0,
+              (st.st_mode & 0o022) == 0,
+              (st.st_uid == getuid() || st.st_uid == 0) else {
+            return false
+        }
+
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(resolvedExecutableURL as CFURL, [], &staticCode) == errSecSuccess,
+              let code = staticCode else {
+            return false
+        }
+        var requirement: SecRequirement?
+        guard SecRequirementCreateWithString(onePasswordCLIRequirement as CFString, [], &requirement) == errSecSuccess,
+              let req = requirement else {
+            return false
+        }
+        let checkFlags = SecCSFlags(
+            rawValue: UInt32(kSecCSCheckAllArchitectures) | UInt32(kSecCSStrictValidate)
+        )
+        guard SecStaticCodeCheckValidityWithErrors(code, checkFlags, req, nil) == errSecSuccess else {
+            return false
+        }
+        var infoRef: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            code,
+            SecCSFlags(rawValue: UInt32(kSecCSSigningInformation)),
+            &infoRef
+        ) == errSecSuccess,
+              let info = infoRef as? [String: Any] else {
+            return false
+        }
+        let teamID = (info[kSecCodeInfoTeamIdentifier as String] as? String) ?? ""
+        let flags: UInt32
+        if let rawFlags = info[kSecCodeInfoFlags as String] as? UInt32 {
+            flags = rawFlags
+        } else if let rawInt = info[kSecCodeInfoFlags as String] as? Int {
+            flags = UInt32(truncatingIfNeeded: rawInt)
+        } else {
+            flags = 0
+        }
+        return teamID == onePasswordTeamIdentifier
+            && (flags & SecCodeSignatureFlags.runtime.rawValue) != 0
+    }
+
     public static func resolveEnvironment(
         configurationURL: URL?,
         externalConfigurationURL: URL? = nil,
         environment: [String: String],
-        timeoutSeconds: TimeInterval = 10.0
+        timeoutSeconds: TimeInterval = 10.0,
+        executableValidator: ExecutableValidator = isTrustedOnePasswordCLI
     ) throws -> [String: String] {
         if let token = environment[StoragePaths.memosTokenEnvironmentKey],
            !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -127,17 +194,17 @@ public enum DeveloperCredentialsResolver {
         let activeData: Data
         let loadedFromBundle: Bool
         if let configurationURL {
-            guard let data = try? Data(contentsOf: configurationURL) else {
-                throw Failure.invalidConfiguration
-            }
-            activeData = data
+            activeData = try readValidatedConfigurationData(
+                at: configurationURL,
+                requireStrictPrivatePermissions: false
+            )
             loadedFromBundle = true
         } else if let extURL = externalConfigurationURL,
                   fm.fileExists(atPath: extURL.path) || fileOrSymlinkExists(atPath: extURL.path) {
-            guard let data = try? Data(contentsOf: extURL) else {
-                throw Failure.invalidConfiguration
-            }
-            activeData = data
+            activeData = try readValidatedConfigurationData(
+                at: extURL,
+                requireStrictPrivatePermissions: true
+            )
             loadedFromBundle = false
         } else {
             return environment
@@ -145,14 +212,16 @@ public enum DeveloperCredentialsResolver {
 
         guard let configuration = try? PropertyListDecoder().decode(Configuration.self, from: activeData),
               isValidSecretReference(configuration.memosTokenReference),
-              configuration.op_executable.hasPrefix("/"),
-              fm.isExecutableFile(atPath: configuration.op_executable) else {
+              let resolvedExecutableURL = resolveCanonicalExecutableURL(atPath: configuration.op_executable),
+              executableValidator(resolvedExecutableURL) else {
             throw Failure.invalidConfiguration
         }
 
         if loadedFromBundle, let extURL = externalConfigurationURL {
             try? AtomicFile.writeData(activeData, to: extURL, permissions: 0o600)
         }
+
+        let sanitizedChildEnv = environment.filter { !$0.key.uppercased().hasPrefix("DYLD_") }
 
         let process = Process()
         let output = Pipe()
@@ -161,9 +230,9 @@ public enum DeveloperCredentialsResolver {
         let readGroup = DispatchGroup()
         let dataBox = LockedCredentialDataBox()
 
-        process.executableURL = URL(fileURLWithPath: configuration.op_executable)
+        process.executableURL = resolvedExecutableURL
         process.arguments = ["read", "--no-newline", configuration.memosTokenReference]
-        process.environment = environment
+        process.environment = sanitizedChildEnv
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
@@ -223,7 +292,8 @@ public enum DeveloperCredentialsResolver {
         paths: StoragePaths,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         bundledDeveloperCredentialsURL: URL? = nil,
-        timeoutSeconds: TimeInterval = 10.0
+        timeoutSeconds: TimeInterval = 10.0,
+        executableValidator: ExecutableValidator = isTrustedOnePasswordCLI
     ) -> TokenResolution {
         if let envToken = environment[StoragePaths.memosTokenEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !envToken.isEmpty {
@@ -248,7 +318,8 @@ public enum DeveloperCredentialsResolver {
                         configurationURL: bundledURL,
                         externalConfigurationURL: externalURL,
                         environment: environment,
-                        timeoutSeconds: timeoutSeconds
+                        timeoutSeconds: timeoutSeconds,
+                        executableValidator: executableValidator
                     )
                     if let token = resolvedEnv[StoragePaths.memosTokenEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
                        !token.isEmpty {
@@ -267,6 +338,104 @@ public enum DeveloperCredentialsResolver {
             return .resolved(keychainToken)
         }
         return .missing
+    }
+
+    private static func readValidatedConfigurationData(
+        at url: URL,
+        requireStrictPrivatePermissions: Bool
+    ) throws -> Data {
+        let currentUID = getuid()
+        let parentPath = url.deletingLastPathComponent().path
+        var dirStat = stat()
+        guard lstat(parentPath, &dirStat) == 0,
+              (dirStat.st_mode & S_IFMT) == S_IFDIR,
+              (dirStat.st_mode & 0o022) == 0,
+              (requireStrictPrivatePermissions
+                  ? dirStat.st_uid == currentUID
+                  : (dirStat.st_uid == currentUID || dirStat.st_uid == 0)) else {
+            throw Failure.invalidConfiguration
+        }
+
+        let fd = Darwin.open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+        guard fd >= 0 else {
+            throw Failure.invalidConfiguration
+        }
+        defer { Darwin.close(fd) }
+
+        var initialStat = stat()
+        guard Darwin.fstat(fd, &initialStat) == 0,
+              (initialStat.st_mode & S_IFMT) == S_IFREG,
+              initialStat.st_nlink == 1,
+              initialStat.st_size > 0,
+              initialStat.st_size <= off_t(maxConfigurationBytes) else {
+            throw Failure.invalidConfiguration
+        }
+
+        if requireStrictPrivatePermissions {
+            guard initialStat.st_uid == currentUID,
+                  (initialStat.st_mode & 0o077) == 0 else {
+                throw Failure.invalidConfiguration
+            }
+        } else {
+            guard initialStat.st_uid == currentUID || initialStat.st_uid == 0,
+                  (initialStat.st_mode & 0o022) == 0 else {
+                throw Failure.invalidConfiguration
+            }
+        }
+
+        let expectedSize = Int(initialStat.st_size)
+        var data = Data()
+        data.reserveCapacity(expectedSize)
+        var chunk = [UInt8](repeating: 0, count: 8192)
+        while true {
+            let bytesRead = Darwin.read(fd, &chunk, chunk.count)
+            if bytesRead < 0 {
+                if errno == EINTR { continue }
+                throw Failure.invalidConfiguration
+            }
+            if bytesRead == 0 {
+                break
+            }
+            if data.count + bytesRead > maxConfigurationBytes {
+                throw Failure.invalidConfiguration
+            }
+            data.append(contentsOf: chunk[0..<bytesRead])
+        }
+
+        var finalStat = stat()
+        guard data.count == expectedSize,
+              Darwin.fstat(fd, &finalStat) == 0,
+              (finalStat.st_mode & S_IFMT) == S_IFREG,
+              finalStat.st_dev == initialStat.st_dev,
+              finalStat.st_ino == initialStat.st_ino,
+              finalStat.st_nlink == 1,
+              finalStat.st_size == initialStat.st_size else {
+            throw Failure.invalidConfiguration
+        }
+        return data
+    }
+
+    private static func resolveCanonicalExecutableURL(atPath rawPath: String) -> URL? {
+        guard rawPath.hasPrefix("/"),
+              !rawPath.contains("\0"),
+              rawPath.rangeOfCharacter(from: .newlines) == nil else {
+            return nil
+        }
+        guard let resolvedCString = Darwin.realpath(rawPath, nil) else {
+            return nil
+        }
+        defer { Darwin.free(resolvedCString) }
+        let canonicalPath = String(cString: resolvedCString)
+        guard canonicalPath.hasPrefix("/") else { return nil }
+        var st = stat()
+        guard lstat(canonicalPath, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG,
+              (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) != 0,
+              (st.st_mode & 0o022) == 0,
+              (st.st_uid == getuid() || st.st_uid == 0) else {
+            return nil
+        }
+        return URL(fileURLWithPath: canonicalPath, isDirectory: false)
     }
 
     private static func fileOrSymlinkExists(atPath path: String) -> Bool {

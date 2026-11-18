@@ -6,6 +6,8 @@ import Foundation
 import Testing
 
 struct DeveloperCredentialsResolverTests {
+    private static let allowFixtureExecutable: DeveloperCredentialsResolver.ExecutableValidator = { _ in true }
+
     @Test func ordinaryInstallationPreservesExistingCredentialResolution() throws {
         let environment = ["PATH": "/usr/bin:/bin"]
         #expect(try DeveloperCredentialsResolver.resolveEnvironment(
@@ -40,7 +42,9 @@ struct DeveloperCredentialsResolverTests {
         defer { fixture.remove() }
         let configuration = try Data(contentsOf: fixture.configurationURL)
         let resolved = try DeveloperCredentialsResolver.resolveEnvironment(
-            configurationURL: fixture.configurationURL, environment: fixture.environment
+            configurationURL: fixture.configurationURL,
+            environment: fixture.environment,
+            executableValidator: Self.allowFixtureExecutable
         )
         #expect(resolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
         #expect(resolved["FIXTURE_KEEP"] == "preserved")
@@ -57,7 +61,9 @@ struct DeveloperCredentialsResolverTests {
         environment["FAKE_OP_STATUS"] = "23"
         #expect(throws: DeveloperCredentialsResolver.Failure.credentialReadFailed) {
             try DeveloperCredentialsResolver.resolveEnvironment(
-                configurationURL: fixture.configurationURL, environment: environment
+                configurationURL: fixture.configurationURL,
+                environment: environment,
+                executableValidator: Self.allowFixtureExecutable
             )
         }
     }
@@ -70,7 +76,9 @@ struct DeveloperCredentialsResolverTests {
         environment["FAKE_OP_RESULT"] = token
         #expect(throws: DeveloperCredentialsResolver.Failure.credentialReadFailed) {
             try DeveloperCredentialsResolver.resolveEnvironment(
-                configurationURL: fixture.configurationURL, environment: environment
+                configurationURL: fixture.configurationURL,
+                environment: environment,
+                executableValidator: Self.allowFixtureExecutable
             )
         }
     }
@@ -80,7 +88,9 @@ struct DeveloperCredentialsResolverTests {
         defer { fixture.remove() }
         #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
             try DeveloperCredentialsResolver.resolveEnvironment(
-                configurationURL: fixture.configurationURL, environment: fixture.environment
+                configurationURL: fixture.configurationURL,
+                environment: fixture.environment,
+                executableValidator: Self.allowFixtureExecutable
             )
         }
         #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
@@ -94,7 +104,8 @@ struct DeveloperCredentialsResolverTests {
         let resolved = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: fixture.configurationURL,
             externalConfigurationURL: externalURL,
-            environment: fixture.environment
+            environment: fixture.environment,
+            executableValidator: Self.allowFixtureExecutable
         )
         #expect(resolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
         #expect(FileManager.default.fileExists(atPath: externalURL.path))
@@ -106,7 +117,8 @@ struct DeveloperCredentialsResolverTests {
         let fallbackResolved = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: nil,
             externalConfigurationURL: externalURL,
-            environment: fixture.environment
+            environment: fixture.environment,
+            executableValidator: Self.allowFixtureExecutable
         )
         #expect(fallbackResolved[StoragePaths.memosTokenEnvironmentKey] == "fixture-token-only")
         #expect(try String(contentsOf: fixture.argumentsURL, encoding: .utf8) ==
@@ -121,7 +133,8 @@ struct DeveloperCredentialsResolverTests {
         _ = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: initialFixture.configurationURL,
             externalConfigurationURL: externalURL,
-            environment: initialFixture.environment
+            environment: initialFixture.environment,
+            executableValidator: Self.allowFixtureExecutable
         )
 
         let rotatedConfigURL = initialFixture.root.appendingPathComponent("RotatedDeveloperCredentials.plist")
@@ -137,7 +150,8 @@ struct DeveloperCredentialsResolverTests {
         let refreshed = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: rotatedConfigURL,
             externalConfigurationURL: externalURL,
-            environment: rotatedEnv
+            environment: rotatedEnv,
+            executableValidator: Self.allowFixtureExecutable
         )
         #expect(refreshed[StoragePaths.memosTokenEnvironmentKey] == "rotated-fixture-token")
         #expect(try String(contentsOf: initialFixture.argumentsURL, encoding: .utf8) ==
@@ -149,7 +163,8 @@ struct DeveloperCredentialsResolverTests {
         #expect(try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: rotatedConfigURL,
             externalConfigurationURL: externalURL,
-            environment: qaEnv
+            environment: qaEnv,
+            executableValidator: Self.allowFixtureExecutable
         ) == qaEnv)
         #expect(!FileManager.default.fileExists(atPath: initialFixture.argumentsURL.path))
     }
@@ -162,7 +177,8 @@ struct DeveloperCredentialsResolverTests {
         _ = try DeveloperCredentialsResolver.resolveEnvironment(
             configurationURL: validFixture.configurationURL,
             externalConfigurationURL: externalURL,
-            environment: validFixture.environment
+            environment: validFixture.environment,
+            executableValidator: Self.allowFixtureExecutable
         )
         let preservedExternalData = try Data(contentsOf: externalURL)
 
@@ -172,7 +188,8 @@ struct DeveloperCredentialsResolverTests {
             try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: malformedBundledURL,
                 externalConfigurationURL: externalURL,
-                environment: validFixture.environment
+                environment: validFixture.environment,
+                executableValidator: Self.allowFixtureExecutable
             )
         }
         #expect(try Data(contentsOf: externalURL) == preservedExternalData)
@@ -186,7 +203,8 @@ struct DeveloperCredentialsResolverTests {
             try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: invalidRefBundledURL,
                 externalConfigurationURL: externalURL,
-                environment: validFixture.environment
+                environment: validFixture.environment,
+                executableValidator: Self.allowFixtureExecutable
             )
         }
         #expect(try Data(contentsOf: externalURL) == preservedExternalData)
@@ -214,7 +232,8 @@ struct DeveloperCredentialsResolverTests {
             try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: hungConfigURL,
                 environment: fixture.environment,
-                timeoutSeconds: 0.15
+                timeoutSeconds: 0.15,
+                executableValidator: Self.allowFixtureExecutable
             )
         }
         #expect(DeveloperCredentialsResolver.Failure.credentialReadTimedOut.localizedDescription(in: .en).contains("Timed out"))
@@ -317,6 +336,111 @@ struct DeveloperCredentialsResolverTests {
         #expect(coord.isErrorBanner)
         #expect(coord.bannerMessage == warning)
         #expect(KeychainTokenStore.resolveToken(environment: degradedEnv) == nil)
+    }
+
+    @Test func externalCredentialsEnforceNoFollowStrict0600SingleLinkDYLDStrippingAndSignedOpTrust() throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+
+        // 1. Default production validator MUST reject unsigned scripts and arbitrary binaries (blocking TCC inheritance)
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
+                configurationURL: fixture.configurationURL,
+                environment: fixture.environment
+            )
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
+        #expect(!DeveloperCredentialsResolver.isTrustedOnePasswordCLI(URL(fileURLWithPath: "/bin/sh")))
+
+        // Verify real AgileBits 1Password CLI signature acceptance when installed on host
+        let hostOp = URL(fileURLWithPath: "/opt/homebrew/bin/op").resolvingSymlinksInPath()
+        if FileManager.default.isExecutableFile(atPath: hostOp.path) {
+            #expect(DeveloperCredentialsResolver.isTrustedOnePasswordCLI(hostOp))
+        }
+
+        let appSupportDir = fixture.root.appendingPathComponent("StrictData", isDirectory: true)
+        try FileManager.default.createDirectory(at: appSupportDir, withIntermediateDirectories: true)
+        let externalURL = appSupportDir.appendingPathComponent("DeveloperCredentials.plist")
+        let plistBytes = try Data(contentsOf: fixture.configurationURL)
+
+        // 2. Group/world-readable external plist (0644) must be rejected
+        try AtomicFile.writeData(plistBytes, to: externalURL, permissions: 0o644)
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
+                configurationURL: nil,
+                externalConfigurationURL: externalURL,
+                environment: fixture.environment,
+                executableValidator: Self.allowFixtureExecutable
+            )
+        }
+
+        // 3. Symlinked external plist must be rejected via O_NOFOLLOW
+        try FileManager.default.removeItem(at: externalURL)
+        let realPrivateCopy = fixture.root.appendingPathComponent("RealPrivate.plist")
+        try AtomicFile.writeData(plistBytes, to: realPrivateCopy, permissions: 0o600)
+        try FileManager.default.createSymbolicLink(at: externalURL, withDestinationURL: realPrivateCopy)
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
+                configurationURL: nil,
+                externalConfigurationURL: externalURL,
+                environment: fixture.environment,
+                executableValidator: Self.allowFixtureExecutable
+            )
+        }
+
+        // 4. Hard-linked external plist (st_nlink > 1) must be rejected
+        try FileManager.default.removeItem(at: externalURL)
+        try FileManager.default.linkItem(at: realPrivateCopy, to: externalURL)
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
+                configurationURL: nil,
+                externalConfigurationURL: externalURL,
+                environment: fixture.environment,
+                executableValidator: Self.allowFixtureExecutable
+            )
+        }
+
+        // 5. FIFO at external plist must fail fast via O_NONBLOCK without hanging
+        try FileManager.default.removeItem(at: externalURL)
+        #expect(mkfifo(externalURL.path, 0o600) == 0)
+        #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
+            try DeveloperCredentialsResolver.resolveEnvironment(
+                configurationURL: nil,
+                externalConfigurationURL: externalURL,
+                environment: fixture.environment,
+                timeoutSeconds: 0.2,
+                executableValidator: Self.allowFixtureExecutable
+            )
+        }
+        try FileManager.default.removeItem(at: externalURL)
+
+        // 6. DYLD_* variables are stripped before spawning the child process
+        let envDumpURL = fixture.root.appendingPathComponent("child-dyld.txt")
+        let envProbeOp = fixture.root.appendingPathComponent("probe-op")
+        try AtomicFile.writeUTF8(
+            """
+            #!/bin/sh
+            printf '%s' "${DYLD_INSERT_LIBRARIES:-NONE}" > "\(envDumpURL.path)"
+            printf 'clean-token'
+            """,
+            to: envProbeOp,
+            permissions: 0o755
+        )
+        let probePlist = try PropertyListSerialization.data(fromPropertyList: [
+            "token_reference": "op://fixture-vault/fixture-item/password",
+            "op_executable": envProbeOp.path
+        ], format: .xml, options: 0)
+        try AtomicFile.writeData(probePlist, to: externalURL, permissions: 0o600)
+        var pollutedEnv = fixture.environment
+        pollutedEnv["DYLD_INSERT_LIBRARIES"] = fixture.root.appendingPathComponent("evil.dylib").path
+        let cleanOut = try DeveloperCredentialsResolver.resolveEnvironment(
+            configurationURL: nil,
+            externalConfigurationURL: externalURL,
+            environment: pollutedEnv,
+            executableValidator: Self.allowFixtureExecutable
+        )
+        #expect(cleanOut[StoragePaths.memosTokenEnvironmentKey] == "clean-token")
+        #expect(try String(contentsOf: envDumpURL, encoding: .utf8) == "NONE")
     }
 
     private struct Fixture {

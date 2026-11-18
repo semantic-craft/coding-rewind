@@ -146,6 +146,7 @@ fixed_qa_suites = {
     "dev.codingrewind.qa.tests.plist",
     "dev.codingrewind.qa.appearance.plist",
     "dev.codingrewind.qa.appearance.popup.plist",
+    "dev.codingrewind.qa.upgrade-integrity.plist",
     "dev.codingrewind.qa.shortcuts.8bf5238e9fb55904.plist",
     "dev.codingrewind.qa.shortcuts.a801eac0a75e043c.plist",
     "dev.codingrewind.qa.vendor-tests.plist",
@@ -169,10 +170,13 @@ for _ in range(10):
         break
     time.sleep(0.15)
 
-leaked_plists = list(pref_dir.glob("dev.codingrewind.qa.*.plist"))
+leaked_plists = sorted(
+    set(pref_dir.glob("dev.codingrewind.qa.*.plist"))
+    | set(pref_dir.glob("dev.codingrewind.tests.*.plist"))
+)
 if leaked_plists:
-    names = ", ".join(sorted(p.name for p in leaked_plists))
-    print(f"FAIL: QA preferences plist leaked in ~/Library/Preferences: {names}", file=sys.stderr)
+    names = ", ".join(p.name for p in leaked_plists)
+    print(f"FAIL: QA/test preferences plist leaked in ~/Library/Preferences: {names}", file=sys.stderr)
     sys.exit(1)
 
 dist_dir = pathlib.Path.cwd() / "dist"
@@ -237,6 +241,7 @@ fixed_qa_suites = {
     "dev.codingrewind.qa.tests.plist",
     "dev.codingrewind.qa.appearance.plist",
     "dev.codingrewind.qa.appearance.popup.plist",
+    "dev.codingrewind.qa.upgrade-integrity.plist",
     "dev.codingrewind.qa.shortcuts.8bf5238e9fb55904.plist",
     "dev.codingrewind.qa.shortcuts.a801eac0a75e043c.plist",
     "dev.codingrewind.qa.vendor-tests.plist",
@@ -255,10 +260,13 @@ for p in pref_dir.glob("dev.codingrewind.qa.shortcuts.*.plist"):
         except OSError:
             pass
 
-leaked = list(pref_dir.glob("dev.codingrewind.qa.*.plist"))
+leaked = sorted(
+    set(pref_dir.glob("dev.codingrewind.qa.*.plist"))
+    | set(pref_dir.glob("dev.codingrewind.tests.*.plist"))
+)
 if leaked:
-    names = ", ".join(sorted(p.name for p in leaked))
-    print(f"FAIL: QA preferences plist remained after check: {names}", file=sys.stderr)
+    names = ", ".join(p.name for p in leaked)
+    print(f"FAIL: QA/test preferences plist remained after check: {names}", file=sys.stderr)
     sys.exit(1)
 PY_FINAL
 

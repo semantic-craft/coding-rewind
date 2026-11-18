@@ -41,4 +41,4 @@ docker compose up -d
 ## 反向代理与 Webhook
 
 - 默认端口 `5230` 与 `8090` 均仅监听 `127.0.0.1`。若需公网访问或暴露原生 `/mcp` 流式接口，请参考 [Caddyfile.example](Caddyfile.example) 配置 TLS 反向代理。
-- `REWIND_WEBHOOK_SECRET` 为可选配置。设置后 `rewind-enricher` 会校验 `/hooks/rewind` 的 Standard Webhooks 签名并即时增强；留空时仍按 `POLL_INTERVAL_SECONDS`（默认每 5 秒）自动轮询待处理记录。
+- `REWIND_WEBHOOK_SECRET` 为可选配置。设置后 `rewind-enricher` 会校验 `/hooks/rewind` 的 Standard Webhooks 签名并即时增强；留空时 Webhook 端点默认故障关闭返回 `HTTP 401`，服务仍按 `POLL_INTERVAL_SECONDS`（默认每 5 秒）在内网自动轮询待处理记录。

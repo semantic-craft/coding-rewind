@@ -866,9 +866,9 @@ extension AppStrings {
         case (.en, true):
             return "Managed by environment variable CODING_REWIND_AI_ACCESS and cannot be edited here."
         case (.zhHans, false):
-            return "切换后立即生效，同步控制 coding-rewind mcp 写入工具与开始对话提示词中的回写引导。"
+            return "切换后立即生效，同步控制 coding-rewind MCP 写入工具、命令行写删子命令与开始对话提示词中的回写引导。"
         case (.en, false):
-            return "Takes effect immediately for coding-rewind mcp write tools and Start Chat write-back prompts."
+            return "Takes effect immediately for coding-rewind MCP write tools, CLI write/delete subcommands, and Start Chat write-back prompts."
         }
     }
 }

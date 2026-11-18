@@ -1140,14 +1140,26 @@ function createContentScriptHarness({
         const idx = list.findIndex((e) => e.fn === fn && e.capture === capture);
         if (idx >= 0) list.splice(idx, 1);
       },
+      dispatchPhase(phase, type, event) {
+        const entries = (map.get(type) || []).slice();
+        const filtered = entries.filter((e) => (phase === "capture" ? e.capture : !e.capture));
+        for (const { fn } of filtered) {
+          if (event._propagationStopped) break;
+          fn(event);
+        }
+      },
       dispatch(type, rawEvent = {}) {
         let defaultPrevented = false;
         let propagationStopped = false;
         const event = {
           type,
+          isTrusted: true,
           ...rawEvent,
           get defaultPrevented() {
             return defaultPrevented;
+          },
+          get _propagationStopped() {
+            return propagationStopped;
           },
           preventDefault() {
             defaultPrevented = true;
@@ -1172,6 +1184,8 @@ function createContentScriptHarness({
       }
     };
   }
+
+  const internalShadowRoots = new WeakMap();
 
   function createFakeElement(tagName) {
     const target = makeEventTarget();
@@ -1232,7 +1246,10 @@ function createContentScriptHarness({
           host: el,
           children: [],
           append(...nodes) {
-            for (const n of nodes) this.children.push(n);
+            for (const n of nodes) {
+              n._shadowRoot = sr;
+              this.children.push(n);
+            }
           },
           querySelector(cls) {
             if (cls.startsWith(".")) {
@@ -1242,12 +1259,60 @@ function createContentScriptHarness({
             return this.children.find((c) => c.tagName === cls.toUpperCase()) || null;
           }
         };
-        el.shadowRoot = sr;
+        el.shadowRoot = mode === "open" ? sr : null;
+        internalShadowRoots.set(el, sr);
         return sr;
       },
       addEventListener: target.addEventListener,
       removeEventListener: target.removeEventListener,
-      dispatch: target.dispatch
+      dispatch(type, rawEvent = {}) {
+        const sr = el._shadowRoot;
+        if (sr && sr.host && sr.host.isConnected && typeof docEvents?.dispatchPhase === "function") {
+          let defaultPrevented = false;
+          let propagationStopped = false;
+          const outerTarget = sr.mode === "closed" ? sr.host : el;
+          const outerPath = sr.mode === "closed"
+            ? [sr.host, documentElement, fakeDocument, fakeWindow]
+            : [el, sr, sr.host, documentElement, fakeDocument, fakeWindow];
+          const innerPath = rawEvent.path || [el, sr, sr.host, documentElement, fakeDocument, fakeWindow];
+
+          const makePhaseEvent = (evTarget, pathArr) => ({
+            type,
+            isTrusted: true,
+            target: evTarget,
+            ...rawEvent,
+            get defaultPrevented() {
+              return defaultPrevented;
+            },
+            get _propagationStopped() {
+              return propagationStopped;
+            },
+            preventDefault() {
+              defaultPrevented = true;
+            },
+            stopPropagation() {
+              propagationStopped = true;
+            },
+            composedPath() {
+              return pathArr;
+            }
+          });
+
+          docEvents.dispatchPhase("capture", type, makePhaseEvent(outerTarget, outerPath));
+          if (!propagationStopped) {
+            const innerEvent = makePhaseEvent(el, innerPath);
+            target.dispatchPhase("capture", type, innerEvent);
+            if (!propagationStopped) {
+              target.dispatchPhase("bubble", type, innerEvent);
+            }
+          }
+          if (!propagationStopped) {
+            docEvents.dispatchPhase("bubble", type, makePhaseEvent(outerTarget, outerPath));
+          }
+          return { defaultPrevented, propagationStopped };
+        }
+        return target.dispatch(type, rawEvent);
+      }
     };
     return el;
   }
@@ -1506,8 +1571,12 @@ function createContentScriptHarness({
     getHost() {
       return this.getAllHosts()[0] || null;
     },
+    getInternalShadowRoot() {
+      const host = this.getHost();
+      return host ? (internalShadowRoots.get(host) || null) : null;
+    },
     getPill() {
-      return this.getHost()?.shadowRoot?.querySelector(".rw-pill") || null;
+      return this.getInternalShadowRoot()?.querySelector(".rw-pill") || null;
     },
     getPillIcon() {
       return this.getPill()?.children.find((c) => c.className === "rw-pill-icon") || null;
@@ -1516,10 +1585,10 @@ function createContentScriptHarness({
       return this.getPill()?.children.find((c) => c.className === "rw-pill-label")?.textContent ?? null;
     },
     getToast() {
-      return this.getHost()?.shadowRoot?.querySelector(".rw-toast") || null;
+      return this.getInternalShadowRoot()?.querySelector(".rw-toast") || null;
     },
     getStyleText() {
-      return this.getHost()?.shadowRoot?.querySelector("style")?.textContent || "";
+      return this.getInternalShadowRoot()?.querySelector("style")?.textContent || "";
     }
   };
 }
@@ -4331,4 +4400,142 @@ test("buildTextFragmentUrl separates code-line spans without fusing and snaps lo
     urlDoc
   );
   assert.equal(builtBlobFrag, "https://docs.example.com/api");
+});
+
+test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOCTOU re-validation, and password field exclusion", async () => {
+  const harness = createContentScriptHarness({
+    url: "https://example.com/security-page",
+    html: `<html><body>
+      <article><p id="safe-para">Public documentation excerpt for safe stashing.</p></article>
+      <textarea id="secret-editor">Draft secret inside editable composer</textarea>
+      <input id="pw-input" type="password" value="hunter2-secret" />
+      <input id="pw-ro-input" type="password" readonly value="sk-readonly-secret" />
+    </body></html>`,
+    pickedSelector: "#safe-para"
+  });
+
+  // 1. Untrusted synthetic events from page scripts must never pop the pill or trigger Hyper+S
+  harness.document.dispatch("mousedown", { isTrusted: false, button: 0, clientX: 80, clientY: 80 });
+  harness.document.dispatch("mouseup", { isTrusted: false, button: 0, clientX: 180, clientY: 80, detail: 1 });
+  harness.advanceTime(30);
+  assert.equal(harness.getPill(), null, "untrusted mouseup must not mount floating pill");
+
+  harness.document.dispatch("keyup", { isTrusted: false, key: "ArrowRight", shiftKey: true });
+  harness.advanceTime(150);
+  assert.equal(harness.getPill(), null, "untrusted keyup must not pop floating pill");
+
+  const untrustedHyper = harness.document.dispatch("keydown", {
+    isTrusted: false,
+    key: "s",
+    code: "KeyS",
+    ctrlKey: true,
+    altKey: true,
+    shiftKey: true,
+    metaKey: true,
+    repeat: false
+  });
+  assert.equal(untrustedHyper.defaultPrevented, false);
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 0, "untrusted Hyper+S must never capture selection");
+
+  // 2. Trusted user drag mounts a CLOSED ShadowRoot (host.shadowRoot === null to page scripts)
+  harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 180, clientY: 80, detail: 1 });
+  harness.advanceTime(20);
+  const host = harness.getHost();
+  assert.ok(host, "UI host mounted");
+  assert.equal(host.shadowRoot, null, "ShadowRoot must be closed so page scripts cannot inspect UI/toast");
+  assert.equal(harness.getInternalShadowRoot()?.mode, "closed");
+  const pill = harness.getPill();
+  assert.equal(pill?.getAttribute("data-state"), "ready");
+
+  // Untrusted Escape or untrusted mousedown on pill must be ignored
+  harness.document.dispatch("keydown", { isTrusted: false, key: "Escape", code: "Escape" });
+  assert.equal(pill.getAttribute("data-state"), "ready");
+  pill.dispatch("mousedown", { isTrusted: false, button: 0 });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 0);
+
+  // Right-click (button: 2) on pill must not trigger stash or poison suppressNextMouseUp on next drag
+  pill.dispatch("mousedown", { isTrusted: true, button: 2 });
+  harness.document.dispatch("mouseup", { isTrusted: true, button: 2, clientX: 120, clientY: 110 });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 0, "right-click on pill must not stash");
+  assert.equal(pill.getAttribute("data-state"), "ready");
+
+  // Trusted left-click on closed-ShadowRoot pill (where document capture composedPath omits pill and sees only host) must save
+  const trustedPillClick = pill.dispatch("mousedown", { isTrusted: true, button: 0 });
+  assert.equal(trustedPillClick.defaultPrevented, true);
+  assert.equal(trustedPillClick.propagationStopped, true);
+  harness.document.dispatch("mouseup", { isTrusted: true, button: 0, clientX: 120, clientY: 110 });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1, "closed-ShadowRoot pill click must survive document capture retargeting and save");
+  harness.advanceTime(1000);
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  // Re-open pill via fresh drag to verify TOCTOU selection swap
+  harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
+  harness.document.dispatch("mouseup", { button: 0, clientX: 180, clientY: 80, detail: 1 });
+  harness.advanceTime(20);
+  assert.equal(pill.getAttribute("data-state"), "ready");
+
+  // 3. Pill TOCTOU re-validation: if page script swaps selection into an editable composer right before trusted pill click, capture aborts
+  harness.setPickedElement(harness.parsedDoc.querySelector("#secret-editor"));
+  pill.dispatch("mousedown", { isTrusted: true, button: 0 });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(harness.sentMessages.length, 1, "pill click must re-validate disallowed editable selection target");
+  assert.equal(pill.getAttribute("data-state"), "hidden");
+
+  // 4. Password fields (including readonly password inputs) are rejected across pill, Hyper+S, and REWIND_EXTRACT_SELECTION
+  for (const pwSelector of ["#pw-input", "#pw-ro-input"]) {
+    harness.advanceTime(400);
+    harness.setPickedElement(harness.parsedDoc.querySelector(pwSelector));
+    harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
+    harness.document.dispatch("mouseup", { button: 0, clientX: 180, clientY: 80, detail: 1 });
+    harness.advanceTime(25);
+    assert.equal(pill.getAttribute("data-state"), "hidden", `${pwSelector} must never pop floating pill`);
+
+    const pwHyper = harness.document.dispatch("keydown", {
+      isTrusted: true,
+      key: "s",
+      code: "KeyS",
+      ctrlKey: true,
+      altKey: true,
+      shiftKey: true,
+      metaKey: true,
+      repeat: false
+    });
+    assert.equal(pwHyper.defaultPrevented, false);
+    await new Promise((r) => setImmediate(r));
+    assert.equal(harness.sentMessages.length, 1);
+
+    const pwExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
+    assert.equal(pwExtract?.clip, null, `${pwSelector} must never be extracted`);
+  }
+});
+
+test("security: normalizeMemosBaseUrl enforces https for remote hosts and restricts cleartext http to loopback", () => {
+  assert.equal(normalizeMemosBaseUrl("https://memos.example.com/api/memos/"), "https://memos.example.com");
+  assert.equal(normalizeMemosBaseUrl("http://localhost:5230/api/memos"), "http://localhost:5230");
+  assert.equal(normalizeMemosBaseUrl("http://sub.localhost:5230/"), "http://sub.localhost:5230");
+  assert.equal(normalizeMemosBaseUrl("http://127.0.0.1:5230/"), "http://127.0.0.1:5230");
+  assert.equal(normalizeMemosBaseUrl("http://127.0.1.1:5230/"), "http://127.0.1.1:5230");
+  assert.equal(normalizeMemosBaseUrl("http://[::1]:5230/api/memos"), "http://[::1]:5230");
+  assert.equal(normalizeMemosBaseUrl("http://[0:0:0:0:0:0:0:1]:5230/"), "http://[::1]:5230");
+
+  for (const insecure of [
+    "http://memos.example.com",
+    "http://memos.example.com:5230/api/memos",
+    "http://192.168.1.10:5230",
+    "http://10.0.0.5:5230",
+    "http://0.0.0.0:5230",
+    "http://[::]:5230",
+    "https://user:pass@memos.example.com",
+    "http://user:pass@127.0.0.1:5230"
+  ]) {
+    assert.equal(normalizeMemosBaseUrl(insecure), "", `must reject ${insecure}`);
+  }
 });
