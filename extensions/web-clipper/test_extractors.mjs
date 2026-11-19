@@ -983,8 +983,8 @@ test("options testMemosConnection calls GET /api/memos?pageSize=1 and manifest.j
   assert.match(optionsHtml, /<textarea id="excluded-domains"/);
   const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "manifest.json"), "utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.6.0.0");
-  assert.equal(manifest.version_name, "0.6.0");
+  assert.equal(manifest.version, "0.7.0.0");
+  assert.equal(manifest.version_name, "0.7.0");
   for (const perm of ["storage", "contextMenus", "activeTab", "scripting"]) {
     assert.ok(manifest.permissions.includes(perm), `missing permission ${perm}`);
   }
