@@ -537,7 +537,7 @@ struct AppShortcutsTests {
                 KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
             ],
             capturer: UnusedSelectionCapturer(),
-            codexDelivery: { _ in (.unknown, nil) }
+            dshReadinessCheck: { false }
         )
         let delegate = CodingRewindAppDelegate()
         delegate.coordinator = coord
@@ -586,15 +586,15 @@ struct AppShortcutsTests {
         settings.window?.close()
 
         coord.checkedCardIDs = []
-        delegate.perform(.launchIn(.codex))
+        delegate.perform(.launchIn(.dsh))
         #expect(hud.isVisible)
         #expect(coord.isErrorBanner)
         hud.orderOut(nil)
 
         coord.checkedCardIDs = [card.id]
-        delegate.perform(.launchIn(.codex))
+        delegate.perform(.launchIn(.dsh))
         #expect(hud.isVisible)
-        #expect(coord.conversationDraft?.targetHost == .codex)
+        #expect(coord.conversationDraft?.targetHost == .dsh)
         #expect(!coord.isErrorBanner)
 
         delegate.perform(.sendConversationDraft)
@@ -660,7 +660,7 @@ struct AppShortcutsTests {
             dataDirectoryURL: dir.appendingPathComponent("Data"),
             antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
         )
-        let coord = try AppCoordinator(paths: paths, environment: [:], capturer: UnusedSelectionCapturer(), codexDelivery: nil)
+        let coord = try AppCoordinator(paths: paths, environment: [:], capturer: UnusedSelectionCapturer(), dshReadinessCheck: { false })
         let appearance = AppAppearancePreferences(defaults: UserDefaults(suiteName: "dev.codingrewind.qa.appearance")!)
         let shortcuts = AppShortcuts(onCommand: { _ in })
 

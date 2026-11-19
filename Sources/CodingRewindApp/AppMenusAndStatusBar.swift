@@ -17,6 +17,7 @@ public enum AppCommand: Equatable, Sendable {
     case refreshHotStream
     case openMemosWeb
     case installOrRepairPlugin
+    case installOrRepairDSHPlugin
     case requestAccessibility
     case resetAccessibility
     case openSettings
@@ -83,6 +84,7 @@ public enum MainMenuBuilder {
         appMenu.addItem(.separator())
         appMenu.addItem(makeCommandMenuItem(title: AppStrings.settingsEllipsis(in: language), command: .openSettings, keyEquivalent: ",", handler: onCommand))
         appMenu.addItem(makeCommandMenuItem(title: AppStrings.installOrRepairAntigravityPlugin(in: language), command: .installOrRepairPlugin, handler: onCommand))
+        appMenu.addItem(makeCommandMenuItem(title: AppStrings.installOrRepairDSHPlugin(in: language), command: .installOrRepairDSHPlugin, handler: onCommand))
         appMenu.addItem(.separator())
 
         let hideItem = NSMenuItem(title: AppStrings.hideApp(in: language), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -508,6 +510,14 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         menu.addItem(
             makeCommandMenuItem(
+                title: AppStrings.installOrRepairDSHPlugin(in: lang),
+                command: .installOrRepairDSHPlugin,
+                state: snapshot.isDSHPluginReady ? .on : .off,
+                handler: onCommand
+            )
+        )
+        menu.addItem(
+            makeCommandMenuItem(
                 title: AppStrings.accessibilityStatusMenu(isTrusted: snapshot.isAccessibilityTrusted, in: lang),
                 command: .requestAccessibility,
                 state: snapshot.isAccessibilityTrusted ? .on : .off,
@@ -630,7 +640,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
         if let page {
             navigationModel.selectedPage = page
         }
-        coordinator.refreshPluginStatus()
+        coordinator.refreshAllSettingsState()
         loginItemController?.refresh()
         permissionState.refresh()
         if wasClosed {
@@ -669,7 +679,7 @@ public final class SettingsWindowController: NSWindowController, NSWindowDelegat
     }
 
     public func windowDidBecomeKey(_ notification: Notification) {
-        coordinator.refreshPluginStatus()
+        coordinator.refreshAllSettingsState()
         permissionState.refresh()
         loginItemController?.refresh()
     }

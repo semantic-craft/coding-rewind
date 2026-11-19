@@ -16,7 +16,7 @@ package enum SelectionPopupHost: Equatable, Sendable {
     package init?(bundleIdentifier: String?) {
         switch bundleIdentifier {
         case AppBundleID.antigravity: self = .antigravity
-        case AppBundleID.codex: self = .chatGPTApp
+        case AppBundleID.chatGPTDesktop: self = .chatGPTApp
         case AppBundleID.gemini: self = .geminiApp
         default: return nil
         }

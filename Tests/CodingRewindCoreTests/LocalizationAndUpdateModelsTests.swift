@@ -95,6 +95,23 @@ struct LocalizationAndUpdateModelsTests {
             #expect(zh != en)
         }
 
+        let allDSHRepairReasons: [DSHPluginRepairReason] = [
+            .notInstalled,
+            .missingBundledPlugin,
+            .missingCLIBinary,
+            .missingProfilePackage,
+            .pluginNotRegisteredInProfile,
+            .stagedPluginMissingOrOutdated,
+            .invalidRuntimeConfig
+        ]
+        for reason in allDSHRepairReasons {
+            let zh = L10n.dshPluginRepairReason(reason, in: .zhHans)
+            let en = L10n.dshPluginRepairReason(reason, in: .en)
+            #expect(!zh.isEmpty)
+            #expect(!en.isEmpty)
+            #expect(zh != en)
+        }
+
         let notices: [BannerNotice] = [
             .savedOfflineNeedsConfig,
             .savedClip(sourceTitle: "Antigravity"),
@@ -102,20 +119,25 @@ struct LocalizationAndUpdateModelsTests {
             .syncFailedShowingLocal,
             .selectAtLeastOneCard,
             .needsAntigravityPlugin,
-            .needsCodexInstalled,
+            .needsDSHPlugin,
             .waitingForHostConfirmation(.antigravity),
+            .waitingForHostConfirmation(.dsh),
             .sentArchiveBlockedUnconfigured,
             .sentPartialArchiveFailure,
-            .sentToNewConversation(count: 2, host: .codex),
-            .sentOpenConversationFailed(.codex),
+            .sentToNewConversation(count: 2, host: .dsh),
+            .sentOpenConversationFailed(.dsh),
             .requestExpired(.antigravity),
-            .hostRejected(.codex),
+            .requestExpired(.dsh),
+            .hostRejected(.dsh),
             .deliveryUnconfirmed(.antigravity),
+            .deliveryUnconfirmed(.dsh),
             .stillWaitingForReceipt,
             .clearedUnconfirmedRequest,
             .retainedUnarchivedCards,
             .reopenConversationFailed,
-            .openedConversation(.codex),
+            .openedConversation(.dsh),
+            .openedDSHConversation,
+            .copiedDSHSessionFallback("sess-123"),
             .resumeUnarchivedStartup,
             .resumePendingStartup,
             .archiveCardBlockedOfflineOrUnconfigured,
@@ -132,6 +154,10 @@ struct LocalizationAndUpdateModelsTests {
             .pluginNeedsRepair(.missingSidecarBinary),
             .pluginInstallFailedRewind(.missingCredentials),
             .pluginInstallFailedMessage("permission denied"),
+            .dshPluginInstalled,
+            .dshPluginNeedsRepair(.missingCLIBinary),
+            .dshPluginInstallFailedRewind(.missingCredentials),
+            .dshPluginInstallFailedMessage("pnpm failed"),
             .openURLFailed("https://example.com"),
             .copiedSessionID("6eb720d3-188b-4783-a0c6-9592c554f3fc"),
             .copiedClipText,
@@ -242,9 +268,7 @@ struct LocalizationAndUpdateModelsTests {
             paths: paths,
             environment: [StoragePaths.qaEnvironmentKey: "1"],
             capturer: StubSelectionCapturer(result: .success(selection)),
-            codexDelivery: { request in
-                (.succeeded, UUID().uuidString.lowercased())
-            }
+            dshReadinessCheck: { true }
         )
         #expect(coordinator.language == .zhHans)
         #expect(coordinator.pluginStatusText.contains("插件需要安装或修复"))
@@ -272,14 +296,22 @@ struct LocalizationAndUpdateModelsTests {
             environment: [StoragePaths.qaEnvironmentKey: "1"],
             capturer: StubSelectionCapturer(result: .success(selection)),
             language: .en,
-            codexDelivery: { request in
-                await recorder.record(request.prompt)
-                return (.succeeded, UUID().uuidString.lowercased())
-            }
+            dshReadinessCheck: { true }
         )
-        englishCoord.onOpenConversation = { _ in true }
+        englishCoord.onWakeHost = { host in
+            guard host == .dsh else { return }
+            let dshStore = englishCoord.handoffStore(for: .dsh)
+            Task.detached {
+                if let worker = try? ConversationSidecarWorker.acquireIfUnlocked(store: dshStore) {
+                    try? await worker.processPending { request in
+                        await recorder.record(request.prompt)
+                        return (.succeeded, UUID().uuidString.lowercased())
+                    }
+                }
+            }
+        }
         englishCoord.checkedCardIDs = Set(englishCoord.cards.map(\.id))
-        let launchResult = await englishCoord.launchChecked(in: .codex, waitSeconds: 2)
+        let launchResult = await englishCoord.launchChecked(in: .dsh, waitSeconds: 2)
         #expect(launchResult != nil)
         let capturedPrompt = await recorder.prompt
         #expect(capturedPrompt.contains("Analyze and synthesize the following highlights"))

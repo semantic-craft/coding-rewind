@@ -63,6 +63,23 @@ private func findDraftAXElement(
 }
 
 @MainActor
+private func draftAXLabel(_ identifier: String, in root: Any) -> String? {
+    var visited: Set<ObjectIdentifier> = []
+    guard let element = findDraftAXElement(identifier: identifier, in: root, visited: &visited) else {
+        return nil
+    }
+    if let ax = element as? any NSAccessibilityProtocol {
+        if let label = ax.accessibilityLabel(), !label.isEmpty { return label }
+        if let title = ax.accessibilityTitle(), !title.isEmpty { return title }
+        return nil
+    }
+    let obj = element as AnyObject
+    if let label = obj.accessibilityLabel?(), !label.isEmpty { return label }
+    if let title = obj.accessibilityTitle?(), !title.isEmpty { return title }
+    return nil
+}
+
+@MainActor
 private func hasDraftAXIdentifier(_ identifier: String, in root: Any) -> Bool {
     var visited: Set<ObjectIdentifier> = []
     return findDraftAXElement(identifier: identifier, in: root, visited: &visited) != nil
@@ -172,17 +189,14 @@ extension AppShortcutsTests {
         ))
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card1, card2])
 
-        let deliveredCodexPrompts = OSAllocatedUnfairLock<[String]>(initialState: [])
+        let deliveredDSHPrompts = OSAllocatedUnfairLock<[String]>(initialState: [])
         let deliveredThreadID = UUID().uuidString.lowercased()
         let coord = try AppCoordinator(
             paths: paths,
             environment: env,
             capturer: DraftUnusedCapturer(),
             language: .zhHans,
-            codexDelivery: { request in
-                deliveredCodexPrompts.withLock { $0.append(request.prompt) }
-                return (.succeeded, deliveredThreadID)
-            }
+            dshReadinessCheck: { true }
         )
 
         @MainActor final class HostGate { var shouldSucceed = true }
@@ -193,6 +207,18 @@ extension AppShortcutsTests {
         coord.onActivateHostApp = { host in
             activatedHosts.append(host)
             return hostGate.shouldSucceed
+        }
+        coord.onWakeHost = { host in
+            guard host == .dsh else { return }
+            let dshStore = coord.handoffStore(for: .dsh)
+            Task.detached {
+                if let worker = try? ConversationSidecarWorker.acquireIfUnlocked(store: dshStore) {
+                    try? worker.processPending { request in
+                        deliveredDSHPrompts.withLock { $0.append(request.prompt) }
+                        return (.succeeded, deliveredThreadID)
+                    }
+                }
+            }
         }
         coord.onOpenConversation = { _ in true }
 
@@ -231,12 +257,15 @@ extension AppShortcutsTests {
         #expect(coord.conversationDraft?.text.contains("First verbatim snippet") == true)
         #expect(coord.conversationDraft?.text.contains("Second verbatim snippet") == true)
         #expect(try coord.handoffStore(for: .antigravity).current() == nil)
-        #expect(try coord.handoffStore(for: .codex).current() == nil)
+        #expect(try coord.handoffStore(for: .dsh).current() == nil)
         #expect(activatedHosts.isEmpty)
         #expect(copiedTexts.isEmpty)
         #expect(hasDraftAXIdentifier("hud.draft.container", in: panel))
         #expect(hasDraftAXIdentifier("hud.draft.copyAndWake", in: panel))
         #expect(hasDraftAXIdentifier("hud.draft.sendDirect", in: panel))
+        #expect(draftAXLabel("hud.draft.copyAndWake", in: panel) == "复制并唤醒 Antigravity")
+        #expect(draftAXLabel("hud.draft.sendDirect", in: panel) == "直接新建对话")
+        #expect(draftAXLabel("hud.draft.archiveOnLaunch", in: panel) == "发送后归档")
         #expect(!hasDraftAXIdentifier("hud.launch", in: panel))
 
         let contentView = try #require(panel.contentView)
@@ -320,33 +349,46 @@ extension AppShortcutsTests {
         #expect(panel.isVisible)
         #expect(coord.isErrorBanner)
 
-        // 6. Optional Secondary Action (Direct Send): readiness failure preserves edited draft; switching to Codex dispatches edited prompt directly
         hostGate.shouldSucceed = true
         #expect(coord.openConversationDraft(in: .antigravity))
         let directEditedPrompt = "Direct handoff edited prompt — verify exact bytes"
         coord.updateConversationDraftText(directEditedPrompt)
         try await settleDraftLoop()
 
-        // Antigravity plugin is not installed yet -> direct send fails readiness check WITHOUT losing edited draft
         #expect(pressDraftAXButton("hud.draft.sendDirect", in: panel))
         try await settleDraftLoop(iterations: 6)
         #expect(coord.isErrorBanner)
         #expect(coord.conversationDraft?.text == directEditedPrompt)
         #expect(coord.conversationDraft?.isEdited == true)
 
-        // Switch target host to Codex and press Direct Send -> delivers exact edited prompt and clears selection
-        coord.selectConversationDraftHost(.codex)
+        coord.selectConversationDraftHost(.dsh)
         try await settleDraftLoop()
-        #expect(pressDraftAXButton("hud.draft.sendDirect", in: panel))
+        #expect(draftAXLabel("hud.draft.sendDirect", in: panel) == "填入 DSH 新会话")
+        #expect(draftAXLabel("hud.draft.copyAndWake", in: panel) == "复制并唤醒 DSH")
+        #expect(draftAXLabel("hud.draft.archiveOnLaunch", in: panel) == "填入后归档")
+
+        coord.setLanguage(.en)
+        try await settleDraftLoop()
+        #expect(draftAXLabel("hud.draft.sendDirect", in: panel) == "Fill New DSH Chat")
+        #expect(draftAXLabel("hud.draft.copyAndWake", in: panel) == "Copy & Wake DSH")
+        #expect(draftAXLabel("hud.draft.archiveOnLaunch", in: panel) == "Archive after filling")
+        coord.setLanguage(.zhHans)
+        try await settleDraftLoop()
+
+        let copiedBeforeDSHPrimary = copiedTexts.count
+        #expect(panel.performKeyEquivalent(with: cmdReturn))
         for _ in 0..<60 where coord.confirmedConversation == nil {
             try await Task.sleep(for: .milliseconds(15))
             drainDraftRunLoop(0.01)
         }
-        #expect(deliveredCodexPrompts.withLock { $0 } == [directEditedPrompt])
-        #expect(coord.confirmedConversation == ConversationReference(host: .codex, id: deliveredThreadID))
+        #expect(copiedTexts.count == copiedBeforeDSHPrimary)
+        #expect(deliveredDSHPrompts.withLock { $0 } == [directEditedPrompt])
+        #expect(coord.confirmedConversation == ConversationReference(host: .dsh, id: deliveredThreadID))
         #expect(coord.conversationDraft == nil)
         #expect(coord.checkedCardIDs.isEmpty)
         #expect(!coord.isErrorBanner)
+
+        coord.conversationHost = .antigravity
 
         // 7. Uncommitted IME marked text in DraftPromptTextView: pressing Esc ONLY discards marked text (does NOT close HUD or dismiss draft), and button click commits marked text
         panel.presentAndFocus()
@@ -620,11 +662,20 @@ extension AppShortcutsTests {
             memosClient: memosClient,
             capturer: FixedCapturer(capturedAt: Date()),
             language: .zhHans,
-            codexDelivery: { req in
-                deliveredPrompts.withLock { $0.append(req.prompt) }
-                return (.succeeded, UUID().uuidString.lowercased())
-            }
+            dshReadinessCheck: { true }
         )
+        coord.onWakeHost = { host in
+            guard host == .dsh else { return }
+            let dshStore = coord.handoffStore(for: .dsh)
+            Task.detached {
+                if let worker = try? ConversationSidecarWorker.acquireIfUnlocked(store: dshStore) {
+                    try? worker.processPending { req in
+                        deliveredPrompts.withLock { $0.append(req.prompt) }
+                        return (.succeeded, UUID().uuidString.lowercased())
+                    }
+                }
+            }
+        }
         coord.onOpenConversation = { _ in true }
 
         // A. Start captureSelection, wait until provisional card is staged before POST /api/memos finishes
@@ -637,7 +688,7 @@ extension AppShortcutsTests {
         }
         let provisionalID = try #require(coord.cards.first?.id)
         #expect(provisionalID != "server-canonical-id")
-        #expect(coord.openConversationDraft(in: .codex))
+        #expect(coord.openConversationDraft(in: .dsh))
         #expect(coord.conversationDraft?.cardIDs == [provisionalID])
         #expect(coord.conversationDraft?.text.contains(provisionalID) == true)
 
@@ -673,8 +724,8 @@ extension AppShortcutsTests {
 
         // Send with markSynthesizedOnLaunch = true -> archives canonical server-canonical-id cleanly
         coord.markSynthesizedOnLaunch = true
-        let sendResult1 = await coord.sendConversationDraft(in: .codex, waitSeconds: 2)
-        if case .succeeded = sendResult1 {} else { Issue.record("Expected Codex send to succeed") }
+        let sendResult1 = await coord.sendConversationDraft(in: .dsh, waitSeconds: 2)
+        if case .succeeded = sendResult1 {} else { Issue.record("Expected DSH send to succeed") }
         #expect(DraftMockURLProtocol.state.withLock { $0.patchedIDs } == ["server-canonical-id"])
         #expect(!coord.isErrorBanner)
         #expect(!coord.canEndUnarchivedConversation)
@@ -690,7 +741,7 @@ extension AppShortcutsTests {
         }
         await coord.refresh()
         coord.checkedCardIDs = ["ephemeral-card"]
-        #expect(coord.openConversationDraft(in: .codex))
+        #expect(coord.openConversationDraft(in: .dsh))
         DraftMockURLProtocol.state.withLock { $0.memos = [] }
         await coord.refresh()
         #expect(coord.cards.isEmpty)
@@ -706,7 +757,7 @@ extension AppShortcutsTests {
         }
         await coord.refresh()
         coord.checkedCardIDs = ["edited-ephemeral"]
-        #expect(coord.openConversationDraft(in: .codex))
+        #expect(coord.openConversationDraft(in: .dsh))
         coord.updateConversationDraftText("User manually edited prompt surviving external card archive")
         DraftMockURLProtocol.state.withLock { $0.memos = [] }
         await coord.refresh()
@@ -716,7 +767,7 @@ extension AppShortcutsTests {
 
         // Direct send with markSynthesizedOnLaunch = true still delivers custom prompt without false .sentPartialArchiveFailure
         coord.markSynthesizedOnLaunch = true
-        let sendResult2 = await coord.sendConversationDraft(in: .codex, waitSeconds: 2)
+        let sendResult2 = await coord.sendConversationDraft(in: .dsh, waitSeconds: 2)
         if case .succeeded = sendResult2 {} else { Issue.record("Expected edited orphan draft send to succeed") }
         #expect(deliveredPrompts.withLock { $0.last } == "User manually edited prompt surviving external card archive")
         #expect(!coord.isErrorBanner)
@@ -732,7 +783,7 @@ extension AppShortcutsTests {
         }
         await coord.refresh()
         coord.checkedCardIDs = ["reset-ephemeral"]
-        #expect(coord.openConversationDraft(in: .codex))
+        #expect(coord.openConversationDraft(in: .dsh))
         coord.updateConversationDraftText("Edited before empty reset")
         DraftMockURLProtocol.state.withLock { $0.memos = [] }
         await coord.refresh()

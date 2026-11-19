@@ -8,8 +8,9 @@ public enum AppBundleID {
     public static let selfApp = "dev.codingrewind.app"
     public static let selfQAApp = "dev.codingrewind.app.qa"
     public static let antigravity = CapturedSelection.antigravityBundleIdentifier
+    public static let dsh = CapturedSelection.dshBundleIdentifier
     public static let gemini = "com.google.GeminiMacOS"
-    public static let codex = "com.openai.codex"
+    public static let chatGPTDesktop = "com.openai.codex"
     public static let safari = "com.apple.Safari"
     public static let chrome = "com.google.Chrome"
     public static let arc = "company.thebrowser.Browser"

@@ -4,26 +4,48 @@ import Darwin
 import Foundation
 
 public enum ConversationHost: String, Codable, CaseIterable, Sendable {
-    case antigravity, codex
+    case antigravity, dsh
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "antigravity":
+            self = .antigravity
+        case "dsh", "codex":
+            self = .dsh
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Unsupported conversation host: \(raw)"
+            )
+        }
+    }
 
     public var displayName: String {
         switch self {
         case .antigravity: return "Antigravity"
-        case .codex: return "Codex"
+        case .dsh: return "DSH"
         }
     }
 
     public var requiresExplicitConversationOpen: Bool {
         switch self {
+        case .antigravity, .dsh: return false
+        }
+    }
+
+    public var prefersDirectDraftAction: Bool {
+        switch self {
         case .antigravity: return false
-        case .codex: return true
+        case .dsh: return true
         }
     }
 
     fileprivate var handoffDirectory: String {
         switch self {
         case .antigravity: return "handoff"
-        case .codex: return "codex-handoff"
+        case .dsh: return "dsh-handoff"
         }
     }
 }

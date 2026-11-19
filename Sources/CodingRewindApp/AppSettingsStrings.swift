@@ -261,8 +261,8 @@ extension AppStrings {
 
     static func cloudSyncLocalOnlyIntro(in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return "不配置也能用。片段会先保存在本机，仍可在 Antigravity 或 Codex 中开始对话。"
-        case .en: return "Works without setup. Clips stay on this Mac, and you can still start chats in Antigravity or Codex."
+        case .zhHans: return "不配置也能用。片段会先保存在本机，仍可在 Antigravity 或 DSH 中开始对话。"
+        case .en: return "Works without setup. Clips stay on this Mac, and you can still start chats in Antigravity or DSH."
         }
     }
 
@@ -395,6 +395,13 @@ extension AppStrings {
         switch language {
         case .zhHans: return "Antigravity 插件"
         case .en: return "Antigravity Plugin"
+        }
+    }
+
+    static func dshPluginSectionTitle(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "DSH 插件"
+        case .en: return "DSH Plugin"
         }
     }
 
@@ -558,13 +565,6 @@ extension AppStrings {
         }
     }
 
-    static func openCodexChatButton(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "打开 Codex 对话"
-        case .en: return "Open Codex Chat"
-        }
-    }
-
     static func selectedCountText(count: Int, in language: AppLanguage) -> String {
         switch language {
         case .zhHans: return "已选 \(count) 条"
@@ -572,17 +572,31 @@ extension AppStrings {
         }
     }
 
-    static func archiveOnLaunchTitle(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "发送后归档"
-        case .en: return "Archive After Send"
+    static func archiveOnLaunchTitle(
+        for host: ConversationHost = .antigravity,
+        in language: AppLanguage
+    ) -> String {
+        switch (host, language) {
+        case (.dsh, .zhHans): return "填入后归档"
+        case (.dsh, .en): return "Archive after filling"
+        case (.antigravity, .zhHans): return "发送后归档"
+        case (.antigravity, .en): return "Archive After Send"
         }
     }
 
-    static func archiveOnLaunchHelp(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "成功发送后，将所选片段从最近片段列表中移除。原文仍保留在 Memos 中。"
-        case .en: return "Removes selected clips from the hot stream once sent. Original memos remain in Memos."
+    static func archiveOnLaunchHelp(
+        for host: ConversationHost = .antigravity,
+        in language: AppLanguage
+    ) -> String {
+        switch (host, language) {
+        case (.dsh, .zhHans):
+            return "确认填入 DSH 新会话后，将所选片段从最近片段列表中移除。原文仍保留在 Memos 中。"
+        case (.dsh, .en):
+            return "Removes selected clips from the hot stream once confirmed filled into DSH. Original memos remain in Memos."
+        case (.antigravity, .zhHans):
+            return "成功发送后，将所选片段从最近片段列表中移除。原文仍保留在 Memos 中。"
+        case (.antigravity, .en):
+            return "Removes selected clips from the hot stream once sent. Original memos remain in Memos."
         }
     }
 
@@ -833,9 +847,9 @@ extension AppStrings {
     static func mcpConfigCompatibilityCaption(in language: AppLanguage) -> String {
         switch language {
         case .zhHans:
-            return "兼容 Claude Desktop、Cursor、Codex、Antigravity 等 MCP 客户端。访问令牌始终保存在 macOS 钥匙串中，不会写入 JSON 配置。"
+            return "兼容 Claude Desktop、Cursor、DSH、Antigravity 等 MCP 客户端。访问令牌始终保存在 macOS 钥匙串中，不会写入 JSON 配置。"
         case .en:
-            return "Compatible with Claude Desktop, Cursor, Codex, Antigravity, and other MCP clients. Access tokens stay in macOS Keychain and are never written to JSON."
+            return "Compatible with Claude Desktop, Cursor, DSH, Antigravity, and other MCP clients. Access tokens stay in macOS Keychain and are never written to JSON."
         }
     }
 

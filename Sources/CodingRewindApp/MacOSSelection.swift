@@ -32,7 +32,7 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         let appElement = AXUIElementCreateApplication(targetPID)
         if bundleID == AppBundleID.antigravity {
             _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        } else if bundleID == AppBundleID.codex {
+        } else if bundleID == AppBundleID.chatGPTDesktop {
             _ = AXSupport.value(appElement, "AXEnhancedUserInterface")
             for _ in 0..<3 {
                 if let window = AXSupport.focusedWindow(appElement),
@@ -234,7 +234,11 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         if NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID,
            let targetApp = NSRunningApplication(processIdentifier: targetPID) {
             _ = targetApp.activate()
-            try? await Task.sleep(for: .milliseconds(80))
+            for _ in 0..<20 {
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID { break }
+                try? await Task.sleep(for: .milliseconds(10))
+                guard !Task.isCancelled else { return (nil, nil, false) }
+            }
         }
         guard !Task.isCancelled, NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPID else { return (nil, nil, false) }
         let pasteboardSnapshot = PasteboardSnapshot()

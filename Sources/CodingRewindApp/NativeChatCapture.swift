@@ -80,7 +80,7 @@ enum NativeChatAXCapture {
 
     static func host(bundleIdentifier: String) -> NativeChatHost? {
         switch bundleIdentifier {
-        case AppBundleID.codex: .chatGPT
+        case AppBundleID.chatGPTDesktop: .chatGPT
         case AppBundleID.gemini: .gemini
         default: nil
         }

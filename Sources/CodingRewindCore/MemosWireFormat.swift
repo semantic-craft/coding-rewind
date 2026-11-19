@@ -295,6 +295,11 @@ public enum MemosWireFormat {
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             return !rest.isEmpty
         }
+        if lower.hasPrefix("dsh-session://") {
+            let rest = String(encoded.dropFirst("dsh-session://".count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return !rest.isEmpty
+        }
         if lower.hasPrefix("file://") {
             guard (lower.hasPrefix("file:///") || lower.hasPrefix("file://localhost/")),
                   let parsed = URL(string: encoded) ?? URL(string: encoded, encodingInvalidCharacters: true),

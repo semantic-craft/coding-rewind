@@ -60,22 +60,23 @@ struct ConversationHandoffTests {
         #expect(try store.current()?.requestId == current.requestId)
     }
 
-    @Test("The legacy Antigravity worker cannot consume Codex requests")
+    @Test("The Antigravity worker cannot consume DSH requests")
     func hostIsolation() throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let legacy = try ConversationHandoffStore(dataDirectoryURL: root)
-        let codex = try ConversationHandoffStore(dataDirectoryURL: root, host: .codex)
-        let current = try codex.submit(prompt: "Codex only", cardIDs: ["memo"], markSynthesized: false)
-        let worker = try ConversationSidecarWorker(store: legacy)
+        let antigravity = try ConversationHandoffStore(dataDirectoryURL: root)
+        let dsh = try ConversationHandoffStore(dataDirectoryURL: root, host: .dsh)
+        let current = try dsh.submit(prompt: "DSH only", cardIDs: ["memo"], markSynthesized: false)
+        let worker = try ConversationSidecarWorker(store: antigravity)
         try worker.processPending { _ in
-            Issue.record("Legacy worker must not claim Codex work")
+            Issue.record("Antigravity worker must not claim DSH work")
             return (.unknown, nil)
         }
-        #expect(legacy.directory.lastPathComponent == "handoff")
-        #expect(try legacy.pendingRequests().isEmpty)
-        #expect(try codex.pendingRequests().map(\.requestId) == [current.requestId])
-        #expect(try codex.receipt(for: current.requestId) == nil)
+        #expect(antigravity.directory.lastPathComponent == "handoff")
+        #expect(dsh.directory.lastPathComponent == "dsh-handoff")
+        #expect(try antigravity.pendingRequests().isEmpty)
+        #expect(try dsh.pendingRequests().map(\.requestId) == [current.requestId])
+        #expect(try dsh.receipt(for: current.requestId) == nil)
     }
 
     @Test("Expired requests and old receipts discard prompts without dispatch")
@@ -105,7 +106,7 @@ struct ConversationHandoffTests {
         #expect(ConversationRequest.lifetime > 40)
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: .codex)
+        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: .dsh)
         let submittedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let inFlight = try store.submit(prompt: "35s in-flight prompt", cardIDs: ["memo"], markSynthesized: false, now: submittedAt)
         let worker = try ConversationSidecarWorker(store: store)
@@ -201,7 +202,7 @@ struct ConversationHandoffTests {
     func nonBlockingLockAndFreshBatchTimestamps() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: .codex)
+        let store = try ConversationHandoffStore(dataDirectoryURL: root, host: .dsh)
 
         do {
             let first = try #require(try ConversationSidecarWorker.acquireIfUnlocked(store: store))
@@ -212,7 +213,7 @@ struct ConversationHandoffTests {
 
         let symlinkRoot = try directory()
         defer { try? FileManager.default.removeItem(at: symlinkRoot) }
-        let unsafeStore = try ConversationHandoffStore(dataDirectoryURL: symlinkRoot, host: .codex)
+        let unsafeStore = try ConversationHandoffStore(dataDirectoryURL: symlinkRoot, host: .dsh)
         let victim = symlinkRoot.appendingPathComponent("victim-lock")
         try AtomicFile.writeUTF8("x", to: victim)
         try FileManager.default.createSymbolicLink(
@@ -225,7 +226,7 @@ struct ConversationHandoffTests {
 
         let batchRoot = try directory()
         defer { try? FileManager.default.removeItem(at: batchRoot) }
-        let batchStore = try ConversationHandoffStore(dataDirectoryURL: batchRoot, host: .codex)
+        let batchStore = try ConversationHandoffStore(dataDirectoryURL: batchRoot, host: .dsh)
         let baseNow = Date()
         let firstCreated = baseNow.addingTimeInterval(-(ConversationRequest.lifetime - 0.20))
         let secondCreated = baseNow.addingTimeInterval(-(ConversationRequest.lifetime - 0.25))

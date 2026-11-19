@@ -54,6 +54,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     public let pendingOutboxCount: Int
     public let connection: ConnectionState
     public let isPluginReady: Bool
+    public let isDSHPluginReady: Bool
     public let pluginSummary: String
     public let isAccessibilityTrusted: Bool
     public let recentCards: [RecentCardItem]
@@ -67,6 +68,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         pendingOutboxCount: Int,
         connection: ConnectionState,
         isPluginReady: Bool,
+        isDSHPluginReady: Bool = false,
         pluginSummary: String,
         isAccessibilityTrusted: Bool,
         recentCards: [RecentCardItem],
@@ -79,6 +81,7 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         self.pendingOutboxCount = pendingOutboxCount
         self.connection = connection
         self.isPluginReady = isPluginReady
+        self.isDSHPluginReady = isDSHPluginReady
         self.pluginSummary = pluginSummary
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.recentCards = recentCards
@@ -228,9 +231,12 @@ public final class AppCoordinator {
     }
     private var pendingRemoteDeleteIDs: Set<String> = []
     private let antigravityContext: AntigravityCaptureContext
+    private let dshBinaryURLProvider: @Sendable () -> URL?
+    private let dshActionRunner: @Sendable (String) async -> Bool
     public var capturer: any SelectionCapturing
 
     public private(set) var isCapturingSelection = false
+    private var activeExternalCaptureCount = 0
     private var latestRefreshRequest = 0
     private var localCardsRevision = 0
     public var markSynthesizedOnLaunch = false
@@ -265,6 +271,7 @@ public final class AppCoordinator {
     private var activeBannerNotice: BannerNotice?
     private var isUpdatingBannerFromNotice = false
     private var lastPluginInstallFailureNotice: BannerNotice?
+    private var lastDSHPluginInstallFailureNotice: BannerNotice?
     public var bannerMessage: String? {
         didSet {
             if !isUpdatingBannerFromNotice && bannerMessage == nil {
@@ -274,6 +281,7 @@ public final class AppCoordinator {
     }
     public var isErrorBanner: Bool = false
     public var pluginStatusText: String = ""
+    public var dshPluginStatusText: String = ""
 
     public var onOpenURL: (@MainActor (URL) -> Bool)?
     public var onCopyText: (@MainActor (String) -> Void) = { _ in }
@@ -288,7 +296,9 @@ public final class AppCoordinator {
         capturer: any SelectionCapturing,
         antigravityContext: AntigravityCaptureContext = AntigravityCaptureContext(),
         language: AppLanguage = .zhHans,
-        codexDelivery: (@Sendable (ConversationRequest) async -> (ConversationReceipt.State, String?))? = nil
+        dshBinaryURLProvider: (@Sendable () -> URL?)? = nil,
+        dshReadinessCheck: (@MainActor () -> Bool)? = nil,
+        dshActionRunner: (@Sendable (String) async -> Bool)? = nil
     ) throws {
         self.paths = paths
         self.environment = environment
@@ -297,8 +307,18 @@ public final class AppCoordinator {
         self.hotCache = HotCache(fileURL: paths.hotCacheFileURL)
         self.language = language
         self.aiAccessMode = paths.resolveAIAccessMode(environment: environment)
+        let resolvedBinaryProvider: @Sendable () -> URL? = dshBinaryURLProvider ?? {
+            DSHIntegration.resolveDSHBinaryURL(environment: environment)
+        }
+        self.dshBinaryURLProvider = resolvedBinaryProvider
+        self.dshActionRunner = dshActionRunner ?? { sessionID in
+            guard let actionStore = try? DSHActionStore(dataDirectoryURL: paths.dataDirectoryURL) else {
+                return false
+            }
+            return await actionStore.openSession(sessionID: sessionID)
+        }
         let antigravityStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .antigravity)
-        let codexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
+        let dshStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .dsh)
         self.hostChannels = [
             .antigravity: ConversationHostChannel(
                 store: antigravityStore,
@@ -314,19 +334,21 @@ public final class AppCoordinator {
                 },
                 dispatch: { _ in }
             ),
-            .codex: ConversationHostChannel(
-                store: codexStore,
-                requiresExplicitConversationOpen: ConversationHost.codex.requiresExplicitConversationOpen,
+            .dsh: ConversationHostChannel(
+                store: dshStore,
+                requiresExplicitConversationOpen: ConversationHost.dsh.requiresExplicitConversationOpen,
                 readinessFailure: {
-                    codexDelivery == nil ? .needsCodexInstalled : nil
+                    if let dshReadinessCheck {
+                        return dshReadinessCheck() ? nil : .needsDSHPlugin
+                    }
+                    let reasons = DSHIntegration.repairReasons(
+                        dataDirectoryURL: paths.dataDirectoryURL,
+                        dshHomeURL: paths.dshHomeDirectoryURL,
+                        dshBinaryURL: resolvedBinaryProvider()
+                    )
+                    return reasons.isEmpty ? nil : .needsDSHPlugin
                 },
-                dispatch: { store in
-                    guard let codexDelivery else { return }
-                    try await Task.detached {
-                        guard let worker = try ConversationSidecarWorker.acquireIfUnlocked(store: store) else { return }
-                        try await worker.processPending(invoke: codexDelivery)
-                    }.value
-                }
+                dispatch: { _ in }
             )
         ]
         self.antigravityContext = antigravityContext
@@ -343,9 +365,14 @@ public final class AppCoordinator {
         )
         self.focusedCardID = self.cards.first?.id
         if FileManager.default.fileExists(atPath: conversationHostURL.path) {
-            conversationHost = try JSONDecoder().decode(ConversationHost.self, from: Data(contentsOf: conversationHostURL))
+            let hostData = try Data(contentsOf: conversationHostURL)
+            let rawHostString = try? JSONDecoder().decode(String.self, from: hostData)
+            let decodedHost = try JSONDecoder().decode(ConversationHost.self, from: hostData)
+            conversationHost = decodedHost
+            if rawHostString == "codex" {
+                try AtomicFile.writeData(JSONEncoder().encode(decodedHost), to: conversationHostURL)
+            }
         }
-        _ = try ConversationSidecarWorker.acquireIfUnlocked(store: codexStore)
         if let (host, _, current, receipt) = try activeConversation(clearingTerminalFailures: true) {
             activeConversationHost = host
             checkedCardIDs = Set(current.cardIDs)
@@ -361,6 +388,7 @@ public final class AppCoordinator {
             )
         }
         refreshPluginStatus()
+        refreshDSHPluginStatus()
     }
 
     public func setLanguage(_ language: AppLanguage) {
@@ -371,6 +399,11 @@ public final class AppCoordinator {
             pluginStatusText = L10n.banner(failureNotice, in: language)
         } else {
             refreshPluginStatus()
+        }
+        if let dshFailureNotice = lastDSHPluginInstallFailureNotice {
+            dshPluginStatusText = L10n.banner(dshFailureNotice, in: language)
+        } else {
+            refreshDSHPluginStatus()
         }
         if let activeBannerNotice {
             isUpdatingBannerFromNotice = true
@@ -501,6 +534,11 @@ public final class AppCoordinator {
             configDirectoryURL: paths.antigravityConfigDirectoryURL
         )
         let isPluginReady = reasons.isEmpty
+        let isDSHPluginReady = DSHIntegration.repairReasons(
+            dataDirectoryURL: paths.dataDirectoryURL,
+            dshHomeURL: paths.dshHomeDirectoryURL,
+            dshBinaryURL: dshBinaryURLProvider()
+        ).isEmpty
         let pluginSummary = isPluginReady
             ? L10n.pluginInstalledSummary(in: language)
             : L10n.pluginNeedsRepairSummary(firstReason: reasons.first, in: language)
@@ -527,6 +565,7 @@ public final class AppCoordinator {
             pendingOutboxCount: pendingCount,
             connection: connection,
             isPluginReady: isPluginReady,
+            isDSHPluginReady: isDSHPluginReady,
             pluginSummary: pluginSummary,
             isAccessibilityTrusted: isAccessibilityTrusted,
             recentCards: recent,
@@ -561,21 +600,127 @@ public final class AppCoordinator {
             localCardsRevision += 1
             isCapturingSelection = false
         }
-        var provisionalCardID: String?
-        let previousFocusedCardID = focusedCardID
         do {
             let selection = try await capturer.captureFrontmostSelection()
             let (platform, sourceTitle, sourceURL, context) = await buildProvenance(from: selection)
+            return await ingestClip(
+                verbatimText: selection.text,
+                platform: platform,
+                sourceTitle: sourceTitle,
+                sourceURL: sourceURL,
+                context: context,
+                capturedAt: selection.capturedAt
+            )
+        } catch {
+            let rewindError = (error as? RewindError) ?? .ioError(error.localizedDescription)
+            setBanner(.rewindError(rewindError), isError: true)
+            return .failed(rewindError)
+        }
+    }
+
+    public func captureExternalDSHRequest(_ request: DSHCaptureBridgeRequest) async -> DSHCaptureBridgeReceipt {
+        let nowMs: () -> Int64 = { Int64((Date().timeIntervalSince1970 * 1000.0).rounded()) }
+        let cleanedText = request.text.replacingOccurrences(of: "\0", with: "")
+        guard !cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return DSHCaptureBridgeReceipt(
+                captureId: request.captureId,
+                state: .failed,
+                clipId: nil,
+                error: RewindError.emptySelection.localizedDescription(in: language),
+                updatedAtMs: nowMs()
+            )
+        }
+
+        activeExternalCaptureCount += 1
+        defer {
+            localCardsRevision += 1
+            activeExternalCaptureCount -= 1
+        }
+
+        let cleanedSessionID = DSHCaptureContext.sanitizeSessionID(request.sessionId)
+        let cleanedTitle = request.sessionTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceTitle = (cleanedTitle?.isEmpty == false) ? cleanedTitle! : "DSH"
+        let sourceURL = cleanedSessionID.map { "dsh-session://\($0)" }
+        let context: CaptureContext?
+        if let messages = request.messages, !messages.isEmpty {
+            context = DSHCaptureContext.sliceContext(
+                selectedText: cleanedText,
+                messages: messages,
+                sessionTitle: sourceTitle,
+                sessionID: cleanedSessionID
+            )
+        } else {
+            context = nil
+        }
+        let capturedAt = request.createdAtMs > 0
+            ? Date(timeIntervalSince1970: Double(request.createdAtMs) / 1000.0)
+            : Date()
+
+        let outcome = await ingestClip(
+            verbatimText: cleanedText,
+            platform: "dsh",
+            sourceTitle: sourceTitle,
+            sourceURL: sourceURL,
+            context: context,
+            capturedAt: capturedAt
+        )
+        switch outcome {
+        case .saved(let cardID, _):
+            return DSHCaptureBridgeReceipt(
+                captureId: request.captureId,
+                state: .saved,
+                clipId: cardID,
+                error: nil,
+                updatedAtMs: nowMs()
+            )
+        case .queuedOffline(let cardID):
+            return DSHCaptureBridgeReceipt(
+                captureId: request.captureId,
+                state: .queuedOffline,
+                clipId: cardID,
+                error: nil,
+                updatedAtMs: nowMs()
+            )
+        case .failed(let rewindError):
+            return DSHCaptureBridgeReceipt(
+                captureId: request.captureId,
+                state: .failed,
+                clipId: nil,
+                error: rewindError.localizedDescription(in: language),
+                updatedAtMs: nowMs()
+            )
+        case .ignoredBusy:
+            return DSHCaptureBridgeReceipt(
+                captureId: request.captureId,
+                state: .failed,
+                clipId: nil,
+                error: "busy",
+                updatedAtMs: nowMs()
+            )
+        }
+    }
+
+    private func ingestClip(
+        verbatimText: String,
+        platform: String,
+        sourceTitle: String,
+        sourceURL: String?,
+        context: CaptureContext?,
+        capturedAt: Date
+    ) async -> SelectionCaptureOutcome {
+        var provisionalCardID: String?
+        let previousFocusedCardID = focusedCardID
+        do {
             let hasContext = (context?.isEmpty == false)
-            let clientClipId = MemosWireFormat.makeClientClipID(now: selection.capturedAt)
+            let clientClipId = MemosWireFormat.makeClientClipID(now: capturedAt)
             deletedClipIDs.remove(clientClipId)
             archivedClipIDs.remove(clientClipId)
             let rawContent = try MemosWireFormat.formatRawMemoContent(
-                verbatimText: selection.text,
+                verbatimText: verbatimText,
                 sourcePlatform: platform,
                 sourceTitle: sourceTitle,
                 sourceURL: sourceURL,
-                capturedAt: selection.capturedAt,
+                capturedAt: capturedAt,
                 hasContext: hasContext
             )
             let commentContent = hasContext ? context?.formattedCommentMarkdown() : nil
@@ -583,7 +728,7 @@ public final class AppCoordinator {
                 clientClipId: clientClipId,
                 memoContent: rawContent,
                 commentContent: commentContent,
-                createdAt: selection.capturedAt
+                createdAt: capturedAt
             )
             inFlightCaptureEntries[clientClipId] = entry
             defer { inFlightCaptureEntries.removeValue(forKey: clientClipId) }
@@ -591,8 +736,8 @@ public final class AppCoordinator {
             if let localCard = MemosWireFormat.parseMemo(
                 id: clientClipId,
                 rawContent: rawContent,
-                createdAt: selection.capturedAt,
-                now: max(Date(), selection.capturedAt),
+                createdAt: capturedAt,
+                now: max(Date(), capturedAt),
                 isOfflinePending: true
             ) {
                 provisionalCardID = localCard.id
@@ -631,7 +776,7 @@ public final class AppCoordinator {
                     contextComment: commentContent,
                     baseURL: baseURL,
                     token: token,
-                    fallbackCreatedAt: selection.capturedAt
+                    fallbackCreatedAt: capturedAt
                 )
                 let deletedDuringCreate = deletedClipIDs.contains(clientClipId)
                     || (!deletedBeforeCreate.contains(saved.id) && deletedClipIDs.contains(saved.id))
@@ -892,7 +1037,10 @@ public final class AppCoordinator {
     }
 
     private func canPublishRefresh(_ ticket: RefreshTicket) -> Bool {
-        ticket.request == latestRefreshRequest && ticket.localRevision == localCardsRevision && !isCapturingSelection
+        ticket.request == latestRefreshRequest
+            && ticket.localRevision == localCardsRevision
+            && !isCapturingSelection
+            && activeExternalCaptureCount == 0
     }
 
     @discardableResult
@@ -1543,6 +1691,30 @@ public final class AppCoordinator {
         return true
     }
 
+    @discardableResult
+    public func openSource(for card: RewindCard) async -> Bool {
+        guard let locator = card.sourceLocator else { return false }
+        switch locator {
+        case .web(let url, _):
+            return openURL(url)
+        case .antigravitySession(let sessionID):
+            copySessionID(sessionID)
+            return true
+        case .dshSession(let sessionID):
+            let opened = await dshActionRunner(sessionID)
+            if opened {
+                if onActivateHostApp?(.dsh) != true {
+                    onWakeHost?(.dsh)
+                }
+                setBanner(.openedDSHConversation, isError: false)
+                return true
+            }
+            onCopyText(sessionID)
+            setBanner(.copiedDSHSessionFallback(sessionID), isError: false)
+            return false
+        }
+    }
+
     public func performSourceAction(for card: RewindCard) {
         guard let locator = card.sourceLocator else { return }
         switch locator {
@@ -1550,6 +1722,10 @@ public final class AppCoordinator {
             openURL(url)
         case .antigravitySession(let sessionID):
             copySessionID(sessionID)
+        case .dshSession:
+            Task { @MainActor [weak self] in
+                _ = await self?.openSource(for: card)
+            }
         }
     }
 
@@ -1567,6 +1743,10 @@ public final class AppCoordinator {
 
     public func wakeAntigravity() {
         onWakeHost?(.antigravity)
+    }
+
+    public func wakeDSH() {
+        onWakeHost?(.dsh)
     }
 
     public var inspectedCard: RewindCard? {
@@ -1868,6 +2048,56 @@ public final class AppCoordinator {
     public func refreshAllSettingsState() {
         aiAccessMode = paths.resolveAIAccessMode(environment: environment)
         refreshPluginStatus()
+        refreshDSHPluginStatus()
+    }
+
+    public func refreshDSHPluginStatus() {
+        lastDSHPluginInstallFailureNotice = nil
+        let reasons = DSHIntegration.repairReasons(
+            dataDirectoryURL: paths.dataDirectoryURL,
+            dshHomeURL: paths.dshHomeDirectoryURL,
+            dshBinaryURL: dshBinaryURLProvider()
+        )
+        if reasons.isEmpty {
+            dshPluginStatusText = L10n.dshPluginInstalledSummary(in: language)
+        } else {
+            dshPluginStatusText = L10n.dshPluginNeedsRepairSummary(firstReason: reasons.first, in: language)
+        }
+    }
+
+    public func recordDSHPluginInstallResult(success: Bool, detail: String? = nil) {
+        if success {
+            lastDSHPluginInstallFailureNotice = nil
+            let reasons = DSHIntegration.repairReasons(
+                dataDirectoryURL: paths.dataDirectoryURL,
+                dshHomeURL: paths.dshHomeDirectoryURL,
+                dshBinaryURL: dshBinaryURLProvider()
+            )
+            if reasons.isEmpty {
+                dshPluginStatusText = L10n.dshPluginInstallRestartHint(in: language)
+                setBanner(.dshPluginInstalled, isError: false)
+            } else {
+                dshPluginStatusText = L10n.dshPluginNeedsRepairSummary(firstReason: reasons.first, in: language)
+                setBanner(.dshPluginNeedsRepair(reasons.first), isError: false)
+            }
+        } else {
+            let notice: BannerNotice = .dshPluginInstallFailedMessage(detail ?? "")
+            lastDSHPluginInstallFailureNotice = notice
+            dshPluginStatusText = L10n.banner(notice, in: language)
+            setBanner(notice, isError: true)
+        }
+    }
+
+    public func recordDSHPluginInstallFailure(_ error: any Error) {
+        let notice: BannerNotice
+        if let rewindError = error as? RewindError {
+            notice = .dshPluginInstallFailedRewind(rewindError)
+        } else {
+            notice = .dshPluginInstallFailedMessage(error.localizedDescription)
+        }
+        lastDSHPluginInstallFailureNotice = notice
+        dshPluginStatusText = L10n.banner(notice, in: language)
+        setBanner(notice, isError: true)
     }
 
     public func installOrRepairPlugin(sourceCLIBinaryURL: URL? = nil, sourceSidecarURL: URL? = nil) {
@@ -1946,6 +2176,16 @@ public final class AppCoordinator {
                 sessionTitle: title
             )
             return ("antigravity", title, conversationID.backlink, context)
+        }
+        if selection.bundleIdentifier == CapturedSelection.dshBundleIdentifier {
+            let resolution = DSHCaptureContext.resolve(
+                selectedText: selection.text,
+                fallbackTitle: selection.windowTitle,
+                dataDirectoryURL: paths.dataDirectoryURL,
+                now: selection.capturedAt
+            )
+            let sourceURL = resolution.sessionID.map { "dsh-session://\($0)" }
+            return ("dsh", resolution.sourceTitle, sourceURL, resolution.context)
         }
         let browserPrefixes = [
             "com.apple.Safari",

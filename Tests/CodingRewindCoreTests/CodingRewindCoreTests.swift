@@ -1520,11 +1520,13 @@ struct CodingRewindCoreTests {
         let current = try store.submit(prompt: "original prompt", cardIDs: ["original-card"], markSynthesized: true)
         try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .unknown))
         try store.removeRequest(current.requestId)
-        let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")), codexDelivery: { _ in
-            Issue.record("An unknown request must never be dispatched again")
-            return (.unknown, nil)
-        })
-        let other: ConversationHost = host == .codex ? .antigravity : .codex
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [:],
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
+            dshReadinessCheck: { true }
+        )
+        let other: ConversationHost = host == .dsh ? .antigravity : .dsh
         coordinator.conversationHost = other
         coordinator.markSynthesizedOnLaunch = false
         coordinator.checkedCardIDs = ["changed-card"]
@@ -1540,50 +1542,61 @@ struct CodingRewindCoreTests {
         #expect(restored.canEndUnconfirmedConversation)
     }
 
-    @Test("A failed Codex navigation retries the confirmed thread without sending again")
+    @Test("A confirmed DSH prefill clears current without explicit separate open step and allows reopen")
     @MainActor
-    func confirmedCodexNavigationRetry() async throws {
+    func confirmedDSHPrefillAndReopen() async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
-        let store = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
-        let current = try store.submit(prompt: "already sent", cardIDs: ["memo"], markSynthesized: false)
+        let store = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .dsh)
+        let current = try store.submit(prompt: "already filled", cardIDs: ["memo"], markSynthesized: false)
         let threadID = UUID().uuidString
-        let reference = ConversationReference(host: .codex, id: threadID)
+        let reference = ConversationReference(host: .dsh, id: threadID)
         try store.saveReceipt(ConversationReceipt(requestId: current.requestId, state: .succeeded, conversationId: threadID))
         try store.removeRequest(current.requestId)
         var opened: [ConversationReference] = []
-        var coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")), codexDelivery: { _ in
-            Issue.record("Opening a confirmed thread must not send another message")
-            return (.unknown, nil)
-        })
-        coordinator.onOpenConversation = { opened.append($0); return false }
-        #expect(await coordinator.launchChecked(waitSeconds: 0) == .succeeded(reference))
-        #expect(coordinator.isErrorBanner)
-        #expect(try store.current()?.requestId == current.requestId)
-        coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: coordinator.capturer)
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [:],
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
+            dshReadinessCheck: { true }
+        )
         coordinator.onOpenConversation = { opened.append($0); return true }
-        coordinator.reopenConfirmedConversation()
+        #expect(await coordinator.launchChecked(waitSeconds: 0) == .succeeded(reference))
         #expect(!coordinator.isErrorBanner)
         #expect(coordinator.activeConversationHost == nil)
-        #expect(opened == [reference, reference])
         #expect(try store.current() == nil)
+        #expect(coordinator.confirmedConversation == reference)
+        coordinator.reopenConfirmedConversation()
+        #expect(opened == [reference])
     }
 
-    @Test("Codex delivery receives the complete shared prompt and unknown results retain every card")
+    @Test("DSH handoff receives the complete shared prompt and unknown results retain every card")
     @MainActor
-    func codexSubmissionAndUnknown() async throws {
+    func dshSubmissionAndUnknown() async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
         let card = try #require(MemosWireFormat.parseMemo(id: "memo", rawContent: "#rewind/ready #source/chatgpt\n\n> Title: 测试\n> Context: 上下文\n> Source: [出处](https://chatgpt.com/c/example)\n\n汉字 e\u{301}\n```swift\nlet x = 1\n\nprint(x)\n```", createdAt: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970))))
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
-        let deliveries = CodexDeliveryRecorder()
-        let coordinator = try AppCoordinator(paths: paths, environment: [:], capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")), codexDelivery: { prompt in
-            deliveries.record(prompt.prompt)
-            return (.unknown, nil)
-        })
-        coordinator.conversationHost = .codex
+        let deliveries = DSHDeliveryRecorder()
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [:],
+            capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
+            dshReadinessCheck: { true }
+        )
+        coordinator.onWakeHost = { host in
+            guard host == .dsh else { return }
+            let dshStore = coordinator.handoffStore(for: .dsh)
+            if let worker = try? ConversationSidecarWorker.acquireIfUnlocked(store: dshStore) {
+                try? worker.processPending { request in
+                    deliveries.record(request.prompt)
+                    return (.unknown, nil)
+                }
+            }
+        }
+        coordinator.conversationHost = .dsh
         coordinator.checkedCardIDs = [card.id]
         coordinator.markSynthesizedOnLaunch = true
         #expect(await coordinator.launchChecked(waitSeconds: 0) == .failed(state: .unknown))
@@ -1592,7 +1605,7 @@ struct CodingRewindCoreTests {
         #expect(deliveries.prompts == [ConversationPrompt.buildPrompt(for: [card])])
         #expect(coordinator.cards == [card])
         #expect(coordinator.checkedCardIDs == [card.id])
-        #expect(try coordinator.handoffStore(for: .codex).current()?.archiveCardIDs == [card.id])
+        #expect(try coordinator.handoffStore(for: .dsh).current()?.archiveCardIDs == [card.id])
         #expect(try coordinator.handoffStore(for: .antigravity).current() == nil)
         #expect(coordinator.confirmedConversation == nil)
     }
@@ -1622,22 +1635,22 @@ struct CodingRewindCoreTests {
         try antigravityStore.saveReceipt(ConversationReceipt(requestId: staleBeforeUnknown.requestId, state: terminalFailure, updatedAt: baseDate.addingTimeInterval(5)))
         try antigravityStore.removeRequest(staleBeforeUnknown.requestId)
 
-        let codexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
-        let unknownCurrent = try codexStore.submit(prompt: "uncertain codex", cardIDs: ["unknown-card"], markSynthesized: false, now: baseDate.addingTimeInterval(20))
-        try codexStore.saveReceipt(ConversationReceipt(requestId: unknownCurrent.requestId, state: .unknown, updatedAt: baseDate.addingTimeInterval(25)))
-        try codexStore.removeRequest(unknownCurrent.requestId)
+        let dshStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .dsh)
+        let unknownCurrent = try dshStore.submit(prompt: "uncertain dsh", cardIDs: ["unknown-card"], markSynthesized: false, now: baseDate.addingTimeInterval(20))
+        try dshStore.saveReceipt(ConversationReceipt(requestId: unknownCurrent.requestId, state: .unknown, updatedAt: baseDate.addingTimeInterval(25)))
+        try dshStore.removeRequest(unknownCurrent.requestId)
 
         let unknownRestored = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
         #expect(try unknownRestored.handoffStore(for: .antigravity).current() == nil)
-        #expect(unknownRestored.activeConversationHost == .codex)
+        #expect(unknownRestored.activeConversationHost == .dsh)
         #expect(unknownRestored.canEndUnconfirmedConversation)
         #expect(unknownRestored.checkedCardIDs == ["unknown-card"])
         #expect(unknownRestored.bannerMessage != nil)
 
-        try codexStore.clearCurrent(requestId: unknownCurrent.requestId)
-        let staleBeforeSucceeded = try codexStore.submit(prompt: "older codex stale", cardIDs: ["stale-codex"], markSynthesized: false, now: baseDate)
-        try codexStore.saveReceipt(ConversationReceipt(requestId: staleBeforeSucceeded.requestId, state: terminalFailure, updatedAt: baseDate.addingTimeInterval(5)))
-        try codexStore.removeRequest(staleBeforeSucceeded.requestId)
+        try dshStore.clearCurrent(requestId: unknownCurrent.requestId)
+        let staleBeforeSucceeded = try dshStore.submit(prompt: "older dsh stale", cardIDs: ["stale-dsh"], markSynthesized: false, now: baseDate)
+        try dshStore.saveReceipt(ConversationReceipt(requestId: staleBeforeSucceeded.requestId, state: terminalFailure, updatedAt: baseDate.addingTimeInterval(5)))
+        try dshStore.removeRequest(staleBeforeSucceeded.requestId)
 
         let threadID = UUID().uuidString
         let succeededCurrent = try antigravityStore.submit(prompt: "unarchived succeeded", cardIDs: ["ready-card"], markSynthesized: true, now: baseDate.addingTimeInterval(30))
@@ -1645,7 +1658,7 @@ struct CodingRewindCoreTests {
         try antigravityStore.removeRequest(succeededCurrent.requestId)
 
         let succeededRestored = try AppCoordinator(paths: paths, environment: [:], capturer: capturer)
-        #expect(try succeededRestored.handoffStore(for: .codex).current() == nil)
+        #expect(try succeededRestored.handoffStore(for: .dsh).current() == nil)
         #expect(succeededRestored.activeConversationHost == .antigravity)
         #expect(succeededRestored.confirmedConversation == ConversationReference(host: .antigravity, id: threadID))
         #expect(succeededRestored.canEndUnarchivedConversation)
@@ -2312,9 +2325,9 @@ struct CodingRewindCoreTests {
         #expect(sliced.recentTurns.last?.text.hasPrefix("ANCHOR-4-") == true)
     }
 
-    @Test("AppCoordinator recovers crashed Codex handoff on launch, tolerates worker lock contention, and prunes stale terminal failures")
+    @Test("AppCoordinator resumes DSH handoff across launch, tolerates external worker lock, and prunes stale terminal failures")
     @MainActor
-    func codexStartupCrashRecoveryLockContentionAndTerminalFailurePruning() async throws {
+    func dshStartupRecoveryLockContentionAndTerminalFailurePruning() async throws {
         let dir = try makeIsolatedDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let paths = try StoragePaths(
@@ -2328,47 +2341,47 @@ struct CodingRewindCoreTests {
         ))
         try HotCache(fileURL: paths.hotCacheFileURL).saveCards([card])
 
-        let crashedCodexStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .codex)
-        let crashedCurrent = try crashedCodexStore.submit(prompt: "crashed", cardIDs: ["c1"], markSynthesized: false)
-        try crashedCodexStore.saveReceipt(ConversationReceipt(requestId: crashedCurrent.requestId, state: .dispatching))
+        let crashedDSHStore = try ConversationHandoffStore(dataDirectoryURL: paths.dataDirectoryURL, host: .dsh)
+        let crashedCurrent = try crashedDSHStore.submit(prompt: "crashed", cardIDs: ["c1"], markSynthesized: false)
+        try crashedDSHStore.saveReceipt(ConversationReceipt(requestId: crashedCurrent.requestId, state: .dispatching))
+        _ = try ConversationSidecarWorker.acquireIfUnlocked(store: crashedDSHStore)
 
         let relaunched = try AppCoordinator(
             paths: paths,
             environment: [StoragePaths.qaEnvironmentKey: "1"],
             capturer: StubCapturer(selection: CapturedSelection(text: "unused", bundleIdentifier: "test", appName: "Test")),
-            codexDelivery: { _ in (.succeeded, UUID().uuidString) }
+            dshReadinessCheck: { true }
         )
-        #expect(relaunched.activeConversationHost == .codex)
+        #expect(relaunched.activeConversationHost == .dsh)
         #expect(relaunched.canEndUnconfirmedConversation)
-        #expect(try crashedCodexStore.receipt(for: crashedCurrent.requestId)?.state == .unknown)
+        #expect(try crashedDSHStore.receipt(for: crashedCurrent.requestId)?.state == .unknown)
         relaunched.endUnconfirmedConversation()
-        #expect(try crashedCodexStore.current() == nil)
+        #expect(try crashedDSHStore.current() == nil)
 
         let antigravityStore = relaunched.handoffStore(for: .antigravity)
         let earlierNow = Date().addingTimeInterval(-10)
         let staleAntigravity = try antigravityStore.submit(prompt: "expired-ag", cardIDs: ["c1"], markSynthesized: false, now: earlierNow)
         try antigravityStore.saveReceipt(ConversationReceipt(requestId: staleAntigravity.requestId, state: .expired))
 
-        let liveCodex = try crashedCodexStore.submit(prompt: "live-codex", cardIDs: ["c1"], markSynthesized: false, now: Date())
-        let heldWorker = try #require(try ConversationSidecarWorker.acquireIfUnlocked(store: crashedCodexStore))
+        let liveDSH = try crashedDSHStore.submit(prompt: "live-dsh", cardIDs: ["c1"], markSynthesized: false, now: Date())
+        let heldWorker = try #require(try ConversationSidecarWorker.acquireIfUnlocked(store: crashedDSHStore))
         let expectedThreadID = UUID().uuidString.lowercased()
-        relaunched.onOpenConversation = { $0.host == .codex && $0.id == expectedThreadID }
 
         let writerTask = Task.detached {
             try? await Task.sleep(for: .milliseconds(80))
-            try? crashedCodexStore.saveReceipt(ConversationReceipt(
-                requestId: liveCodex.requestId,
+            try? crashedDSHStore.saveReceipt(ConversationReceipt(
+                requestId: liveDSH.requestId,
                 state: .succeeded,
                 conversationId: expectedThreadID
             ))
             _ = heldWorker
         }
-        let outcome = await relaunched.launchChecked(in: .codex, waitSeconds: 3)
+        let outcome = await relaunched.launchChecked(in: .dsh, waitSeconds: 3)
         await writerTask.value
 
-        #expect(outcome == .succeeded(ConversationReference(host: .codex, id: expectedThreadID)))
+        #expect(outcome == .succeeded(ConversationReference(host: .dsh, id: expectedThreadID)))
         #expect(try antigravityStore.current() == nil)
-        #expect(try crashedCodexStore.current() == nil)
+        #expect(try crashedDSHStore.current() == nil)
     }
 
     @Test("MemosClient.deleteMemo handles 200, 404, 500, network failure, and invalid IDs")
@@ -2738,10 +2751,17 @@ struct CodingRewindCoreTests {
             environment: env,
             memosClient: MemosClient(session: makeMockSession()),
             capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
-            codexDelivery: { _ in (.unknown, nil) }
+            dshReadinessCheck: { true }
         )
+        coordinator.onWakeHost = { host in
+            guard host == .dsh else { return }
+            let dshStore = coordinator.handoffStore(for: .dsh)
+            if let worker = try? ConversationSidecarWorker.acquireIfUnlocked(store: dshStore) {
+                try? worker.processPending { _ in (.unknown, nil) }
+            }
+        }
         coordinator.checkedCardIDs = ["c1"]
-        #expect(await coordinator.launchChecked(in: .codex, waitSeconds: 0) == .failed(state: .unknown))
+        #expect(await coordinator.launchChecked(in: .dsh, waitSeconds: 0) == .failed(state: .unknown))
         #expect(coordinator.isCardLocked("c1"))
         #expect(!coordinator.isCardLocked("c2"))
 
@@ -2760,7 +2780,7 @@ struct CodingRewindCoreTests {
             environment: env,
             memosClient: MemosClient(session: makeMockSession()),
             capturer: StubCapturer(selection: CapturedSelection(text: "", bundleIdentifier: "fixture", appName: "Fixture")),
-            codexDelivery: { _ in (.unknown, nil) }
+            dshReadinessCheck: { true }
         )
         #expect(restored.lockedConversationCardIDs == Set(["c1"]))
 
@@ -2771,7 +2791,7 @@ struct CodingRewindCoreTests {
         #expect(restored.lockedConversationCardIDs.isEmpty)
         #expect(!restored.isCardLocked("c1"))
 
-        let store = restored.handoffStore(for: .codex)
+        let store = restored.handoffStore(for: .dsh)
         let pending = try store.submit(prompt: "partial", cardIDs: ["c1", "c2"], markSynthesized: true)
         try store.recordArchivedCard("c2", requestId: pending.requestId)
         try store.saveReceipt(ConversationReceipt(requestId: pending.requestId, state: .succeeded, conversationId: UUID().uuidString))
@@ -3649,7 +3669,7 @@ private struct ClosureSelectionCapturer: SelectionCapturing {
     }
 }
 
-private final class CodexDeliveryRecorder: @unchecked Sendable {
+private final class DSHDeliveryRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [String] = []
     var prompts: [String] { lock.withLock { values } }

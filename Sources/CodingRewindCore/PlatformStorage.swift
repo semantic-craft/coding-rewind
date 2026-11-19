@@ -53,10 +53,12 @@ public struct StoragePaths: Equatable, Sendable {
     public static let memosTokenEnvironmentKey = "CODING_REWIND_MEMOS_TOKEN"
     public static let qaEnvironmentKey = "CODING_REWIND_QA"
     public static let antigravityConfigEnvironmentKey = "CODING_REWIND_ANTIGRAVITY_CONFIG"
+    public static let dshHomeEnvironmentKey = "CODING_REWIND_DSH_HOME"
     public static let aiAccessEnvironmentKey = "CODING_REWIND_AI_ACCESS"
 
     public let dataDirectoryURL: URL
     public let antigravityConfigDirectoryURL: URL
+    public let dshHomeDirectoryURL: URL
 
     public var configFileURL: URL { dataDirectoryURL.appendingPathComponent("config.json", isDirectory: false) }
     public var outboxFileURL: URL { dataDirectoryURL.appendingPathComponent("outbox.jsonl", isDirectory: false) }
@@ -65,17 +67,33 @@ public struct StoragePaths: Equatable, Sendable {
     public var binDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("bin", isDirectory: true) }
     public var developerCredentialsFileURL: URL { dataDirectoryURL.appendingPathComponent("DeveloperCredentials.plist", isDirectory: false) }
     public var updatesDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("updates", isDirectory: true) }
+    public var dshPluginStagingDirectoryURL: URL {
+        dataDirectoryURL
+            .appendingPathComponent("dsh-plugin", isDirectory: true)
+            .appendingPathComponent("coding-rewind-dsh", isDirectory: true)
+    }
+    public var dshActiveSessionFileURL: URL {
+        dataDirectoryURL.appendingPathComponent("dsh-active-session.json", isDirectory: false)
+    }
 
-    public init(dataDirectoryURL: URL, antigravityConfigDirectoryURL: URL? = nil) throws {
+    public init(
+        dataDirectoryURL: URL,
+        antigravityConfigDirectoryURL: URL? = nil,
+        dshHomeDirectoryURL: URL? = nil
+    ) throws {
         let fm = FileManager.default
         let resolvedData = dataDirectoryURL.standardizedFileURL
         let defaultGemini = fm.homeDirectoryForCurrentUser
             .appendingPathComponent(".gemini", isDirectory: true)
             .appendingPathComponent("config", isDirectory: true)
+        let defaultDSH = fm.homeDirectoryForCurrentUser
+            .appendingPathComponent(".dsh", isDirectory: true)
         let resolvedConfig = (antigravityConfigDirectoryURL ?? defaultGemini).standardizedFileURL
+        let resolvedDSHHome = (dshHomeDirectoryURL ?? defaultDSH).standardizedFileURL
         try fm.createDirectory(at: resolvedData, withIntermediateDirectories: true)
         self.dataDirectoryURL = resolvedData
         self.antigravityConfigDirectoryURL = resolvedConfig
+        self.dshHomeDirectoryURL = resolvedDSHHome
     }
 
     public static func resolve(
@@ -103,7 +121,20 @@ public struct StoragePaths: Equatable, Sendable {
         } else {
             agConfigURL = nil
         }
-        return try StoragePaths(dataDirectoryURL: dataURL, antigravityConfigDirectoryURL: agConfigURL)
+
+        let dshHomeURL: URL?
+        if let rawDSH = environment[dshHomeEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !rawDSH.isEmpty {
+            dshHomeURL = URL(fileURLWithPath: (rawDSH as NSString).expandingTildeInPath, isDirectory: true)
+        } else {
+            dshHomeURL = nil
+        }
+
+        return try StoragePaths(
+            dataDirectoryURL: dataURL,
+            antigravityConfigDirectoryURL: agConfigURL,
+            dshHomeDirectoryURL: dshHomeURL
+        )
     }
 
     private struct DiskConfig: Codable {

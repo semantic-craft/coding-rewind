@@ -58,11 +58,11 @@
 
 **目标**
 
-打通从毛玻璃浮窗与单二进制 `coding-rewind`（CLI 及 7 工具领域 MCP）到 **Google Antigravity App 2.x**、Codex 等宿主的推演追问、对照写稿与受控结论回写闭环，全链路凭据经钥匙串隔离保护，物理删除能力严格保留给人工操作。
+打通从毛玻璃浮窗与单二进制 `coding-rewind`（CLI 及 7 工具领域 MCP）到 **Google Antigravity App 2.x**、**DSH（DeepSeek Harness）** 等宿主的推演追问、对照写稿与受控结论回写闭环，全链路凭据经钥匙串隔离保护，物理删除能力严格保留给人工操作。
 
 **可执行验收**
 
-1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端为每张卡片注入标识（`- 卡片 ID` / `- Clip ID`）、脉络抬头、原文与回链，并在 `ai_access_mode` 为 `read_write` 时附带调用 `append_snippet_note` 或 `create_snippet` 回写结论的引导（`read_only` 时省略该引导），经官方 sidecar 调用 `agentapi new-conversation`（或经 Codex 官方队列链路）创建新对话，以成功回执和真实桌面会话共同验收。
+1. 在浮窗勾选多张卡片按下 `⌘Return`，客户端为每张卡片注入标识（`- 卡片 ID` / `- Clip ID`）、脉络抬头、原文与回链，并在 `ai_access_mode` 为 `read_write` 时附带调用 `append_snippet_note` 或 `create_snippet` 回写结论的引导（`read_only` 时省略该引导），在 Antigravity 经官方 sidecar 调用 `agentapi new-conversation` 创建新对话，或在 DSH 经零依赖插件预填至当前/最近工作区空白新会话输入框，以成功回执和真实桌面会话共同验收。
 2. 插件安装器将辅助二进制 `coding-rewind-sidecar` 与 `coding-rewind` 拷入 `~/Library/Application Support/CodingRewind/bin/`，生成的 `plugin.json` 中 `suggestedPrompts` 为纯字符串数组，sidecar 使用官方配置，`skills/rewind/SKILL.md` 准确描述全部 7 个 MCP 领域工具、只读权限边界与按卡片 ID 回写闭环；升级移除本插件生成的旧快照 Hook，保留不属于该处理器的配置。
 3. 桌面浮窗支持单条或批量独立归档（`⌘E`）与物理删除（`⌘⌫` 展开底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；单二进制 `coding-rewind` 提供 `list`、`search`、`get`、`create`、`update`、`note`、`archive`、`delete <id>` 八个终端子命令，并在 `CODING_REWIND_QA=1` 下严格隔离至 `com.codingrewind.memos.qa` 钥匙串服务且忽略开发凭据。内嵌 `coding-rewind mcp` 不落盘明文令牌即可向 Antigravity `/rewind` 与其他 MCP 宿主暴露 `list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`、`create_snippet`、`update_snippet_metadata`、`append_snippet_note` 七个领域工具：`update_snippet_metadata` 100% 逐字节保留选中原文，`append_snippet_note` 使用 `<!-- rewind-note-v1 -->` 评论与 `<!-- rewind-context-v1 -->` 严格隔离，`read_only` 模式下立即拒绝全部 4 个写入工具（保留 3 个只读工具），且物理删除（`delete`）严格限定为桌面 HUD 与终端 CLI 的人工操作，绝不通过 MCP 暴露。
 4. 运行 `./scripts/check` 与 `./scripts/build-app-bundle.sh` 全部退出码为 0。

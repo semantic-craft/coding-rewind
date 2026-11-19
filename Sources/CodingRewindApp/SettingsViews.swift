@@ -516,6 +516,22 @@ public struct SettingsRootView: View {
                         onCommand(.installOrRepairPlugin)
                     }
                     .rewindButtonRole(.secondary)
+                    .accessibilityIdentifier("settings.antigravityInstallOrRepair")
+                }
+            }
+            SettingsSection(
+                AppStrings.dshPluginSectionTitle(in: lang),
+                subtitle: "DeepSeek Harness"
+            ) {
+                SettingsRow(
+                    AppStrings.pluginStatusRowTitle(in: lang),
+                    help: coordinator.dshPluginStatusText
+                ) {
+                    Button(AppStrings.installOrRepairShortButton(in: lang)) {
+                        onCommand(.installOrRepairDSHPlugin)
+                    }
+                    .rewindButtonRole(.secondary)
+                    .accessibilityIdentifier("settings.dshInstallOrRepair")
                 }
             }
             SettingsSection(AppStrings.aiAccessSectionTitle(in: lang)) {
@@ -784,17 +800,26 @@ enum AppAboutMetadata {
 
 private struct SettingsSection<Content: View>: View {
     let title: String
+    let subtitle: String?
     @ViewBuilder let content: () -> Content
 
-    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+    init(_ title: String, subtitle: String? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.title = title
+        self.subtitle = subtitle
         self.content = content
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title)
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.headline)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
             content()
         }
     }

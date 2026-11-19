@@ -35,6 +35,8 @@ extension AppStrings {
         case (.web, .en): return "Open Web"
         case (.antigravitySession, .zhHans): return "复制会话 ID"
         case (.antigravitySession, .en): return "Copy Session ID"
+        case (.dshSession, .zhHans): return "打开原对话"
+        case (.dshSession, .en): return "Open Chat"
         }
     }
 
@@ -42,6 +44,20 @@ extension AppStrings {
         switch language {
         case .zhHans: return "唤醒 Antigravity"
         case .en: return "Wake Antigravity"
+        }
+    }
+
+    static func wakeDSHButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "唤醒 DSH"
+        case .en: return "Wake DSH"
+        }
+    }
+
+    static func copySessionIDButton(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "复制会话 ID"
+        case .en: return "Copy Session ID"
         }
     }
 
@@ -192,24 +208,38 @@ extension AppStrings {
         }
     }
 
-    static func draftCopyAndWakeHelp(hostName: String, in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "复制修改后的提示词并唤醒 \(hostName)，便于手动粘贴发送 (⌘↵)"
-        case .en: return "Copy edited draft and wake \(hostName) to paste and send manually (⌘↵)"
+    static func draftCopyAndWakeHelp(for host: ConversationHost, in language: AppLanguage) -> String {
+        switch (host, language) {
+        case (.dsh, .zhHans):
+            return "复制修改后的提示词并唤醒 DSH，便于手动粘贴发送"
+        case (.dsh, .en):
+            return "Copy edited draft and wake DSH to paste manually"
+        case (.antigravity, .zhHans):
+            return "复制修改后的提示词并唤醒 \(host.displayName)，便于手动粘贴发送 (⌘↵)"
+        case (.antigravity, .en):
+            return "Copy edited draft and wake \(host.displayName) to paste and send manually (⌘↵)"
         }
     }
 
-    static func draftSendDirectButton(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "直接新建对话"
-        case .en: return "Send to New Chat"
+    static func draftSendDirectButton(for host: ConversationHost, in language: AppLanguage) -> String {
+        switch (host, language) {
+        case (.dsh, .zhHans): return "填入 DSH 新会话"
+        case (.dsh, .en): return "Fill New DSH Chat"
+        case (.antigravity, .zhHans): return "直接新建对话"
+        case (.antigravity, .en): return "Send to New Chat"
         }
     }
 
-    static func draftSendDirectHelp(hostName: String, in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "使用当前草稿在 \(hostName) 中直接创建并发送新对话"
-        case .en: return "Directly create and send a new chat in \(hostName) using this draft"
+    static func draftSendDirectHelp(for host: ConversationHost, in language: AppLanguage) -> String {
+        switch (host, language) {
+        case (.dsh, .zhHans):
+            return "在 DSH 中打开空白新会话并预填草稿，不自动发送 (⌘↵)"
+        case (.dsh, .en):
+            return "Open a new blank DSH chat and prefill the draft without sending automatically (⌘↵)"
+        case (.antigravity, .zhHans):
+            return "使用当前草稿在 \(host.displayName) 中直接创建并发送新对话"
+        case (.antigravity, .en):
+            return "Directly create and send a new chat in \(host.displayName) using this draft"
         }
     }
 }
