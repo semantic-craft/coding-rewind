@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "fb5cb142c2ae5b67956b6936943d1f1e793e396a",
+    "main": "7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0",
     "open_pulls": [],
     "pulls": [
       {
@@ -379,9 +379,24 @@
         "merged": true,
         "number": 48,
         "state": "closed"
+      },
+      {
+        "base": "df38ca454fefcccad9a9f3cda484b5b68dc190b5",
+        "head": "eefb65ea0320df8b1a6b05fa55966eb51d04e078",
+        "merge_commit": "7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0",
+        "merged": true,
+        "number": 49,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 451728201,
+        "prerelease": false,
+        "published_at": "2026-11-19T18:06:42Z",
+        "tag": "v0.7.0"
+      },
       {
         "draft": false,
         "id": 448657754,
@@ -444,7 +459,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-19T17:50:59.069021Z",
+  "observed_at": "2026-11-19T18:08:50.042171Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -461,6 +476,69 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "v0-7-0-notarized-release",
+      "title": "v0.7.0 公证发版与开发残留清理",
+      "items": [
+        {
+          "id": "v0-7-0-dev-and-tcc-cleanup",
+          "title": "清理 QA 与旧版 TCC、LaunchServices 及开发目录残留",
+          "status": "done",
+          "summary": "按先 tccutil reset → 再 lsregister -u → 最后删目录顺序重置 dev.codingrewind.app.qa 与旧版 dev.codingrewind.stash 的全部 TCC 授权并反注册；删除 ~/Library/HTTPStorages/dev.codingrewind.app.qa、已退役的 ~/Library/Application Support/CodingRewind/codex-handoff、.build/native-context-tests 与 .build/release-artifacts，并清理失效远端分支引用。核验 lsregister -dump 仅保留 /Applications/CodingRewind.app（dev.codingrewind.app），日常生产配置、钥匙串与 dev.codingrewind.memos-tunnel.plist 均保持完整。",
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "cleanup-audit-2026-11-20",
+              "note": "tccutil reset All dev.codingrewind.app.qa 与 dev.codingrewind.stash 均返回成功；lsregister -dump 仅余 /Applications/CodingRewind.app。"
+            }
+          ],
+          "next": "后续 QA 验证继续经脚本退出钩子自动回收，不在本机留下孤儿 TCC 或 LaunchServices 条目。"
+        },
+        {
+          "id": "v0-7-0-release-and-notarization",
+          "title": "v0.7.0（build 10）全仓升版、Apple 公证与 GitHub Release 发布",
+          "status": "done",
+          "summary": "PR #49 将应用、CLI/MCP、Antigravity 插件与 Chrome 扩展版本同步升至 0.7.0（build 10 / 0.7.0.0）并清理 README 残留旧表述，./scripts/check 七道门禁全部通过后合入 main（7ea1a18）并打标 v0.7.0。经 ./scripts/package-release.sh --notarize（profile xw-notary，submission_id 064ffcc9-7df9-4b5b-b879-89f4de51953c）通过 Apple 公证、staple 与 spctl Gatekeeper 校验，发布 GitHub Release v0.7.0 及全部三项校验和产物。",
+          "evidence": [
+            {
+              "kind": "pull",
+              "ref": 49,
+              "note": "全仓版本升至 v0.7.0（build 10）并同步 README 与版本测试断言，squash 合入 main。"
+            },
+            {
+              "kind": "commit",
+              "ref": "7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0",
+              "note": "v0.7.0 标签指向提交 7ea1a18。"
+            },
+            {
+              "kind": "release",
+              "ref": "v0.7.0",
+              "note": "已发布 CodingRewind-v0.7.0-macos-arm64.zip（SHA-256 c5d97653...）、CodingRewind-WebClipper-v0.7.0.zip（SHA-256 5f7fdd20...）与 SHA256SUMS.txt。"
+            }
+          ],
+          "next": "桌面端已直接安装公证包；Chrome 扩展需在本机解压覆盖原扩展目录并在 chrome://extensions 点击重新加载。"
+        },
+        {
+          "id": "v0-7-0-notarized-local-install",
+          "title": "本机 /Applications/CodingRewind.app 公证版替换与运行期核验",
+          "status": "done",
+          "summary": "由公证压缩包 CodingRewind-v0.7.0-macos-arm64.zip 完整替换安装 /Applications/CodingRewind.app（主程序 SHA-256 7e6fb70493d464b51c6adfd3dcbee582405ded26156e090c08148b5c2247aac1，0.7.0 build 10）。实测 codesign --verify --deep --strict、xcrun stapler validate 与 spctl（Notarized Developer ID）全部通过；后台启动 PID 66882 后辅助工具 coding-rewind 自动刷新为 0.7.0，verify-app-presence.swift visible 通过，状态栏 AXHelp 为空，layer=103 提示窗口数为 0。",
+          "evidence": [
+            {
+              "kind": "release",
+              "ref": "v0.7.0",
+              "note": "安装来源为已发布的公证归档 CodingRewind-v0.7.0-macos-arm64.zip。"
+            },
+            {
+              "kind": "note",
+              "ref": "notarized-live-check-2026-11-20",
+              "note": "PID 66882 实机核验：spctl source=Notarized Developer ID、stapler validate PASS、installed CLI 0.7.0、AXHelp=-25212 (nil)、layer=103 窗口数为 0。"
+            }
+          ],
+          "next": "如有需要，用 CodingRewind-WebClipper-v0.7.0.zip 覆盖更新本机 Chrome 解包扩展并点击重新加载。"
+        }
+      ]
+    },
     {
       "id": "status-menu-and-tooltip-cleanup",
       "items": [
@@ -3089,7 +3167,8 @@
       45,
       46,
       47,
-      48
+      48,
+      49
     ]
   }
 }

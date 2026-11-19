@@ -3,8 +3,22 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-19T17:50:59.069021Z</p>
-<p>Main: <code>main: fb5cb142c2ae5b67956b6936943d1f1e793e396a</code></p>
+<p>Observed: 2026-11-19T18:08:50.042171Z</p>
+<p>Main: <code>main: 7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0</code></p>
+<section id="v0-7-0-notarized-release"><h2>v0.7.0 公证发版与开发残留清理</h2>
+<article id="v0-7-0-dev-and-tcc-cleanup"><h3>清理 QA 与旧版 TCC、LaunchServices 及开发目录残留</h3><span class="badge">done</span><p>按先 tccutil reset → 再 lsregister -u → 最后删目录顺序重置 dev.codingrewind.app.qa 与旧版 dev.codingrewind.stash 的全部 TCC 授权并反注册；删除 ~/Library/HTTPStorages/dev.codingrewind.app.qa、已退役的 ~/Library/Application Support/CodingRewind/codex-handoff、.build/native-context-tests 与 .build/release-artifacts，并清理失效远端分支引用。核验 lsregister -dump 仅保留 /Applications/CodingRewind.app（dev.codingrewind.app），日常生产配置、钥匙串与 dev.codingrewind.memos-tunnel.plist 均保持完整。</p><ul>
+<li>note cleanup-audit-2026-11-20: tccutil reset All dev.codingrewind.app.qa 与 dev.codingrewind.stash 均返回成功；lsregister -dump 仅余 /Applications/CodingRewind.app。</li>
+</ul><p>Next: 后续 QA 验证继续经脚本退出钩子自动回收，不在本机留下孤儿 TCC 或 LaunchServices 条目。</p></article>
+<article id="v0-7-0-release-and-notarization"><h3>v0.7.0（build 10）全仓升版、Apple 公证与 GitHub Release 发布</h3><span class="badge">done</span><p>PR #49 将应用、CLI/MCP、Antigravity 插件与 Chrome 扩展版本同步升至 0.7.0（build 10 / 0.7.0.0）并清理 README 残留旧表述，./scripts/check 七道门禁全部通过后合入 main（7ea1a18）并打标 v0.7.0。经 ./scripts/package-release.sh --notarize（profile xw-notary，submission_id 064ffcc9-7df9-4b5b-b879-89f4de51953c）通过 Apple 公证、staple 与 spctl Gatekeeper 校验，发布 GitHub Release v0.7.0 及全部三项校验和产物。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/49">pull 49: 全仓版本升至 v0.7.0（build 10）并同步 README 与版本测试断言，squash 合入 main。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/commit/7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0">commit 7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0: v0.7.0 标签指向提交 7ea1a18。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.7.0">release v0.7.0: 已发布 CodingRewind-v0.7.0-macos-arm64.zip（SHA-256 c5d97653...）、CodingRewind-WebClipper-v0.7.0.zip（SHA-256 5f7fdd20...）与 SHA256SUMS.txt。</a></li>
+</ul><p>Next: 桌面端已直接安装公证包；Chrome 扩展需在本机解压覆盖原扩展目录并在 chrome://extensions 点击重新加载。</p></article>
+<article id="v0-7-0-notarized-local-install"><h3>本机 /Applications/CodingRewind.app 公证版替换与运行期核验</h3><span class="badge">done</span><p>由公证压缩包 CodingRewind-v0.7.0-macos-arm64.zip 完整替换安装 /Applications/CodingRewind.app（主程序 SHA-256 7e6fb70493d464b51c6adfd3dcbee582405ded26156e090c08148b5c2247aac1，0.7.0 build 10）。实测 codesign --verify --deep --strict、xcrun stapler validate 与 spctl（Notarized Developer ID）全部通过；后台启动 PID 66882 后辅助工具 coding-rewind 自动刷新为 0.7.0，verify-app-presence.swift visible 通过，状态栏 AXHelp 为空，layer=103 提示窗口数为 0。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.7.0">release v0.7.0: 安装来源为已发布的公证归档 CodingRewind-v0.7.0-macos-arm64.zip。</a></li>
+<li>note notarized-live-check-2026-11-20: PID 66882 实机核验：spctl source=Notarized Developer ID、stapler validate PASS、installed CLI 0.7.0、AXHelp=-25212 (nil)、layer=103 窗口数为 0。</li>
+</ul><p>Next: 如有需要，用 CodingRewind-WebClipper-v0.7.0.zip 覆盖更新本机 Chrome 解包扩展并点击重新加载。</p></article>
+</section>
 <section id="status-menu-and-tooltip-cleanup"><h2>状态栏悬浮提示根治与双菜单栏精简</h2>
 <article id="status-menu-tooltip-fix-and-streamline"><h3>移除状态栏原生 toolTip 并精简双菜单栏与条件告警模型</h3><span class="badge">done</span><p>删除 StatusItemController 的 button.toolTip 与冗余 updateLanguage，保留 setAccessibilityLabel(&quot;Coding Rewind&quot;) 根治 macOS 27 下 NSToolTipWindow 滞留 Dock 上方问题；在 MenuStatusSnapshot 引入 AttentionIssue 枚举，状态栏菜单移除 3 项开聊入口与 3 个常驻状态勾，本机模式隐藏立即同步与全部历史，仅在辅助功能未授权或活跃宿主插件异常时条件展示 1 条跳转设置页的告警项，并将 Memos 入口改名为“查看全部历史（Memos）”；主菜单同步移除重复插件项与分宿主开聊项。./scripts/check 七道门禁与 check_swiftui_perf.py 全部通过，PR #48 已合并至 main。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/48">pull 48: 移除状态栏原生 toolTip、新增 AttentionIssue 领域模型、精简状态栏菜单与主菜单并补齐行为回归，squash 合入 main。</a></li>
@@ -573,6 +587,7 @@
 </section>
 <section><h2>Open pull requests</h2><ul>
 </ul><h2>Recent releases</h2><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.7.0">v0.7.0</a> 2026-11-19T18:06:42Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.6.0">v0.6.0</a> 2026-11-17T13:17:46Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.5.0">v0.5.0</a> 2026-11-16T10:13:02Z (draft: False, prerelease: False)</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/releases/tag/v0.4.0">v0.4.0</a> 2026-11-15T23:55:24Z (draft: False, prerelease: False)</li>
