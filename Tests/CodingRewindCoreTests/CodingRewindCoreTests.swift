@@ -1348,7 +1348,12 @@ struct CodingRewindCoreTests {
 
         let dataDir = dir.appendingPathComponent("Data", isDirectory: true)
         let configDir = dir.appendingPathComponent("GeminiConfig", isDirectory: true)
-        let paths = try StoragePaths(dataDirectoryURL: dataDir, antigravityConfigDirectoryURL: configDir)
+        let dshHomeDir = dir.appendingPathComponent("DSHHome", isDirectory: true)
+        let paths = try StoragePaths(
+            dataDirectoryURL: dataDir,
+            antigravityConfigDirectoryURL: configDir,
+            dshHomeDirectoryURL: dshHomeDir
+        )
 
         let selection = CapturedSelection(
             text: "First   line\n\nSecond\tline with extra spaces that exceeds thirty-six characters easily",
@@ -1361,7 +1366,8 @@ struct CodingRewindCoreTests {
             paths: paths,
             environment: [StoragePaths.qaEnvironmentKey: "1"],
             memosClient: MemosClient(session: makeMockSession()),
-            capturer: StubCapturer(selection: selection)
+            capturer: StubCapturer(selection: selection),
+            dshBinaryURLProvider: { nil }
         )
 
         let initialSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: false)
@@ -1370,12 +1376,14 @@ struct CodingRewindCoreTests {
         #expect(initialSnap.checkedCardCount == 0)
         #expect(initialSnap.pendingOutboxCount == 0)
         #expect(initialSnap.isPluginReady == false)
+        #expect(initialSnap.isDSHPluginReady == false)
         #expect(initialSnap.isAccessibilityTrusted == false)
         #expect(initialSnap.recentCards.isEmpty)
         #expect(initialSnap.headerTitle == "Coding Rewind · 0 条片段")
-        #expect(initialSnap.headerSubtitle == "Memos 尚未设置，可先保存到本机 · 插件需要安装或修复")
+        #expect(initialSnap.headerSubtitle == "仅保存在本机（未配置 Memos）")
         #expect(initialSnap.toggleHUDTitle == "显示片段浮窗")
-        #expect(initialSnap.launchTitle == "在所选应用中开始对话")
+        #expect(initialSnap.attentionIssues == [.accessibilityPermission, .activeHostPlugin(.antigravity)])
+        #expect(initialSnap.attentionTitle == "需要处理：辅助功能权限与 Antigravity 插件…")
 
         await coord.captureSelection()
         let pendingSnap = coord.menuStatusSnapshot(isHUDVisible: true, isAccessibilityTrusted: true)
@@ -1384,8 +1392,10 @@ struct CodingRewindCoreTests {
         #expect(pendingSnap.pendingOutboxCount == 1)
         #expect(pendingSnap.isAccessibilityTrusted == true)
         #expect(pendingSnap.headerTitle == "Coding Rewind · 1 条片段（待同步 1 条）")
+        #expect(pendingSnap.headerSubtitle == "仅保存在本机（未配置 Memos）")
         #expect(pendingSnap.toggleHUDTitle == "隐藏片段浮窗")
-        #expect(pendingSnap.launchTitle == "在所选应用中开始对话（已选 1 条）")
+        #expect(pendingSnap.attentionIssues == [.activeHostPlugin(.antigravity)])
+        #expect(pendingSnap.attentionTitle == "需要处理：Antigravity 插件待安装或修复…")
         #expect(pendingSnap.recentCards.count == 1)
         #expect(pendingSnap.recentCards[0].sourcePlatform == "gemini")
         #expect(pendingSnap.recentCards[0].isChecked == true)
@@ -1399,6 +1409,7 @@ struct CodingRewindCoreTests {
                 baseURL: try #require(URL(string: "https://memos.example.com:443"))
             )
         )
+        #expect(defaultPortSnap.headerSubtitle == "Memos 已配置（memos.example.com）")
 
         try paths.saveMemosURLString("http://localhost:5230")
         let fakeSidecar = dir.appendingPathComponent("coding-rewind-sidecar")
@@ -1423,7 +1434,13 @@ struct CodingRewindCoreTests {
         }
         try coord.hotCache.saveCards(menuCards)
         try FileManager.default.removeItem(at: paths.outboxFileURL)
-        coord = try AppCoordinator(paths: paths, environment: coord.environment, memosClient: coord.memosClient, capturer: coord.capturer)
+        coord = try AppCoordinator(
+            paths: paths,
+            environment: coord.environment,
+            memosClient: coord.memosClient,
+            capturer: coord.capturer,
+            dshBinaryURLProvider: { nil }
+        )
         coord.focusAndCheckCard(id: "nonexistent-id")
         #expect(coord.checkedCardIDs.isEmpty)
 
@@ -1439,12 +1456,28 @@ struct CodingRewindCoreTests {
             )
         )
         #expect(customPortSnap.isPluginReady == true)
-        #expect(customPortSnap.headerSubtitle == "Memos 已配置 localhost:5230 · 插件已安装")
+        #expect(customPortSnap.isDSHPluginReady == false)
+        #expect(customPortSnap.headerSubtitle == "Memos 已配置（localhost:5230）")
+        #expect(customPortSnap.attentionIssues.isEmpty)
+        #expect(customPortSnap.attentionTitle == nil)
         #expect(customPortSnap.recentCards.count == 5)
         #expect(customPortSnap.recentCards[0].titlePreview == "Multi line Card One")
         #expect(customPortSnap.recentCards[2].id == "c-3")
         #expect(customPortSnap.recentCards[2].isChecked == true)
-        #expect(customPortSnap.launchTitle == "在所选应用中开始对话（已选 1 条）")
+
+        let axOnlySnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: false)
+        #expect(axOnlySnap.attentionIssues == [.accessibilityPermission])
+        #expect(axOnlySnap.attentionTitle == "需要处理：辅助功能权限未授权…")
+
+        coord.conversationHost = .dsh
+        let dshPluginOnlySnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
+        #expect(dshPluginOnlySnap.conversationHost == .dsh)
+        #expect(dshPluginOnlySnap.attentionIssues == [.activeHostPlugin(.dsh)])
+        #expect(dshPluginOnlySnap.attentionTitle == "需要处理：DSH 插件待安装或修复…")
+
+        let dshBothIssuesSnap = coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: false)
+        #expect(dshBothIssuesSnap.attentionIssues == [.accessibilityPermission, .activeHostPlugin(.dsh)])
+        #expect(dshBothIssuesSnap.attentionTitle == "需要处理：辅助功能权限与 DSH 插件…")
     }
     @Test("Sidecar installation preserves host project assignment and refuses unknown config shapes")
     func sidecarInstallationConfigBoundaries() throws {

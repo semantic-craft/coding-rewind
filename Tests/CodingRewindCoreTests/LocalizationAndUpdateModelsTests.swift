@@ -242,11 +242,43 @@ struct LocalizationAndUpdateModelsTests {
         )
         #expect(zhSnapshot.headerTitle != enSnapshot.headerTitle)
         #expect(enSnapshot.headerTitle.contains("1 clip (2 pending sync)"))
-        #expect(zhSnapshot.headerSubtitle != enSnapshot.headerSubtitle)
+        #expect(zhSnapshot.headerSubtitle == "Memos 已配置（memos.local）")
+        #expect(enSnapshot.headerSubtitle == "Memos configured (memos.local)")
+        #expect(!zhSnapshot.headerSubtitle.contains("已连接"))
+        #expect(!enSnapshot.headerSubtitle.contains("Connected"))
+        #expect(L10n.menuHeaderSubtitle(connection: .unconfigured, in: .zhHans) == "仅保存在本机（未配置 Memos）")
+        #expect(L10n.menuHeaderSubtitle(connection: .unconfigured, in: .en) == "Local only (Memos not configured)")
         #expect(zhSnapshot.toggleHUDTitle == "隐藏片段浮窗")
         #expect(enSnapshot.toggleHUDTitle == "Hide Clips HUD")
-        #expect(zhSnapshot.launchTitle.contains("已选 1 条"))
-        #expect(enSnapshot.launchTitle.contains("1 selected"))
+        #expect(zhSnapshot.attentionIssues.isEmpty)
+        #expect(zhSnapshot.attentionTitle == nil)
+        #expect(enSnapshot.attentionIssues.isEmpty)
+        #expect(enSnapshot.attentionTitle == nil)
+
+        #expect(L10n.menuAttentionTitle(issues: [], in: .zhHans) == nil)
+        #expect(L10n.menuAttentionTitle(issues: [], in: .en) == nil)
+        #expect(L10n.menuAttentionTitle(issues: [.accessibilityPermission], in: .zhHans) == "需要处理：辅助功能权限未授权…")
+        #expect(L10n.menuAttentionTitle(issues: [.accessibilityPermission], in: .en) == "Needs Attention: Accessibility Permission…")
+        #expect(L10n.menuAttentionTitle(issues: [.activeHostPlugin(.antigravity)], in: .zhHans) == "需要处理：Antigravity 插件待安装或修复…")
+        #expect(L10n.menuAttentionTitle(issues: [.activeHostPlugin(.antigravity)], in: .en) == "Needs Attention: Antigravity Plugin…")
+        #expect(L10n.menuAttentionTitle(issues: [.activeHostPlugin(.dsh)], in: .zhHans) == "需要处理：DSH 插件待安装或修复…")
+        #expect(L10n.menuAttentionTitle(issues: [.activeHostPlugin(.dsh)], in: .en) == "Needs Attention: DSH Plugin…")
+        #expect(
+            L10n.menuAttentionTitle(issues: [.accessibilityPermission, .activeHostPlugin(.antigravity)], in: .zhHans)
+                == "需要处理：辅助功能权限与 Antigravity 插件…"
+        )
+        #expect(
+            L10n.menuAttentionTitle(issues: [.accessibilityPermission, .activeHostPlugin(.antigravity)], in: .en)
+                == "Needs Attention: Accessibility & Antigravity Plugin…"
+        )
+        #expect(
+            L10n.menuAttentionTitle(issues: [.accessibilityPermission, .activeHostPlugin(.dsh)], in: .zhHans)
+                == "需要处理：辅助功能权限与 DSH 插件…"
+        )
+        #expect(
+            L10n.menuAttentionTitle(issues: [.accessibilityPermission, .activeHostPlugin(.dsh)], in: .en)
+                == "Needs Attention: Accessibility & DSH Plugin…"
+        )
     }
 
     @Test @MainActor func coordinatorLiveRelocalizesBannerPluginSnapshotAndHandoffPrompt() async throws {

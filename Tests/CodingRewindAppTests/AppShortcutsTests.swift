@@ -585,16 +585,18 @@ struct AppShortcutsTests {
         #expect(settings.connectionDraft.saveMessage == nil)
         settings.window?.close()
 
+        coord.conversationHost = .dsh
         coord.checkedCardIDs = []
-        delegate.perform(.launchIn(.dsh))
+        delegate.perform(.launchConversation)
         #expect(hud.isVisible)
         #expect(coord.isErrorBanner)
         hud.orderOut(nil)
 
         coord.checkedCardIDs = [card.id]
-        delegate.perform(.launchIn(.dsh))
+        delegate.perform(.launchConversation)
         #expect(hud.isVisible)
-        #expect(coord.conversationDraft?.targetHost == .dsh)
+        #expect(coord.conversationDraft != nil)
+        #expect(coord.effectiveConversationHost == .dsh)
         #expect(!coord.isErrorBanner)
 
         delegate.perform(.sendConversationDraft)

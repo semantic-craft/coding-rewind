@@ -92,7 +92,7 @@ struct DSHAppIntegrationTests {
         #expect(AppStrings.sourceActionButton(for: .dshSession(sessionID: "s1"), in: .en) == "Open Chat")
         #expect(AppStrings.wakeDSHButton(in: .zhHans) == "唤醒 DSH")
         #expect(AppStrings.wakeDSHButton(in: .en) == "Wake DSH")
-        #expect(AppStrings.installOrRepairDSHPlugin(in: .zhHans) == "安装或修复 DSH 插件")
-        #expect(AppStrings.installOrRepairDSHPlugin(in: .en) == "Install or Repair DSH Plugin")
+        #expect(L10n.menuAttentionTitle(issues: [.activeHostPlugin(.dsh)], in: .zhHans) == "需要处理：DSH 插件待安装或修复…")
+        #expect(L10n.menuAttentionTitle(issues: [.activeHostPlugin(.dsh)], in: .en) == "Needs Attention: DSH Plugin…")
     }
 }

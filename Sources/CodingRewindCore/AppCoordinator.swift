@@ -34,6 +34,11 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
         case unconfigured
     }
 
+    public enum AttentionIssue: Equatable, Hashable, Sendable {
+        case accessibilityPermission
+        case activeHostPlugin(ConversationHost)
+    }
+
     public struct RecentCardItem: Equatable, Sendable, Identifiable {
         public let id: String
         public let titlePreview: String
@@ -94,15 +99,31 @@ public struct MenuStatusSnapshot: Equatable, Sendable {
     }
 
     public var headerSubtitle: String {
-        L10n.menuHeaderSubtitle(connection: connection, isPluginReady: isPluginReady, in: language)
+        L10n.menuHeaderSubtitle(connection: connection, in: language)
     }
 
     public var toggleHUDTitle: String {
         L10n.menuToggleHUDTitle(isHUDVisible: isHUDVisible, in: language)
     }
 
-    public var launchTitle: String {
-        L10n.menuLaunchTitle(checkedCardCount: checkedCardCount, in: language)
+    public var attentionIssues: [AttentionIssue] {
+        var issues: [AttentionIssue] = []
+        if !isAccessibilityTrusted {
+            issues.append(.accessibilityPermission)
+        }
+        switch conversationHost {
+        case .antigravity where !isPluginReady:
+            issues.append(.activeHostPlugin(.antigravity))
+        case .dsh where !isDSHPluginReady:
+            issues.append(.activeHostPlugin(.dsh))
+        case .antigravity, .dsh:
+            break
+        }
+        return issues
+    }
+
+    public var attentionTitle: String? {
+        L10n.menuAttentionTitle(issues: attentionIssues, in: language)
     }
 }
 

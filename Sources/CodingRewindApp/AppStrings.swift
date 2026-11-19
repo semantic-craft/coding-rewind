@@ -187,20 +187,6 @@ enum AppStrings {
         }
     }
 
-    static func installOrRepairAntigravityPlugin(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "安装或修复 Antigravity 插件"
-        case .en: return "Install or Repair Antigravity Plugin"
-        }
-    }
-
-    static func installOrRepairDSHPlugin(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "安装或修复 DSH 插件"
-        case .en: return "Install or Repair DSH Plugin"
-        }
-    }
-
     static func hideApp(in language: AppLanguage) -> String {
         switch language {
         case .zhHans: return "隐藏 Coding Rewind"
@@ -236,17 +222,10 @@ enum AppStrings {
         }
     }
 
-    static func startChatInSelectedApp(in language: AppLanguage) -> String {
+    static func startChat(in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return "在所选应用中开始对话"
-        case .en: return "Start Chat in Selected App"
-        }
-    }
-
-    static func startChatInHost(_ host: ConversationHost, in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "在 \(host.displayName) 中开始对话"
-        case .en: return "Start Chat in \(host.displayName)"
+        case .zhHans: return "开始对话"
+        case .en: return "Start Chat"
         }
     }
 
@@ -259,8 +238,8 @@ enum AppStrings {
 
     static func openMemosWeb(withArrow: Bool, in language: AppLanguage) -> String {
         switch language {
-        case .zhHans: return withArrow ? "打开 Memos 网页 ↗" : "打开 Memos 网页"
-        case .en: return withArrow ? "Open Memos Web ↗" : "Open Memos Web"
+        case .zhHans: return withArrow ? "查看全部历史（Memos）↗" : "查看全部历史（Memos）"
+        case .en: return withArrow ? "View All History (Memos) ↗" : "View All History (Memos)"
         }
     }
 
@@ -338,24 +317,6 @@ enum AppStrings {
         switch language {
         case .zhHans: return "前置片段浮窗"
         case .en: return "Bring Clips HUD to Front"
-        }
-    }
-
-    static func statusItemTooltip(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans:
-            return "Coding Rewind，左键打开菜单，右键或 ⌥点击显示或隐藏片段浮窗"
-        case .en:
-            return "Coding Rewind — Left-click for menu, right-click or ⌥-click to toggle Clips HUD"
-        }
-    }
-
-    static func accessibilityStatusMenu(isTrusted: Bool, in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans:
-            return isTrusted ? "辅助功能权限：已授权" : "辅助功能权限：前往系统设置…"
-        case .en:
-            return isTrusted ? "Accessibility: Granted" : "Accessibility: Open System Settings…"
         }
     }
 
