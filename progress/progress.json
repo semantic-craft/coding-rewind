@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "f7dad08a473ed203b5e4d3119204831ab58f008e",
+    "main": "fb5cb142c2ae5b67956b6936943d1f1e793e396a",
     "open_pulls": [],
     "pulls": [
       {
@@ -371,6 +371,14 @@
         "merged": true,
         "number": 47,
         "state": "closed"
+      },
+      {
+        "base": "3a8b39879d02cc79b67682b3ecc47536c43aaf69",
+        "head": "db86e0dd41639ecc2f0ffbd38feeb1d8d75108c4",
+        "merge_commit": "fb5cb142c2ae5b67956b6936943d1f1e793e396a",
+        "merged": true,
+        "number": 48,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -436,7 +444,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-19T13:08:10.361339Z",
+  "observed_at": "2026-11-19T17:50:59.069021Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -453,6 +461,65 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "status-menu-and-tooltip-cleanup",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "移除状态栏原生 toolTip、新增 AttentionIssue 领域模型、精简状态栏菜单与主菜单并补齐行为回归，squash 合入 main。",
+              "ref": 48
+            },
+            {
+              "kind": "commit",
+              "note": "PR #48 合并提交，包含 CodingRewindCore/App 源码、单测与 lessons.md 记录。",
+              "ref": "fb5cb142c2ae5b67956b6936943d1f1e793e396a"
+            },
+            {
+              "kind": "file",
+              "note": "StatusItemController 移除 button.toolTip 并按 MenuStatusSnapshot 精简菜单；MainMenuBuilder 同步精简应用与操作菜单。",
+              "ref": "Sources/CodingRewindApp/AppMenusAndStatusBar.swift"
+            },
+            {
+              "kind": "file",
+              "note": "新增 MenuStatusSnapshot.AttentionIssue、attentionIssues 与 attentionTitle，简化 headerSubtitle。",
+              "ref": "Sources/CodingRewindCore/AppCoordinator.swift"
+            },
+            {
+              "kind": "file",
+              "note": "记录 macOS 27 状态栏按钮原生 toolTip 滞留故障与菜单告警建模教训。",
+              "ref": "lessons.md"
+            }
+          ],
+          "id": "status-menu-tooltip-fix-and-streamline",
+          "next": "后续新增宿主或状态栏动作时继续通过 MenuStatusSnapshot.AttentionIssue 与行为回归守住菜单边界。",
+          "status": "done",
+          "summary": "删除 StatusItemController 的 button.toolTip 与冗余 updateLanguage，保留 setAccessibilityLabel(\"Coding Rewind\") 根治 macOS 27 下 NSToolTipWindow 滞留 Dock 上方问题；在 MenuStatusSnapshot 引入 AttentionIssue 枚举，状态栏菜单移除 3 项开聊入口与 3 个常驻状态勾，本机模式隐藏立即同步与全部历史，仅在辅助功能未授权或活跃宿主插件异常时条件展示 1 条跳转设置页的告警项，并将 Memos 入口改名为“查看全部历史（Memos）”；主菜单同步移除重复插件项与分宿主开聊项。./scripts/check 七道门禁与 check_swiftui_perf.py 全部通过，PR #48 已合并至 main。",
+          "title": "移除状态栏原生 toolTip 并精简双菜单栏与条件告警模型"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "commit",
+              "note": "已安装交付包与合并源码一致（仅文档提交差异不影响二进制）。",
+              "ref": "fb5cb142c2ae5b67956b6936943d1f1e793e396a"
+            },
+            {
+              "kind": "note",
+              "note": "macOS 27.2.1 (26B131) 实机 PID 26340 验证：codesign --verify --deep --strict 通过，AXHelp 返回 kAXErrorNoValue (-25212)，layer=103 窗口数为 0。",
+              "ref": "live-ax-check-2026-11-20"
+            }
+          ],
+          "id": "status-menu-local-upgrade-verification",
+          "next": "用户下次点击顶部状态栏图标即可直观看到精简后的菜单栏。",
+          "status": "done",
+          "summary": "使用 Developer ID Application 重新构建封签并升级 /Applications/CodingRewind.app（主程序 SHA-256 90d73870e27cd2d6c7e182bc923b4805702a51e7acce4cc2d26eead6f7440c0b），后台启动 PID 26340 后实测 verify-app-presence.swift visible 通过，AX 状态栏项 AXDescription 为 Coding Rewind、AXHelp 为空，主菜单 Coding Rewind 与操作栏条目与新契约一致，进程 layer=103 悬浮提示窗口数为 0。",
+          "title": "本机 /Applications/CodingRewind.app 签名升级与实机 AX 核验"
+        }
+      ],
+      "title": "状态栏悬浮提示根治与双菜单栏精简"
+    },
     {
       "id": "dsh-handoff-and-capture",
       "items": [
@@ -3021,7 +3088,8 @@
       44,
       45,
       46,
-      47
+      47,
+      48
     ]
   }
 }
