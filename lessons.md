@@ -276,3 +276,14 @@
 - 正确做法 `Done right`：写入外部打开按钮前先用 `NSWorkspace.shared.urlForApplication(toOpen:)` 与目标应用 `Info.plist` 实测系统协议可达性，用不可构造非法分支的和类型（sum type）区分外部浏览器跳转与宿主内定位标识，绝不丢弃系统打开调用的布尔结果。
 - 验证点：运行 `./scripts/check` 通过 `ProvenanceLeadAndSourceLocatorTests`、`QuickPeekHUDInspectorTests`、网页扩展 71 项测试与 `enricher` 12 项测试；实机打开浮窗点击 Antigravity 卡片验证复制会话 ID 横幅与脉络抽屉展示。
 - 复发记录：`Seen 1x (2026-11-16)`，用户实机点击“查看来源”无响应反馈后定位修复。
+
+### 状态栏按钮不得挂载原生 toolTip，高频菜单避免常驻状态勾
+
+**`NSStatusBarButton` 只保留 `accessibilityLabel`、禁止设置原生 `button.toolTip`，状态栏菜单不在健康态平铺插件与权限勾选项，仅在缺失辅助功能权限或当前活跃宿主插件异常时条件展示单条设置跳转项。**
+
+- 标签：#macOS原生 #菜单栏 #悬浮提示 #领域建模
+- 起因与后果：2026-11-20 在 macOS 27.2.1 上下双屏实机中，`StatusItemController` 为状态栏图标设置两行 `button.toolTip` 并通过 `performClick(nil)` 动态切换 `statusItem.menu`，后台状态栏窗口丢失 `mouseExited` 后触发原生 `NSToolTipWindow`（`win=101215`，`layer=103`，`ignoresMouseEvents=true`）滞留在主屏 Dock 顶边上方 `2pt` 处，点击穿透且按 `Esc` 无法关闭；同时状态栏菜单塞入 3 个对话入口与 3 个常驻状态勾，且副标题仅检查 Antigravity 插件而漏检 DSH。
+- 修复与证据：移除 `StatusItemController` 的 `button.toolTip` 与冗余 `updateLanguage(_:)`；在 [AppCoordinator.swift](Sources/CodingRewindCore/AppCoordinator.swift) 的 `MenuStatusSnapshot` 新增 `AttentionIssue` 枚举按辅助功能与当前活跃宿主计算条件告警，[AppMenusAndStatusBar.swift](Sources/CodingRewindApp/AppMenusAndStatusBar.swift) 精简状态栏菜单与主菜单并改为点击告警直达“设置 → 插件与权限”，[LifecycleAndUpdaterTests.swift](Tests/CodingRewindAppTests/LifecycleAndUpdaterTests.swift) 补齐 `toolTip == nil`、健康/本机/异常三态菜单与主菜单回归。
+- 正确做法 `Done right`：状态栏按钮的旁白识别交由 `setAccessibilityLabel`，不用原生 `toolTip` 承载操作说明；用值类型模型表达菜单告警态，菜单只展示真正需要用户处理的动作，健康态保持克制。
+- 验证点：运行 `./scripts/check` 通过全部 7 项门禁；升级安装 `/Applications/CodingRewind.app` 后实机核对状态栏 AX 元素 `AXHelp` 为空、`AXDescription` 为 `Coding Rewind`，且进程无 `layer=103` 提示窗口残留。
+- 复发记录：`Seen 1x (2026-11-20)`，用户实机反馈屏幕底部悬浮提示无法关闭并要求精简菜单栏后定位修复。
