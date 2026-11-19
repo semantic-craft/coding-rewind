@@ -8,7 +8,7 @@ import Testing
 
 @Suite("CodingRewind Embedded MCP Server Suite")
 struct SnippetMCPServerTests {
-    @Test("MCPServer enforces strict JSON-RPC 2.0 id/header framing, v0.6.0 serverInfo, and window mutual exclusion")
+    @Test("MCPServer enforces strict JSON-RPC 2.0 id/header framing, v0.7.0 serverInfo, and window mutual exclusion")
     func mcpProtocolAndToolsUnit() async throws {
         let backend = FakeSnippetBackend(records: SnippetCLIFixtures.makeSampleRecords())
         let server = MCPServer(repositoryProvider: { backend }, now: { SnippetCLIFixtures.fixedNow })
@@ -32,7 +32,7 @@ struct SnippetMCPServerTests {
         #expect(initResult["capabilities"] == .object(["tools": .object([:])]))
         #expect(initResult["serverInfo"] == .object([
             "name": .string("coding-rewind"),
-            "version": .string("0.6.0")
+            "version": .string("0.7.0")
         ]))
 
         let fallbackInit = try await send(#"{"jsonrpc":"2.0","id":"init-2","method":"initialize","params":{"protocolVersion":"2099-01-01"}}"#)
