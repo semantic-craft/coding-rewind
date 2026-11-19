@@ -249,10 +249,15 @@ public enum DSHIntegration {
         let childEnv = sanitizedChildEnvironment(base: baseEnvironment, dshHomeURL: resolvedDSHHome)
         let result = try commandRunner(
             dshBinaryURL,
-            ["plugin", "--profile", "desktop", "add", "file:\(stagedDir.path)"],
+            ["plugin", "--profile", "desktop", "add", "--config.strict-dep-builds=false", "file:\(stagedDir.path)"],
             childEnv
         )
-        guard result.exitCode == 0 else {
+        if result.exitCode != 0,
+           !installedAfterUnrelatedReconcileFailure(
+               result: result,
+               dshHomeURL: resolvedDSHHome,
+               stagedDir: stagedDir
+           ) {
             let trimmed = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             let suffix = trimmed.isEmpty ? "exit \(result.exitCode)" : String(trimmed.prefix(240))
             let detail = language == .en
@@ -495,6 +500,38 @@ public enum DSHIntegration {
             return nil
         }
         return obj
+    }
+
+    private static func installedAfterUnrelatedReconcileFailure(
+        result: DSHCommandResult,
+        dshHomeURL: URL,
+        stagedDir: URL
+    ) -> Bool {
+        guard !result.output.localizedCaseInsensitiveContains("installation rejected") else {
+            return false
+        }
+        let profilePackageURL = desktopProfileDirectoryURL(in: dshHomeURL)
+            .appendingPathComponent("package.json", isDirectory: false)
+        guard let profileObj = readJSONObject(at: profilePackageURL),
+              let dependencies = profileObj["dependencies"] as? [String: Any],
+              let depSpec = dependencies[pluginName] as? String,
+              !depSpec.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+        guard let installedDir = resolveInstalledModuleDirectory(dshHomeURL: dshHomeURL, stagedDir: stagedDir),
+              isValidSourcePluginDirectory(installedDir) else {
+            return false
+        }
+        for rel in requiredSourceRelativePaths {
+            let stagedFile = stagedDir.appendingPathComponent(rel, isDirectory: false)
+            let installedFile = installedDir.appendingPathComponent(rel, isDirectory: false)
+            guard let stagedBytes = try? Data(contentsOf: stagedFile),
+                  let installedBytes = try? Data(contentsOf: installedFile),
+                  stagedBytes == installedBytes else {
+                return false
+            }
+        }
+        return true
     }
 
     private static func resolveInstalledModuleDirectory(dshHomeURL: URL, stagedDir: URL) -> URL? {

@@ -111,7 +111,14 @@ struct DSHIntegrationTests {
         )
 
         let invocation = try #require(capturedInvocation.withLock { $0 })
-        #expect(invocation.args == ["plugin", "--profile", "desktop", "add", "file:\(stagedDir.path)"])
+        #expect(invocation.args == [
+            "plugin",
+            "--profile",
+            "desktop",
+            "add",
+            "--config.strict-dep-builds=false",
+            "file:\(stagedDir.path)"
+        ])
         #expect(invocation.env["DSH_HOME"] == dshHome.standardizedFileURL.path)
         #expect(!invocation.env.keys.contains { $0.hasPrefix("CODING_REWIND_") })
 
@@ -288,5 +295,129 @@ struct DSHIntegrationTests {
             homeDirectory: fakeHome
         )
         #expect(resolvedApp == appBin)
+    }
+
+    @Test("installOrRepair tolerates unrelated post-pnpm reconcile failure when coding-rewind-dsh installed cleanly, but rejects explicit rejections or missing installs")
+    func unrelatedReconcileFailureToleranceAndGuards() throws {
+        let root = try makeTestDir("dsh-reconcile")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let sourcePlugin = root.appendingPathComponent("SourcePlugin", isDirectory: true)
+        let fakeBin = root.appendingPathComponent("bin/dsh", isDirectory: false)
+        try FileManager.default.createDirectory(at: fakeBin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try makeSourcePlugin(at: sourcePlugin, extraLibMarker: "reconcile-check")
+        try makeFakeDSHBinary(at: fakeBin)
+
+        @Sendable func simulatePnpmInstall(profileDir: URL, stagedPath: String) throws {
+            try FileManager.default.createDirectory(at: profileDir, withIntermediateDirectories: true)
+            let profile: [String: Any] = [
+                "name": "dsh-profile-desktop",
+                "private": true,
+                "dependencies": [
+                    "broken-dangling-link": "link:/nonexistent/plugin",
+                    DSHIntegration.pluginName: "file:\(stagedPath)"
+                ],
+                "dsh": [
+                    "profile": [
+                        "bundles": ["@deepseek-ai/dsh-base", "broken-dangling-link"]
+                    ]
+                ]
+            ]
+            let data = try JSONSerialization.data(withJSONObject: profile, options: [.prettyPrinted])
+            try AtomicFile.writeData(data, to: profileDir.appendingPathComponent("package.json"), permissions: 0o600)
+
+            let pnpmTarget = profileDir
+                .appendingPathComponent("node_modules/.pnpm/\(DSHIntegration.pluginName)@file/node_modules/\(DSHIntegration.pluginName)", isDirectory: true)
+            try FileManager.default.createDirectory(at: pnpmTarget.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: URL(fileURLWithPath: stagedPath), to: pnpmTarget)
+            try? FileManager.default.removeItem(at: pnpmTarget.appendingPathComponent("runtime-config.json"))
+            let installedLink = profileDir
+                .appendingPathComponent("node_modules", isDirectory: true)
+                .appendingPathComponent(DSHIntegration.pluginName, isDirectory: true)
+            try FileManager.default.createSymbolicLink(at: installedLink, withDestinationURL: pnpmTarget)
+        }
+
+        let okDataDir = root.appendingPathComponent("OkData", isDirectory: true)
+        let okDSHHome = root.appendingPathComponent("OkDSHHome", isDirectory: true)
+        try FileManager.default.createDirectory(at: okDataDir, withIntermediateDirectories: true)
+        let okProfileDir = DSHIntegration.desktopProfileDirectoryURL(in: okDSHHome)
+
+        let stagedDir = try DSHIntegration.installOrRepair(
+            dataDirectoryURL: okDataDir,
+            dshHomeURL: okDSHHome,
+            sourcePluginDirectoryURL: sourcePlugin,
+            dshBinaryURL: fakeBin,
+            commandRunner: { _, arguments, _ in
+                let stagedPath = String((arguments.last ?? "").dropFirst("file:".count))
+                try simulatePnpmInstall(profileDir: okProfileDir, stagedPath: stagedPath)
+                return DSHCommandResult(
+                    exitCode: 1,
+                    output: "Error: cannot resolve profile bundle \"broken-dangling-link\""
+                )
+            }
+        )
+
+        #expect(stagedDir == DSHIntegration.stagedPluginDirectoryURL(in: okDataDir))
+        let profileObj = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: okProfileDir.appendingPathComponent("package.json"))) as? [String: Any]
+        )
+        let dshObj = try #require(profileObj["dsh"] as? [String: Any])
+        let profile = try #require(dshObj["profile"] as? [String: Any])
+        let bundles = try #require(profile["bundles"] as? [String])
+        #expect(bundles.contains(DSHIntegration.pluginName))
+
+        let installedRuntimeConfigURL = okProfileDir
+            .appendingPathComponent("node_modules/\(DSHIntegration.pluginName)/runtime-config.json")
+        let installedRuntimeConfig = try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: installedRuntimeConfigURL)) as? [String: String]
+        )
+        #expect(installedRuntimeConfig["dataDir"] == okDataDir.standardizedFileURL.path)
+        #expect(DSHIntegration.repairReasons(
+            dataDirectoryURL: okDataDir,
+            dshHomeURL: okDSHHome,
+            dshBinaryURL: fakeBin
+        ).isEmpty)
+
+        let rejectedDataDir = root.appendingPathComponent("RejectedData", isDirectory: true)
+        let rejectedDSHHome = root.appendingPathComponent("RejectedDSHHome", isDirectory: true)
+        try FileManager.default.createDirectory(at: rejectedDataDir, withIntermediateDirectories: true)
+        let rejectedProfileDir = DSHIntegration.desktopProfileDirectoryURL(in: rejectedDSHHome)
+        #expect(throws: RewindError.self) {
+            _ = try DSHIntegration.installOrRepair(
+                dataDirectoryURL: rejectedDataDir,
+                dshHomeURL: rejectedDSHHome,
+                sourcePluginDirectoryURL: sourcePlugin,
+                dshBinaryURL: fakeBin,
+                commandRunner: { _, arguments, _ in
+                    let stagedPath = String((arguments.last ?? "").dropFirst("file:".count))
+                    try simulatePnpmInstall(profileDir: rejectedProfileDir, stagedPath: stagedPath)
+                    return DSHCommandResult(exitCode: 1, output: "Installation rejected by policy")
+                }
+            )
+        }
+
+        let missingDataDir = root.appendingPathComponent("MissingData", isDirectory: true)
+        let missingDSHHome = root.appendingPathComponent("MissingDSHHome", isDirectory: true)
+        try FileManager.default.createDirectory(at: missingDataDir, withIntermediateDirectories: true)
+        let missingProfileDir = DSHIntegration.desktopProfileDirectoryURL(in: missingDSHHome)
+        #expect(throws: RewindError.self) {
+            _ = try DSHIntegration.installOrRepair(
+                dataDirectoryURL: missingDataDir,
+                dshHomeURL: missingDSHHome,
+                sourcePluginDirectoryURL: sourcePlugin,
+                dshBinaryURL: fakeBin,
+                commandRunner: { _, arguments, _ in
+                    try FileManager.default.createDirectory(at: missingProfileDir, withIntermediateDirectories: true)
+                    let profile: [String: Any] = [
+                        "name": "dsh-profile-desktop",
+                        "dependencies": [DSHIntegration.pluginName: arguments.last ?? ""],
+                        "dsh": ["profile": ["bundles": ["@deepseek-ai/dsh-base"]]]
+                    ]
+                    let data = try JSONSerialization.data(withJSONObject: profile)
+                    try AtomicFile.writeData(data, to: missingProfileDir.appendingPathComponent("package.json"), permissions: 0o600)
+                    return DSHCommandResult(exitCode: 1, output: "pnpm install failed before linking node_modules")
+                }
+            )
+        }
     }
 }
