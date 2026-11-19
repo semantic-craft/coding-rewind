@@ -122,6 +122,26 @@ if [[ ! -d "${RESOURCES_DIR}/KeyboardShortcuts_KeyboardShortcuts.bundle" ]]; the
 fi
 install -m 0644 "${REPO_ROOT}/Vendor/KeyboardShortcuts/license" "${RESOURCES_DIR}/KeyboardShortcuts-LICENSE.txt"
 
+DSH_PLUGIN_SRC="${REPO_ROOT}/dsh-plugin/coding-rewind-dsh"
+DSH_PLUGIN_DST="${RESOURCES_DIR}/dsh-plugin/coding-rewind-dsh"
+if [[ ! -f "${DSH_PLUGIN_SRC}/package.json" ]]; then
+    echo "Error: DSH plugin source is missing at ${DSH_PLUGIN_SRC}" >&2
+    exit 1
+fi
+mkdir -p "${DSH_PLUGIN_DST}"
+install -m 0644 "${DSH_PLUGIN_SRC}/package.json" "${DSH_PLUGIN_DST}/package.json"
+install -m 0644 "${DSH_PLUGIN_SRC}/cordis.patch.yml" "${DSH_PLUGIN_DST}/cordis.patch.yml"
+install -m 0644 "${DSH_PLUGIN_SRC}/client.js" "${DSH_PLUGIN_DST}/client.js"
+if [[ -d "${DSH_PLUGIN_SRC}/lib" ]]; then
+    cp -R "${DSH_PLUGIN_SRC}/lib" "${DSH_PLUGIN_DST}/lib"
+    find "${DSH_PLUGIN_DST}/lib" -type d -exec chmod 0755 {} +
+    find "${DSH_PLUGIN_DST}/lib" -type f -exec chmod 0644 {} +
+fi
+if [[ ! -f "${DSH_PLUGIN_DST}/package.json" ]]; then
+    echo "Error: bundled DSH plugin package.json is missing" >&2
+    exit 1
+fi
+
 install -m 0755 "${BIN_DIR}/CodingRewindApp" "${MACOS_DIR}/CodingRewindApp"
 if [[ "${SKIP_DEV_CREDENTIALS}" != "1" && -n "${MEMOS_TOKEN_REFERENCE}" ]]; then
     LAUNCHER_CONFIG="${RESOURCES_DIR}/DeveloperCredentials.plist"

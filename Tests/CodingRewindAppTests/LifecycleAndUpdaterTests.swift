@@ -780,7 +780,7 @@ extension AppShortcutsTests {
             }
         }
         #expect(AppStrings.cloudSyncLocalOnlyIntro(in: .zhHans).contains("Antigravity"))
-        #expect(AppStrings.cloudSyncLocalOnlyIntro(in: .zhHans).contains("Codex"))
+        #expect(AppStrings.cloudSyncLocalOnlyIntro(in: .zhHans).contains("DSH"))
         #expect(AppStrings.cloudSyncServerIntro(in: .zhHans).contains("跨设备"))
         #expect(AppStrings.cloudSyncServerIntro(in: .en).contains("across devices"))
         #expect(AppStrings.deploymentGuideURL.absoluteString == "https://github.com/semantic-craft/coding-rewind/tree/main/deploy/vps")

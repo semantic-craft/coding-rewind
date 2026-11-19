@@ -127,13 +127,19 @@ extension AppShortcutsTests {
             paths: paths,
             environment: env,
             capturer: AIAccessUnusedCapturer(),
-            codexDelivery: { request in
-                recordedPrompts.withLock { $0.append(request.prompt) }
-                return (.succeeded, UUID().uuidString.lowercased())
-            }
+            dshReadinessCheck: { true }
         )
-        coord.conversationHost = .codex
-        coord.onOpenConversation = { _ in true }
+        coord.conversationHost = .dsh
+        coord.onWakeHost = { host in
+            guard host == .dsh else { return }
+            let dshStore = coord.handoffStore(for: .dsh)
+            if let worker = try? ConversationSidecarWorker.acquireIfUnlocked(store: dshStore) {
+                try? worker.processPending { request in
+                    recordedPrompts.withLock { $0.append(request.prompt) }
+                    return (.succeeded, UUID().uuidString.lowercased())
+                }
+            }
+        }
 
         #expect(coord.aiAccessMode == .readWrite)
         #expect(!coord.isAIAccessManagedByEnvironment)
@@ -157,7 +163,7 @@ extension AppShortcutsTests {
 
         coord.checkedCardIDs = [card.id]
 
-        _ = await coord.launchChecked(in: .codex, waitSeconds: 2)
+        _ = await coord.launchChecked(in: .dsh, waitSeconds: 2)
         #expect(recordedPrompts.withLock { $0.last }?.contains("rw-handoff-1") == true)
         #expect(recordedPrompts.withLock { $0.last }?.contains("append_snippet_note") == true)
 
@@ -168,7 +174,7 @@ extension AppShortcutsTests {
         #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
 
         coord.checkedCardIDs = [card.id]
-        _ = await coord.launchChecked(in: .codex, waitSeconds: 2)
+        _ = await coord.launchChecked(in: .dsh, waitSeconds: 2)
         #expect(recordedPrompts.withLock { $0.last }?.contains("rw-handoff-1") == true)
         #expect(recordedPrompts.withLock { $0.last }?.contains("append_snippet_note") == false)
 
@@ -213,6 +219,7 @@ extension AppShortcutsTests {
         delegate.hudPanel = panel
         let nav = SettingsNavigationModel(selectedPage: .integrations)
         var copiedPayloads: [String] = []
+        var dispatchedCommands: [AppCommand] = []
 
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: NSSize(width: 720, height: 540)), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -223,7 +230,12 @@ extension AppShortcutsTests {
             permissionState: AccessibilityPermissionState { true },
             navigationModel: nav,
             onCopyText: { copiedPayloads.append($0) },
-            onCommand: { delegate.perform($0) },
+            onCommand: { command in
+                dispatchedCommands.append(command)
+                if command != .installOrRepairDSHPlugin {
+                    delegate.perform(command)
+                }
+            },
             onClose: { window.orderOut(nil) }
         ))
         window.orderFrontRegardless()
@@ -238,8 +250,17 @@ extension AppShortcutsTests {
         }
         drainAIAccessRunLoop(0.05)
 
+        #expect(hasAIAXText("Antigravity 插件", in: window))
+        #expect(hasAIAXText("DSH 插件", in: window))
+        #expect(hasAIAXText("DeepSeek Harness", in: window))
+        #expect(pressAIAXButton(matching: { aiAXIdentifier($0) == "settings.dshInstallOrRepair" }, in: window))
+        drainAIAccessRunLoop(0.05)
+        #expect(dispatchedCommands.contains(.installOrRepairDSHPlugin))
+
         #expect(hasAIAXText("AI 接入与权限", in: window))
         #expect(hasAIAXText("Claude Desktop", in: window))
+        #expect(hasAIAXText("DSH", in: window))
+        #expect(!hasAIAXText("Codex", in: window))
         #expect(pressAIAXButton(matching: { aiAXIdentifier($0) == "settings.copyMCPConfig" }, in: window))
         drainAIAccessRunLoop(0.05)
         #expect(copiedPayloads.count == 1)
@@ -260,6 +281,8 @@ extension AppShortcutsTests {
         appearance.setLanguagePreference(.en)
         coord.setLanguage(.en)
         drainAIAccessRunLoop(0.05)
+        #expect(hasAIAXText("Antigravity Plugin", in: window))
+        #expect(hasAIAXText("DSH Plugin", in: window))
         #expect(hasAIAXText("AI Access & Permissions", in: window))
         #expect(hasAIAXText("Read-Only", in: window))
         #expect(hasAIAXText("Copied", in: window))

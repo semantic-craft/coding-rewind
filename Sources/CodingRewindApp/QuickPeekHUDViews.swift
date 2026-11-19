@@ -134,7 +134,10 @@ public final class QuickPeekHUDPanel: NSPanel {
                 guard !coordinator.isLaunchingConversation else { return true }
                 commitDraftEditorIfPresent()
                 resignTextInputIfNeeded()
-                onCommand(.copyDraftAndWakeHost)
+                let command: AppCommand = coordinator.effectiveConversationHost.prefersDirectDraftAction
+                    ? .sendConversationDraft
+                    : .copyDraftAndWakeHost
+                onCommand(command)
                 return true
             }
             if !coordinator.checkedCardIDs.isEmpty || coordinator.hasActiveHandoffConversation {
@@ -547,6 +550,7 @@ public struct QuickPeekHUDRootView: View {
                         onCopyText: { coordinator.copyClipText(inspectedCard.verbatimText) },
                         onSourceAction: { coordinator.performSourceAction(for: inspectedCard) },
                         onWakeAntigravity: { coordinator.wakeAntigravity() },
+                        onWakeDSH: { coordinator.wakeDSH() },
                         onCopySessionID: { coordinator.copySessionID($0) },
                         onRetry: { coordinator.reloadCardDetail(id: inspectedCard.id) },
                         onClose: { coordinator.closeCardPreview() }
@@ -568,12 +572,6 @@ public struct QuickPeekHUDRootView: View {
                         )
                     ) {
                         coordinator.endUnconfirmedConversation()
-                    }
-                    .rewindButtonRole(.secondary)
-                }
-                if coordinator.confirmedConversation?.host == .codex {
-                    Button(AppStrings.openCodexChatButton(in: lang)) {
-                        coordinator.reopenConfirmedConversation()
                     }
                     .rewindButtonRole(.secondary)
                 }
@@ -622,11 +620,15 @@ public struct QuickPeekHUDRootView: View {
                 HStack(spacing: 10) {
                     Text(AppStrings.selectedCountText(count: coordinator.checkedCardIDs.count, in: lang))
                         .font(.system(size: 11, weight: .medium))
-                    Toggle(AppStrings.archiveOnLaunchTitle(in: lang), isOn: $coordinator.markSynthesizedOnLaunch)
+                    let effectiveHost = coordinator.effectiveConversationHost
+                    Toggle(
+                        AppStrings.archiveOnLaunchTitle(for: effectiveHost, in: lang),
+                        isOn: $coordinator.markSynthesizedOnLaunch
+                    )
                         .toggleStyle(.checkbox)
                         .font(.system(size: 11))
                         .accessibilityIdentifier("hud.archiveOnLaunch")
-                        .help(AppStrings.archiveOnLaunchHelp(in: lang))
+                        .help(AppStrings.archiveOnLaunchHelp(for: effectiveHost, in: lang))
                     Spacer(minLength: 4)
                     let checkedIDs = coordinator.checkedActionableCardIDs
                     if !checkedIDs.isEmpty {
@@ -775,6 +777,12 @@ public struct QuickPeekHUDRootView: View {
             onWakeAntigravity: {
                 coordinator.wakeAntigravity()
             },
+            onWakeDSH: {
+                coordinator.wakeDSH()
+            },
+            onCopySessionID: {
+                coordinator.copySessionID($0)
+            },
             onArchive: {
                 Task { @MainActor in
                     await coordinator.archiveCards(ids: [card.id])
@@ -801,6 +809,8 @@ private struct HUDCardRowView: View {
     let onCopyText: () -> Void
     let onSourceAction: () -> Void
     let onWakeAntigravity: () -> Void
+    let onWakeDSH: () -> Void
+    let onCopySessionID: (String) -> Void
     let onArchive: () -> Void
     let onDelete: (Bool) -> Void
 
@@ -935,6 +945,13 @@ private struct HUDCardRowView: View {
                 if case .antigravitySession = locator {
                     Button(AppStrings.wakeAntigravityButton(in: language)) {
                         onWakeAntigravity()
+                    }
+                } else if case .dshSession(let sessionID) = locator {
+                    Button(AppStrings.copySessionIDButton(in: language)) {
+                        onCopySessionID(sessionID)
+                    }
+                    Button(AppStrings.wakeDSHButton(in: language)) {
+                        onWakeDSH()
                     }
                 }
             }

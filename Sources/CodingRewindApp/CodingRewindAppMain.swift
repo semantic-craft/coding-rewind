@@ -6,27 +6,6 @@ import Foundation
 import KeyboardShortcuts
 import Observation
 
-private final class AtomicLanguageBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private var current: AppLanguage
-
-    init(_ initial: AppLanguage) {
-        self.current = initial
-    }
-
-    func get() -> AppLanguage {
-        lock.lock()
-        defer { lock.unlock() }
-        return current
-    }
-
-    func set(_ value: AppLanguage) {
-        lock.lock()
-        current = value
-        lock.unlock()
-    }
-}
-
 @MainActor
 public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public enum StartupBootstrapDisposition: Equatable, Sendable {
@@ -44,9 +23,11 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var loginItemController: LoginItemController?
     public var updater: AppUpdater?
     public var antigravityInstaller: AntigravityPluginInstaller?
+    public var dshCaptureWatcher: DSHCaptureBridgeWatcher?
     public private(set) var lastExternalApplication: NSRunningApplication?
 
     private var workspaceObserver: NSObjectProtocol?
+    private var isInstallingDSHPlugin = false
 
     public static func resolveBootstrapLanguage(
         environment: [String: String],
@@ -173,12 +154,12 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
             let initialLanguage = appearance.effectiveLanguage
             KeyboardShortcuts.localizationLanguageCode = initialLanguage.rawValue
-            let languageBox = AtomicLanguageBox(initialLanguage)
 
             let installer = AntigravityPluginInstaller(paths: paths)
             self.antigravityInstaller = installer
             Self.stageBundledCLIBinaryIfAvailable(paths: paths)
             try? installer.refreshLocalizedMetadataIfInstalled(language: initialLanguage)
+            Self.refreshInstalledDSHPluginIfPresent(paths: paths)
 
             let loginItem = LoginItemController.live(
                 environment: environment,
@@ -198,15 +179,18 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             let capturer = MacOSAccessibilitySelectionCapturer { [weak self] in
                 self?.lastExternalApplication
             }
+            let dshAppURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.dsh)
             let coord = try AppCoordinator(
                 paths: paths,
                 environment: environment,
                 capturer: capturer,
                 language: initialLanguage,
-                codexDelivery: CodexAppIntegration.delivery(
-                    environment: environment,
-                    languageProvider: { languageBox.get() }
-                )
+                dshBinaryURLProvider: {
+                    DSHIntegration.resolveDSHBinaryURL(
+                        environment: environment,
+                        applicationURL: dshAppURL
+                    )
+                }
             )
             coord.onOpenURL = { url in
                 NSWorkspace.shared.open(url)
@@ -221,35 +205,34 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                     if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.antigravity) {
                         NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
                     }
-                case .codex:
-                    break
+                case .dsh:
+                    DSHAppIntegration.wakeDSH()
                 }
             }
             coord.onActivateHostApp = { [weak self] host in
-                let bundleID: String
                 switch host {
-                case .antigravity: bundleID = AppBundleID.antigravity
-                case .codex: bundleID = AppBundleID.codex
+                case .antigravity:
+                    guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.antigravity) else {
+                        return false
+                    }
+                    self?.hudPanel?.orderOut(nil)
+                    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: AppBundleID.antigravity)
+                        .first(where: { !$0.isTerminated }) {
+                        NSApplication.shared.yieldActivation(to: running)
+                        _ = running.activate()
+                    }
+                    let config = NSWorkspace.OpenConfiguration()
+                    config.activates = true
+                    NSWorkspace.shared.openApplication(at: appURL, configuration: config)
+                    return true
+                case .dsh:
+                    return DSHAppIntegration.activateDSH { [weak self] in
+                        self?.hudPanel?.orderOut(nil)
+                    }
                 }
-                guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-                    return false
-                }
-                self?.hudPanel?.orderOut(nil)
-                if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                    .first(where: { !$0.isTerminated }) {
-                    NSApplication.shared.yieldActivation(to: running)
-                    _ = running.activate()
-                }
-                let config = NSWorkspace.OpenConfiguration()
-                config.activates = true
-                NSWorkspace.shared.openApplication(at: appURL, configuration: config)
-                return true
             }
-            coord.onOpenConversation = { reference in
-                guard reference.host == .codex,
-                      let threadID = UUID(uuidString: reference.id),
-                      let url = URL(string: "codex://threads/\(threadID.uuidString.lowercased())") else { return false }
-                return NSWorkspace.shared.open(url)
+            coord.onOpenConversation = { [weak self] reference in
+                self?.coordinator?.onActivateHostApp?(reference.host) ?? false
             }
             self.coordinator = coord
             if let startupWarning {
@@ -334,9 +317,30 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             selectionPopup.start()
             self.selectionPopupController = selectionPopup
 
+            if let captureStore = try? DSHCaptureBridgeStore(dataDirectoryURL: paths.dataDirectoryURL) {
+                let watcher = DSHCaptureBridgeWatcher(
+                    store: captureStore,
+                    handler: { [weak coord] request in
+                        guard let coord else {
+                            return DSHCaptureBridgeReceipt(
+                                captureId: request.captureId,
+                                state: .failed,
+                                error: "app unavailable",
+                                updatedAtMs: Int64((Date().timeIntervalSince1970 * 1000.0).rounded())
+                            )
+                        }
+                        return await coord.captureExternalDSHRequest(request)
+                    },
+                    onProcessed: { [weak self] in
+                        self?.statusItemController?.refreshIcon()
+                    }
+                )
+                watcher.start()
+                self.dshCaptureWatcher = watcher
+            }
+
             appearance.onEffectiveLanguageChange = { [weak self] lang in
                 KeyboardShortcuts.localizationLanguageCode = lang.rawValue
-                languageBox.set(lang)
                 guard let self else { return }
                 try? self.antigravityInstaller?.refreshLocalizedMetadataIfInstalled(language: lang)
                 self.coordinator?.setLanguage(lang)
@@ -369,6 +373,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        dshCaptureWatcher?.stop()
+        dshCaptureWatcher = nil
         updater?.stop()
         selectionPopupController?.stop()
         shortcuts?.stop()
@@ -452,6 +458,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 self.statusItemController?.refreshIcon()
                 if outcome == nil || coord.isErrorBanner {
                     self.presentHUDNonActivating()
+                } else if case .succeeded(let reference) = outcome, reference.host == .dsh {
+                    _ = coord.onActivateHostApp?(.dsh)
                 }
             }
         case .refreshHotStream:
@@ -469,6 +477,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             if settingsWindowController?.window?.isVisible != true {
                 presentHUDNonActivating()
             }
+        case .installOrRepairDSHPlugin:
+            installDSHPlugin()
         case .requestAccessibility:
             let trusted = AXSupport.isTrusted(prompt: true)
             if !trusted,
@@ -564,6 +574,54 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    public static func refreshInstalledDSHPluginIfPresent(
+        paths: StoragePaths,
+        bundleURL: URL = Bundle.main.bundleURL
+    ) {
+        guard let sourceDir = DSHAppIntegration.bundledPluginDirectoryURL(bundleURL: bundleURL) else {
+            return
+        }
+        try? DSHIntegration.refreshInstalledPluginIfPresent(
+            sourcePluginDirectoryURL: sourceDir,
+            dataDirectoryURL: paths.dataDirectoryURL,
+            dshHomeURL: paths.dshHomeDirectoryURL
+        )
+    }
+
+    public func installDSHPlugin() {
+        guard !isInstallingDSHPlugin, let coord = coordinator else { return }
+        isInstallingDSHPlugin = true
+        let paths = coord.paths
+        let environment = coord.environment
+        let language = coord.language
+        let sourceDir = DSHAppIntegration.bundledPluginDirectoryURL()
+        let binaryURL = DSHAppIntegration.resolveDSHBinaryURL(environment: environment)
+
+        Task { @MainActor [weak self, weak coord] in
+            defer { self?.isInstallingDSHPlugin = false }
+            do {
+                _ = try await Task.detached {
+                    try DSHIntegration.installOrRepair(
+                        dataDirectoryURL: paths.dataDirectoryURL,
+                        dshHomeURL: paths.dshHomeDirectoryURL,
+                        sourcePluginDirectoryURL: sourceDir,
+                        dshBinaryURL: binaryURL,
+                        language: language,
+                        baseEnvironment: environment
+                    )
+                }.value
+                coord?.recordDSHPluginInstallResult(success: true)
+            } catch {
+                coord?.recordDSHPluginInstallFailure(error)
+            }
+            guard let self else { return }
+            self.statusItemController?.refreshIcon()
+            if self.settingsWindowController?.window?.isVisible != true {
+                self.presentHUDNonActivating()
+            }
+        }
+    }
+
     public func installPlugin() {
         guard let coord = coordinator else { return }
         let fm = FileManager.default
@@ -618,6 +676,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             _ = coord.bannerMessage
             _ = coord.isErrorBanner
             _ = coord.pluginStatusText
+            _ = coord.dshPluginStatusText
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }

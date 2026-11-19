@@ -66,7 +66,7 @@ public enum BannerNotice: Equatable, Sendable {
     case syncFailedShowingLocal
     case selectAtLeastOneCard
     case needsAntigravityPlugin
-    case needsCodexInstalled
+    case needsDSHPlugin
     case waitingForHostConfirmation(ConversationHost)
     case sentArchiveBlockedUnconfigured
     case sentPartialArchiveFailure
@@ -96,6 +96,12 @@ public enum BannerNotice: Equatable, Sendable {
     case pluginNeedsRepair(PluginRepairReason?)
     case pluginInstallFailedRewind(RewindError)
     case pluginInstallFailedMessage(String)
+    case dshPluginInstalled
+    case dshPluginNeedsRepair(DSHPluginRepairReason?)
+    case dshPluginInstallFailedRewind(RewindError)
+    case dshPluginInstallFailedMessage(String)
+    case openedDSHConversation
+    case copiedDSHSessionFallback(String)
     case openURLFailed(String)
     case copiedSessionID(String)
     case copiedClipText
@@ -355,6 +361,69 @@ public enum L10n {
         }
     }
 
+    public static func dshPluginRepairReason(_ reason: DSHPluginRepairReason, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans:
+            switch reason {
+            case .notInstalled: return "尚未安装"
+            case .missingBundledPlugin: return "缺少内置 DSH 插件，请用完整应用包安装"
+            case .missingCLIBinary: return "未找到 DeepSeek Harness（dsh）命令行工具"
+            case .missingProfilePackage: return "未找到 DSH 桌面端配置（profiles/desktop/package.json）"
+            case .pluginNotRegisteredInProfile: return "DSH 桌面端配置中未注册插件"
+            case .stagedPluginMissingOrOutdated: return "本地插件文件缺失或版本已过期"
+            case .invalidRuntimeConfig: return "插件数据目录配置缺失或不匹配"
+            }
+        case .en:
+            switch reason {
+            case .notInstalled: return "not installed"
+            case .missingBundledPlugin: return "bundled DSH plugin missing; install from packaged app bundle"
+            case .missingCLIBinary: return "DeepSeek Harness (dsh) CLI not found"
+            case .missingProfilePackage: return "DSH desktop profile package.json not found"
+            case .pluginNotRegisteredInProfile: return "plugin not registered in DSH desktop profile"
+            case .stagedPluginMissingOrOutdated: return "staged plugin files missing or outdated"
+            case .invalidRuntimeConfig: return "missing or mismatched plugin dataDir config"
+            }
+        }
+    }
+
+    public static func dshPluginInstalledSummary(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "DSH 插件已安装"
+        case .en: return "DSH plugin installed"
+        }
+    }
+
+    public static func dshPluginInstallRestartHint(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "DSH 插件已安装，重启 DeepSeek Harness 后生效"
+        case .en: return "DSH plugin installed. Restart DeepSeek Harness to activate."
+        }
+    }
+
+    public static func dshPluginNeedsRepairSummary(firstReason: DSHPluginRepairReason?, in language: AppLanguage) -> String {
+        let detail = dshPluginRepairReason(firstReason ?? .notInstalled, in: language)
+        switch language {
+        case .zhHans: return "DSH 插件需要安装或修复（\(detail)）"
+        case .en: return "DSH plugin needs install or repair (\(detail))"
+        }
+    }
+
+    public static func dshPluginInstallFailedSummary(detail: String, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "DSH 插件安装失败：\(detail)"
+        case .en: return "DSH plugin installation failed: \(detail)"
+        }
+    }
+
+    public static func filledIntoNewDSHConversation(count: Int, in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "已将 \(count) 条片段填入 DSH 新会话"
+        case .en:
+            let noun = count == 1 ? "clip" : "clips"
+            return "Filled \(count) \(noun) into a new DSH chat."
+        }
+    }
+
     public static func mcpServiceStatusSummary(
         isInstalled: Bool,
         mode: AIAccessMode,
@@ -397,13 +466,6 @@ public enum L10n {
         }
     }
 
-    public static func codexThreadName(in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans: return "CodingRewind 剪藏"
-        case .en: return "CodingRewind Clips"
-        }
-    }
-
     public static func missingReceiptConversationIDDetail(in language: AppLanguage) -> String {
         switch language {
         case .zhHans: return "发送结果缺少对话编号"
@@ -443,15 +505,17 @@ public enum L10n {
             case .zhHans: return "请先安装或修复 Antigravity 插件，再开始对话"
             case .en: return "Install or repair the Antigravity plugin before starting a chat."
             }
-        case .needsCodexInstalled:
+        case .needsDSHPlugin:
             switch language {
-            case .zhHans: return "请先安装 Codex。所选片段已保留"
-            case .en: return "Install Codex first. Selected clips remain checked."
+            case .zhHans: return "请先安装或修复 DSH 插件，再填入新会话。所选片段已保留"
+            case .en: return "Install or repair the DSH plugin before filling a new chat. Selected clips remain checked."
             }
         case .waitingForHostConfirmation(let host):
-            switch language {
-            case .zhHans: return "正在等待 \(host.displayName) 确认发送结果…"
-            case .en: return "Waiting for \(host.displayName) to confirm delivery…"
+            switch (host, language) {
+            case (.dsh, .zhHans): return "正在等待 DSH 确认填入…"
+            case (.dsh, .en): return "Waiting for DSH to confirm…"
+            case (.antigravity, .zhHans): return "正在等待 \(host.displayName) 确认发送结果…"
+            case (.antigravity, .en): return "Waiting for \(host.displayName) to confirm delivery…"
             }
         case .sentArchiveBlockedUnconfigured:
             switch language {
@@ -464,11 +528,16 @@ public enum L10n {
             case .en: return "Sent, but some clips could not be archived. Unarchived clips are kept; click again to retry archiving without resending."
             }
         case .sentToNewConversation(let count, let host):
-            switch language {
-            case .zhHans: return "已将 \(count) 条片段发送到 \(host.displayName) 的新对话"
-            case .en:
-                let noun = count == 1 ? "clip" : "clips"
-                return "Sent \(count) \(noun) to a new \(host.displayName) chat."
+            switch host {
+            case .dsh:
+                return filledIntoNewDSHConversation(count: count, in: language)
+            case .antigravity:
+                switch language {
+                case .zhHans: return "已将 \(count) 条片段发送到 \(host.displayName) 的新对话"
+                case .en:
+                    let noun = count == 1 ? "clip" : "clips"
+                    return "Sent \(count) \(noun) to a new \(host.displayName) chat."
+                }
             }
         case .sentOpenConversationFailed(let host):
             switch language {
@@ -476,19 +545,25 @@ public enum L10n {
             case .en: return "Sent to \(host.displayName), but could not open the chat. You can reopen it without resending."
             }
         case .requestExpired(let host):
-            switch language {
-            case .zhHans: return "发送请求已过期，内容未发送。片段已保留，请打开 \(host.displayName) 后重试"
-            case .en: return "Handoff request expired before sending. Clips are kept; open \(host.displayName) and try again."
+            switch (host, language) {
+            case (.dsh, .zhHans): return "填入请求已过期，草稿未填入。片段已保留，请打开 DSH 后重试"
+            case (.dsh, .en): return "Prefill request expired before DSH confirmed. Clips are kept; open DSH and try again."
+            case (.antigravity, .zhHans): return "发送请求已过期，内容未发送。片段已保留，请打开 \(host.displayName) 后重试"
+            case (.antigravity, .en): return "Handoff request expired before sending. Clips are kept; open \(host.displayName) and try again."
             }
         case .hostRejected(let host):
-            switch language {
-            case .zhHans: return "\(host.displayName) 暂时无法接收片段，内容未发送。请检查应用是否已安装并重试"
-            case .en: return "\(host.displayName) could not accept clips right now; nothing was sent. Check that the app is installed and try again."
+            switch (host, language) {
+            case (.dsh, .zhHans): return "DSH 暂时无法填入草稿，请检查工作区或输入框状态后重试"
+            case (.dsh, .en): return "DSH could not fill the draft right now. Check the active workspace or composer and try again."
+            case (.antigravity, .zhHans): return "\(host.displayName) 暂时无法接收片段，内容未发送。请检查应用是否已安装并重试"
+            case (.antigravity, .en): return "\(host.displayName) could not accept clips right now; nothing was sent. Check that the app is installed and try again."
             }
         case .deliveryUnconfirmed(let host):
-            switch language {
-            case .zhHans: return "无法确认是否发送成功，已停止自动重发。请到 \(host.displayName) 检查新对话，片段尚未归档"
-            case .en: return "Could not confirm delivery; automatic retry stopped. Check \(host.displayName) for a new chat; clips remain unarchived."
+            switch (host, language) {
+            case (.dsh, .zhHans): return "无法确认是否已填入 DSH，已停止自动重发。请到 DSH 检查新会话草稿，片段尚未归档"
+            case (.dsh, .en): return "Could not confirm DSH prefill; automatic retry stopped. Check DSH for a new draft; clips remain unarchived."
+            case (.antigravity, .zhHans): return "无法确认是否发送成功，已停止自动重发。请到 \(host.displayName) 检查新对话，片段尚未归档"
+            case (.antigravity, .en): return "Could not confirm delivery; automatic retry stopped. Check \(host.displayName) for a new chat; clips remain unarchived."
             }
         case .stillWaitingForReceipt:
             switch language {
@@ -599,6 +674,24 @@ public enum L10n {
             return pluginInstallFailedSummary(detail: rewindError(err, in: language), in: language)
         case .pluginInstallFailedMessage(let detail):
             return pluginInstallFailedSummary(detail: detail, in: language)
+        case .dshPluginInstalled:
+            return dshPluginInstallRestartHint(in: language)
+        case .dshPluginNeedsRepair(let reason):
+            return dshPluginNeedsRepairSummary(firstReason: reason, in: language)
+        case .dshPluginInstallFailedRewind(let err):
+            return dshPluginInstallFailedSummary(detail: rewindError(err, in: language), in: language)
+        case .dshPluginInstallFailedMessage(let detail):
+            return dshPluginInstallFailedSummary(detail: detail, in: language)
+        case .openedDSHConversation:
+            switch language {
+            case .zhHans: return "已在 DSH 中打开原对话"
+            case .en: return "Opened original conversation in DSH."
+            }
+        case .copiedDSHSessionFallback(let sessionID):
+            switch language {
+            case .zhHans: return "未能直达 DSH 原对话，已复制会话 ID：\(sessionID)"
+            case .en: return "Could not jump to DSH conversation; copied Session ID: \(sessionID)"
+            }
         case .openURLFailed(let rawURL):
             switch language {
             case .zhHans: return "未能打开链接：\(rawURL)"

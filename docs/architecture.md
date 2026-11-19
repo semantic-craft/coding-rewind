@@ -1,6 +1,6 @@
 # 统一架构与线级数据契约
 
-本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储与 Webhook 事件，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览、拉起 **Google Antigravity App 2.x 或 Codex** 对话的极薄界面，以及供各 Coding Agent 跨宿主共用的单二进制 `coding-rewind`（8 个 CLI 子命令 + 受只读/读写权限门控的内嵌 7 工具 `stdio` MCP）。
+本项目采用单一开源事实源加极薄边缘感官架构，以自托管原版 `usememos/memos` 承接全部持久化存储与 Webhook 事件，客户端只保留毫秒级无感选区采集、近 72 小时毛玻璃热流速览、面向 **Google Antigravity App 2.x 与 DSH（DeepSeek Harness）** 接聊的极薄界面，以及供各 Coding Agent 跨宿主共用的单二进制 `coding-rewind`（8 个 CLI 子命令 + 受只读/读写权限门控的内嵌 7 工具 `stdio` MCP）。
 
 需求依据见 [requirements.md](requirements.md)，开源底座与许可核查见 [sources.md](sources.md)，凭据与数据保护规则见 [privacy.md](privacy.md)。
 
@@ -10,9 +10,9 @@
 
 - **定位与时间窗口**，聚焦未来 1 至 3 天内确定要用到的高质量 AI 对话段落、提示词或思路，默认展示近 72 小时未归档热流卡片，不做全量聊天自动备份。
 - **采集零打断**，在当前主线编码或阅读进行中一键暂存选中文本，不弹出协议确认窗，不抢夺原应用输入焦点，不向当前会话插入保存指令，也不强迫填写标题或标签。
-- **双端统一汇聚**，同时覆盖 Antigravity、ChatGPT、Gemini 桌面应用与浏览器中的任意 `http(s)` 网页及 ChatGPT、Claude、Gemini，采集结果进入同一个 `Memos` 实例。
+- **双端统一汇聚**，同时覆盖 Antigravity、DSH、ChatGPT、Gemini 桌面应用与浏览器中的任意 `http(s)` 网页及 ChatGPT、Claude、Gemini，采集结果进入同一个 `Memos` 实例。
 - **原文锁死与脉络定锚**，用户选中的原文必须逐字完整保留，不得被摘要替代；前序提问与周围对话轮次作为上下文交由后台增强器提炼结构化抬头，AI 补充信息与原文严格分区展示。
-- **回归主力宿主成文与闭环回流**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x、Codex 等主力宿主完成，通过 `agentapi new-conversation`、Codex app-server 队列以及单二进制 `coding-rewind`（CLI 与 `coding-rewind mcp` 七个领域工具）贯通；宿主 AI 在读写权限下可将结论笔记挂回原卡片或暂存新提纲回流浮窗，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
+- **回归主力宿主成文与闭环回流**，长对话追问与对照写稿直接交给用户日常使用的 Antigravity App 2.x、DSH 等主力宿主完成，通过 `agentapi new-conversation`、零依赖 DSH Desktop 插件（`dsh-handoff/`）以及单二进制 `coding-rewind`（CLI 与 `coding-rewind mcp` 七个领域工具）贯通；宿主 AI 在读写权限下可将结论笔记挂回原卡片或暂存新提纲回流浮窗，不在菜单栏工具内重复维护富文本编辑器或本地双数据库同步逻辑。
 
 ## 端到端拓扑
 
@@ -65,8 +65,8 @@
 - **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，触发捕获（默认 `⌃⌥⇧⌘S`，即 `Hyper+S`）时先读取焦点元素或聊天页面 `AXWebArea` 的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时，从选区所属 `AXWebArea` 的本机会话 URL（`http://127.0.0.1:<port>/c/<uuid>` 或 `https://127.0.0.1/c/<uuid>`）确认编号，再由 Core 读取对应 transcript；不能定位消息时不附带猜测的上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
 - **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`⌘I` 切换停靠式“脉络”预览抽屉（展示完整未截断选中原文、来源标题与时间、可一键复制的 `Session ID`、会话开场白 `Session Opening` 或网页开头导语 `Page Lead`、紧邻提问、近期轮次与 AI 笔记，按 `inFlightCaptureEntries -> OfflineOutbox -> LocalNotesStore + Memos /comments` 三层懒加载）、三级 `Esc` 收起（优先退出删前确认条，其次收起脉络抽屉，再关闭浮窗）以及区分 `待整理` 与 `AI 已整理` 状态徽标。外部跳转由显式 `SourceLocator` 建模：`http(s)` 网页展示“打开原网页”并核对 `NSWorkspace.shared.open` 返回值（失败弹出错误横幅），Antigravity 会话（`conversation://<uuid>`）在浮窗提供一键“复制会话 ID”与“唤醒 Antigravity”（同时保留 `⌘Return` 接聊提示词内 `[出处](conversation://<uuid>)` 原生可点击）。每张卡片常驻行内脉络、来源动作、归档与删除按钮及右键上下文菜单，勾选栏提供批量归档（`⌘E`）与删除（`⌘⌫` 弹出底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；刷新期间对正在删除中的卡片抑制重现，已成功删除卡片若远端列表暂存未清空则在本地过滤不复活。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获（默认 `⌃⌥⇧⌘S`）与浮窗（默认 `⌃⌥R`）两个动作；启动时通过 `CodingRewind.captureSelectionShortcutSchemaVersion` 执行一次性 v2 迁移，仅将未自定义的旧版默认 `⌃⌥S` 平滑升级至 `⌃⌥⇧⌘S`，保留用户显式清空或自定义组合。`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单、划词胶囊及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
-- **可编辑接聊草稿框与宿主对话闭环**，勾选卡片按下 `⌘Return`（或点击“开始对话”），先在浮窗内打开可编辑多行草稿视图 `HUDConversationDraftView`（`Esc` 返回卡片列表），由 `ConversationPrompt` 预填包含每张卡片标识（中文 `- 卡片 ID：\`<id>\``、英文 `- Clip ID: \`<id>\``）、脉络抬头、原始选段及出处链接的共享 Markdown 提示词；当 `aiAccessMode == .readWrite` 时，末尾附带闭环说明，提示宿主 AI 在归纳推演后可凭卡片 ID 调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新生成的提纲草稿暂存回 Coding Rewind（`aiAccessMode == .readOnly` 时省略该回写说明）。用户调整草稿后，默认主操作（`⌘Return` / `复制并唤醒 <Host>`）复制编辑后草稿并激活目标宿主供手动粘贴；可选次要操作（`直接新建对话`）经 `AppCoordinator.launchChecked(in:customPrompt:)` 投递编辑后提示词（宿主未就绪报错时完整保留草稿不丢失）。`AppCoordinator` 唯一持有草稿、目标与归档意图；目标偏好保存到 `conversation-host.json`，默认 Antigravity。已有任一宿主待确认或待归档请求时始终优先恢复它，只有确认宿主实际收件后才允许自动归档。Antigravity 继续由官方 sidecar 调用 `agentapi new-conversation`，Codex 走下述官方队列与 App 唤醒链路。
-- **AI 接入与权限面板**，在桌面端“设置 → 插件与权限”内设“AI 接入与权限”（`AI Access & Permissions`）分区，展示本机 MCP 二进制状态、只读与读写切换开关（原子写入 `<dataDir>/config.json` 的 `ai_access_mode` 字段并保留 `memos_url`，默认 `"read_write"`；当环境变量 `CODING_REWIND_AI_ACCESS` 非空时覆盖磁盘配置、禁用界面开关并展示环境管理提示）以及一键复制标准零明文 `mcpServers` JSON 配置按钮（面向 Claude Desktop、Cursor、Codex、Antigravity 等宿主）。
+- **可编辑接聊草稿框与宿主对话闭环**，勾选卡片按下 `⌘Return`（或点击“开始对话”），先在浮窗内打开可编辑多行草稿视图 `HUDConversationDraftView`（`Esc` 返回卡片列表），由 `ConversationPrompt` 预填包含每张卡片标识（中文 `- 卡片 ID：\`<id>\``、英文 `- Clip ID: \`<id>\``）、脉络抬头、原始选段及出处链接的共享 Markdown 提示词；当 `aiAccessMode == .readWrite` 时，末尾附带闭环说明，提示宿主 AI 在归纳推演后可凭卡片 ID 调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新生成的提纲草稿暂存回 Coding Rewind（`aiAccessMode == .readOnly` 时省略该回写说明）。选中 Antigravity 时主操作（`⌘Return`）为 `复制并唤醒 Antigravity`，次要操作为 `直接新建对话`（经官方 sidecar 调用 `agentapi new-conversation`）；选中 DSH 时主操作（`⌘Return`）为 `填入 DSH 新会话`（经轻量 DSH Desktop 插件复用空白会话并以 `whenDraftExists: 'append'` 预填草稿不自动发送，自动归档勾选文案切换为「填入后归档」），次要操作保留 `复制并唤醒 DSH`（宿主未就绪报错时完整保留草稿不丢失）。`AppCoordinator` 唯一持有草稿、目标与归档意图；目标偏好保存到 `conversation-host.json`，默认 Antigravity（旧版 `"codex"` 在启动时自动迁移为 `"dsh"`）。已有任一宿主待确认或待归档请求时始终优先恢复它，只有确认宿主实际收件或预填后才允许自动归档。
+- **AI 接入与权限面板**，在桌面端“设置 → 插件与权限”并列管理 Antigravity 插件与 DSH 插件（DeepSeek Harness），下设“AI 接入与权限”（`AI Access & Permissions`）分区，展示本机 MCP 二进制状态、只读与读写切换开关（原子写入 `<dataDir>/config.json` 的 `ai_access_mode` 字段并保留 `memos_url`，默认 `"read_write"`；当环境变量 `CODING_REWIND_AI_ACCESS` 非空时覆盖磁盘配置、禁用界面开关并展示环境管理提示）以及一键复制标准零明文 `mcpServers` JSON 配置按钮（面向 Claude Desktop、Cursor、DSH、Antigravity 等宿主）。
 - **开机自启动、校验自动更新与双语界面 `LoginItemController.swift`、`AppUpdater.swift`、`Localization.swift` 与 `AppStrings.swift`**，`applicationDidFinishLaunching` 首行同步采样 `NSAppleEventManager.shared().currentAppleEvent`（识别 `keyAELaunchedAsLogInItem`）与 `--restarted-after-update`/`--background` 参数，使系统登录启动与更新重启保持静默驻留，而常规打开与 Dock 重开正常聚焦浮窗。`AppUpdater` 在私有 `<dataDir>/updates/` 目录暂存 GitHub Releases 资产，依次执行 `SHA256SUMS.txt` 摘要比对、`ditto` 解压与 `lsregister -u` 注销、`SecStaticCodeCheckValidityWithErrors`（含 `kSecCSStrictValidate`）及 `BundleSignatureAuthority.canReplace`（阻止 `Developer ID` 被 ad-hoc 或不同 `TeamIdentifier` 覆盖以保护 TCC 辅助功能授权），就绪后同步刷新 `bin/coding-rewind-sidecar` 与 `bin/coding-rewind`，并通过等待原 PID 退出的原子交换脚本完成回滚安全升级。桌面端采用纯枚举 `switch` 双语词表以兼容独立无 bundle 的辅助进程，网页扩展采用 `_locales/` 与 `i18n.js` 实时重渲染，云端 `enricher.py` 支持 `REWIND_SUMMARY_LANGUAGE=auto|zh-Hans|en`，三端共享不变的 Memos 标签与引用头契约。
 - **本地离线韧性**，未配置地址或网络异常时，采集与 `create_snippet` 请求追加写入 `<dataDir>/outbox.jsonl` 并镜像更新 `<dataDir>/hot_cache.json`，纯本机模式下的 `append_snippet_note` 原子写入 `<dataDir>/local_notes.json`；断网时从本地缓存显示热卡，网络恢复后凭 `?memoId=<clientClipId>` 幂等冲刷队列。
 
@@ -89,23 +89,20 @@
 
 ### 接聊请求与回执
 
-`ConversationHandoff.swift` 为 Antigravity 保留 `handoff/` v1 文件契约，为 Codex 使用独立 `codex-handoff/`。旧 sidecar 不会消费 Codex 请求。两套目录都复用 `ConversationSidecarWorker` 的独占进程锁和状态流转，调用前先落盘 `dispatching`，不明结果保持 `unknown` 并禁止重发。请求、回执和逐卡归档进度只有既有 store 一个所有者，没有额外业务数据库或分阶段检查点。
+`ConversationHandoff.swift` 为 Antigravity 保留 `handoff/` v1 文件契约，为 DSH 使用独立 `dsh-handoff/`。旧 sidecar 不会消费 DSH 请求。两条通道均在调用前先落盘 `dispatching`，不明结果保持 `unknown` 并禁止重发。请求、回执和逐卡归档进度只有既有 store 一个所有者，没有额外业务数据库或分阶段检查点。
 
-Antigravity 成功只认结构化回执中的会话编号。Codex 成功必须同时有真实 thread 编号、turn 编号，以及首条用户消息的 `clientId` 和完整 UTF-8 提示词匹配。助手回复是否完成不影响收件事实。
-请求在 45 秒后过期。未发布完整的请求会在过期后收敛为 `expired`，不会补发。成功、拒绝、过期或未知结果都会清理请求正文。已完成回执保留七天，仍被当前请求引用的回执继续保留，避免重启后失去结果。归档进度按卡片编号单独保存，重试不会重新创建会话。
+Antigravity 成功只认结构化回执中的会话编号。DSH 成功只认 DSH Desktop 插件前端确认空白会话已打开且 `requestDraftInitialization(..., { whenDraftExists: 'append' })` 返回 `'applied'` 后写回的会话编号。请求在 45 秒后过期，未发布完整的请求会在过期后收敛为 `expired`，不会补发。成功、拒绝、过期或未知结果都会清理请求正文。已完成回执保留七天，仍被当前请求引用的回执继续保留，避免重启后失去结果。归档进度按卡片编号单独保存，重试不会重复投递。
 
-安装器保留宿主配置的其他字段和已有 `projectId`。sidecar 检测到稳定二进制被替换后退出，由宿主的 `always` 重启策略启动新版。它不读取 Memos 令牌。
+安装器保留宿主配置的其他字段和已有 `projectId`。sidecar 检测到稳定二进制被替换后退出，由宿主的 `always` 重启策略启动新版。两者均不读取 Memos 令牌。
 
-### Codex 的队列与原生 App 接管
+### DSH（DeepSeek Harness）桌面端双向协同插件
 
-`CodexAppIntegration.swift` 发现 `com.openai.codex` 应用和它的捆绑 CLI，显式 `CODING_REWIND_CODEX_BIN` 绝对路径优先，常规 CLI `~/.local/bin/codex` 作为后备。子进程不接收协调器注入的 Memos 凭据，启动环境也移除 `CODING_REWIND_*`。`CodexConversationClient.swift` 通过私有管道使用官方 `app-server --stdio` JSONL，每个响应按请求编号关联，忽略通知。只声明自己的客户端身份和 `experimentalApi`，不覆盖模型、sandbox 或审批设置。
+位于 `dsh-plugin/coding-rewind-dsh/`（随应用包打入 `Contents/Resources/dsh-plugin/coding-rewind-dsh/`，零第三方运行依赖，MIT 许可），由 `DSHIntegration.swift` 暂存至 `<dataDir>/dsh-plugin/coding-rewind-dsh/`（写入显式 `dataDir` 的 `0600` `runtime-config.json`）并经 `dsh plugin --profile desktop add` 注册至 `~/.dsh/profiles/desktop`（`CODING_REWIND_DSH_BIN` 覆盖 CLI 路径，`CODING_REWIND_DSH_HOME` 隔离 QA 目录，子进程环境剔除 `CODING_REWIND_*` 与 Memos 凭据）：
 
-1. 第一个短暂进程执行 `initialize`、`initialized`、`thread/start`，工作目录为用户主目录，仅设置 `thread_unload_delay_secs=0`。随后 `thread/name/set` 正常持久化空会话，`thread/unsubscribe` 释放运行时并退出。
-2. 第二个短暂进程只读新会话，确认它未加载且没有轮次。随后仅向该专用新会话执行一次 `thread/queue/add`，以持久化请求 UUID 作为 `clientUserMessageId`。`thread/queue/list` 核对唯一条目和完整提示词后退出。
-3. AppKit 层打开 `codex://threads/wake/<threadId>`。Codex App 接管首轮运行、审批与后续输入。第三个短暂进程只用 `thread/read` 核对真实首条用户消息，确认后写成功回执。它不 resume、不创建 turn，也不保留会话运行时。
-4. 确认收件后 AppKit 层打开 `codex://threads/<threadId>` 导航到同一会话。打开失败保留已成功回执供重试，不能重新发送。归档按既有剩余卡片编号恢复。
-
-上述写操作均在 durable worker 的 `dispatching` 之后发生。任何中断或不明结果都不再创建线程或投递消息，保留卡片让用户核对。所有短暂子进程有确认超时并在退出时关闭、终止和回收。
+1. **Host / Client 桥接**：Host 半侧通过 `ctx.webServer.register` 注册精确路由 `POST /coding-rewind/api`（强校验同源 / `dsh-app://app`、`application/json` 与 2 MiB 上限，拒绝跨站请求），Client 半侧以 classic `__ModuleLoader__.load` 注册并经长轮询接收指令，无活跃 Client 或中途断连分别诚实收敛为 `rejected` 或 `unknown`。
+2. **空白会话预填（`dsh-handoff/`）**：Client 按「当前主视图会话所属工作区 → 最近活跃工作区 → 默认工作区」解析目标工作区，调用官方 `ctx.uiWorkspace.openWorkspace` 与 `ctx.conversation.input.requestDraftInitialization(binding, { prompt, whenDraftExists: 'append' })` 追加填入草稿而不自动发送，确认 `'applied'` 后回报 `sessionId` 写回回执并唤醒 `DeepSeek Harness.app`。
+3. **选区下方暂存胶囊与上下文（`dsh-captures/` 与 `dsh-active-session.json`）**：Client 在 `[data-text-interaction-source]` 聊天正文选区下方 8px 渲染闭合 Shadow DOM「暂存」胶囊（避让 DSH 顶部原生引用栏），提取保真 Markdown 并由 Host 经 `ctx.sessionQuery` 补齐活跃会话消息轮次写入私有 `dsh-captures/requests/`；`CodingRewindApp` 经 `DSHCaptureBridgeWatcher` 消费入库（`#source/dsh`、`dsh-session://<sessionId>`）并写回 `saved` / `queued_offline` / `failed` 回执。全局热键 `⌃⌥⇧⌘S` 同时借助 `DSHCaptureContext.swift` 读取 `dsh-active-session.json` 经 `ConversationContextSlicer` 唯一匹配补齐上下文。
+4. **原会话直达回跳（`dsh-actions/`）**：`SourceLocator.dshSession(sessionID:)` 绝不投递未注册协议给 LaunchServices，而是经 `DSHActionStore` 请求 DSH 插件执行 `ctx.uiWorkspace.openSession(sessionId)` 并激活窗口，未就绪或会话不存在时自动回退复制会话 ID 并提示。
 
 ## Memos REST 共享线级契约
 
@@ -113,10 +110,10 @@ Antigravity 成功只认结构化回执中的会话编号。Codex 成功必须�
 
 ### 1. 创建初始片段与 AI 直接暂存（`create_snippet`）
 
-客户端或 Agent 生成满足 `^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$` 的幂等标识 `clientClipId`，调用 `POST /api/memos?memoId=<clientClipId>`，请求体 `visibility` 固定为 `PRIVATE`。来源平台标签集合为 `#source/<antigravity|chatgpt|claude|gemini|macos|web|agent>`，首行同时支持附加经清洗的自定义 `#<tag>` 标签。附带对话上下文时的初始 `content` 模板如下：
+客户端或 Agent 生成满足 `^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$` 的幂等标识 `clientClipId`，调用 `POST /api/memos?memoId=<clientClipId>`，请求体 `visibility` 固定为 `PRIVATE`。来源平台标签集合为 `#source/<antigravity|dsh|chatgpt|claude|gemini|macos|web|agent>`，首行同时支持附加经清洗的自定义 `#<tag>` 标签。附带对话上下文时的初始 `content` 模板如下：
 
 ```markdown
-#rewind/pending #rewind/has-ctx #source/<antigravity|chatgpt|claude|gemini|macos|web|agent>
+#rewind/pending #rewind/has-ctx #source/<antigravity|dsh|chatgpt|claude|gemini|macos|web|agent>
 
 > **Source:** [<title_or_app>](<url_or_conversation_deeplink>) · <ISO8601_UTC>
 

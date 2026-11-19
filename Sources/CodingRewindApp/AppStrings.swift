@@ -194,6 +194,13 @@ enum AppStrings {
         }
     }
 
+    static func installOrRepairDSHPlugin(in language: AppLanguage) -> String {
+        switch language {
+        case .zhHans: return "安装或修复 DSH 插件"
+        case .en: return "Install or Repair DSH Plugin"
+        }
+    }
+
     static func hideApp(in language: AppLanguage) -> String {
         switch language {
         case .zhHans: return "隐藏 Coding Rewind"

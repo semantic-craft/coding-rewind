@@ -195,7 +195,7 @@ struct HUDConversationDraftView: View {
         let host = coordinator.effectiveConversationHost
         let isDraftEmpty = draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let copyWakeTitle = AppStrings.draftCopyAndWakeButton(hostName: host.displayName, in: language)
-        let sendDirectTitle = AppStrings.draftSendDirectButton(in: language)
+        let sendDirectTitle = AppStrings.draftSendDirectButton(for: host, in: language)
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 6) {
@@ -276,11 +276,14 @@ struct HUDConversationDraftView: View {
                 .accessibilityIdentifier("hud.draft.host")
                 .disabled(coordinator.isLaunchingConversation || coordinator.activeConversationHost != nil)
 
-                Toggle(AppStrings.archiveOnLaunchTitle(in: language), isOn: $coordinator.markSynthesizedOnLaunch)
+                Toggle(
+                    AppStrings.archiveOnLaunchTitle(for: host, in: language),
+                    isOn: $coordinator.markSynthesizedOnLaunch
+                )
                     .toggleStyle(.checkbox)
                     .font(.system(size: 11))
                     .accessibilityIdentifier("hud.draft.archiveOnLaunch")
-                    .help(AppStrings.archiveOnLaunchHelp(in: language))
+                    .help(AppStrings.archiveOnLaunchHelp(for: host, in: language))
                     .disabled(coordinator.isLaunchingConversation)
 
                 Spacer(minLength: 4)
@@ -296,28 +299,53 @@ struct HUDConversationDraftView: View {
 
                 Spacer(minLength: 4)
 
-                Button(sendDirectTitle) {
-                    onCommand(.sendConversationDraft)
-                }
-                .rewindButtonRole(.secondary)
-                .accessibilityLabel(sendDirectTitle)
-                .accessibilityIdentifier("hud.draft.sendDirect")
-                .help(AppStrings.draftSendDirectHelp(hostName: host.displayName, in: language))
-                .disabled(isDraftEmpty || coordinator.isLaunchingConversation)
-
-                Button {
-                    onCommand(.copyDraftAndWakeHost)
-                } label: {
-                    HStack(spacing: 6) {
-                        Text(copyWakeTitle)
-                        Text("⌘↵")
+                if host.prefersDirectDraftAction {
+                    Button(copyWakeTitle) {
+                        onCommand(.copyDraftAndWakeHost)
                     }
+                    .rewindButtonRole(.secondary)
+                    .accessibilityLabel(copyWakeTitle)
+                    .accessibilityIdentifier("hud.draft.copyAndWake")
+                    .help(AppStrings.draftCopyAndWakeHelp(for: host, in: language))
+                    .disabled(isDraftEmpty || coordinator.isLaunchingConversation)
+
+                    Button {
+                        onCommand(.sendConversationDraft)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(sendDirectTitle)
+                            Text("⌘↵")
+                        }
+                    }
+                    .buttonStyle(RewindLaunchButtonStyle())
+                    .accessibilityLabel(sendDirectTitle)
+                    .accessibilityIdentifier("hud.draft.sendDirect")
+                    .help(AppStrings.draftSendDirectHelp(for: host, in: language))
+                    .disabled(isDraftEmpty || coordinator.isLaunchingConversation)
+                } else {
+                    Button(sendDirectTitle) {
+                        onCommand(.sendConversationDraft)
+                    }
+                    .rewindButtonRole(.secondary)
+                    .accessibilityLabel(sendDirectTitle)
+                    .accessibilityIdentifier("hud.draft.sendDirect")
+                    .help(AppStrings.draftSendDirectHelp(for: host, in: language))
+                    .disabled(isDraftEmpty || coordinator.isLaunchingConversation)
+
+                    Button {
+                        onCommand(.copyDraftAndWakeHost)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(copyWakeTitle)
+                            Text("⌘↵")
+                        }
+                    }
+                    .buttonStyle(RewindLaunchButtonStyle())
+                    .accessibilityLabel(copyWakeTitle)
+                    .accessibilityIdentifier("hud.draft.copyAndWake")
+                    .help(AppStrings.draftCopyAndWakeHelp(for: host, in: language))
+                    .disabled(isDraftEmpty || coordinator.isLaunchingConversation)
                 }
-                .buttonStyle(RewindLaunchButtonStyle())
-                .accessibilityLabel(copyWakeTitle)
-                .accessibilityIdentifier("hud.draft.copyAndWake")
-                .help(AppStrings.draftCopyAndWakeHelp(hostName: host.displayName, in: language))
-                .disabled(isDraftEmpty || coordinator.isLaunchingConversation)
             }
         }
         .accessibilityElement(children: .contain)

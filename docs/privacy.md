@@ -43,13 +43,13 @@ VPS 内部的 `rewind-enricher` 仅读取带 `#rewind/pending` 的新片段及�
 
 ### 4. 一键接聊的短期请求与宿主记录
 
-勾选卡片并点击开聊后，应用将卡片标识（`- 卡片 ID` / `- Clip ID`）、原文、标题、脉络和出处组成提示词（读写模式下附带 `append_snippet_note` / `create_snippet` 回写说明，只读模式下省略），交给所选的 Antigravity 或 Codex 创建新会话并发送。接聊不经过剪贴板。
+勾选卡片并点击开聊后，应用将卡片标识（`- 卡片 ID` / `- Clip ID`）、原文、标题、脉络和出处组成提示词（读写模式下附带 `append_snippet_note` / `create_snippet` 回写说明，只读模式下省略），在浮窗草稿框调整后交给所选的 Antigravity 或 DSH（DeepSeek Harness）。通过直接通道投递时不经过系统剪贴板。
 
-`<dataDir>/handoff/` 与 `<dataDir>/codex-handoff/` 分别保存两种宿主的请求，使用 `0700` 目录与 `0600` 文件。请求正文只用于本次交接，处理完成或过期后清除。回执保存请求编号、状态和成功时的会话编号，不保存提示词。进程中断后，无法确认的请求不会自动重发。
+`<dataDir>/handoff/` 与 `<dataDir>/dsh-handoff/` 分别保存两种宿主的请求，另设 `<dataDir>/dsh-actions/`（原会话回跳）、`<dataDir>/dsh-captures/`（DSH 选区胶囊暂存）与 `<dataDir>/dsh-active-session.json`（DSH 活跃会话只读快照），全部强制使用 `0700` 目录与 `0600` 文件及 `O_NOFOLLOW` 校验。请求正文只用于本次交接，处理完成或过期后清除。回执保存请求编号、状态和成功时的会话编号，不保存提示词。进程中断后，无法确认的请求不会自动重发。
 
 Antigravity 自己会在 `~/.gemini/antigravity/sidecar_data/<sidecarId>/events/` 记录 `agentapi` 调用，记录可能包含完整提示词。2026-11-12 的无敏感测试确认事件含测试提示词。此记录及已创建会话属于宿主的留存范围，不随 Coding Rewind 请求清理而删除。[官方 sidecar 运行数据说明](https://antigravity.google/docs/sidecars#runtime-data)描述了这些目录。
 
-Codex 接聊通过官方 app-server 的私有标准输入管道传递完整提示词，不把正文放入命令行参数。队列和已发送会话由 Codex 在自己的数据目录中保存，Coding Rewind 清除短期请求不会删除这些宿主记录。Codex 子进程不接收协调器注入的 Memos 凭据，也不继承 `CODING_REWIND_*` 启动变量。模型与审批设置由 Codex 管理。
+DSH 接聊通过运行在 `~/.dsh/profiles/desktop` 内的零依赖插件 `coding-rewind-dsh` 与同源本地路由 `POST /coding-rewind/api` 协作，仅将草稿追加填入 DSH 空白会话输入框而不自动发送，也不会向 DSH 传递 Memos 访问令牌或 `CODING_REWIND_*` 环境变量。用户在 DSH 内实际发送后的会话记录属于 DSH 自身存储范围，不随 Coding Rewind 清理短期交接请求而删除。
 
 ## 凭据保护机制
 

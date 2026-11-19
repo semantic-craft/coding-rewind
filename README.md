@@ -10,9 +10,9 @@
 
 ## 这是什么
 
-在使用独立桌面端 **Google Antigravity App 2.x、ChatGPT、Gemini** 或网页版 ChatGPT、Claude、Gemini 聊天时，经常会撞见接下来两三天马上要用、带来灵感的对话段落。当下正在推进主线任务，不想立刻切走新开对话分叉，存进重型笔记库太重，贴进系统备忘录又会丢掉提问语境且难以继续追问成文。
+在使用独立桌面端 **Google Antigravity App 2.x、DSH（DeepSeek Harness）、ChatGPT、Gemini** 或网页版 ChatGPT、Claude、Gemini 聊天时，经常会撞见接下来两三天马上要用、带来灵感的对话段落。当下正在推进主线任务，不想立刻切走新开对话分叉，存进重型笔记库太重，贴进系统备忘录又会丢掉提问语境且难以继续追问成文。
 
-**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x 与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可在 Antigravity 或 Codex 新建会话并发送卡片标识与完整上下文，继续推演或对照写稿，还可在读写权限下由宿主 AI 将结论笔记挂回原卡片或暂存新提纲回流至浮窗。
+**Coding-Rewind** 是介于系统备忘录与正式笔记库之间的近期灵感暂存、AI 脉络定锚与互动成文工具。它跨 **Antigravity App 2.x、DSH 桌面端与主流网页版 AI 聊天** 顺手暂存好段落，由云端自动补齐会话脉络摘要并原样锁住选中原文，在近 72 小时热窗口里用非激活毛玻璃浮窗随时回看。勾选卡片后可在 Antigravity 或 DSH 展开接聊草稿并发送或预填卡片标识与完整上下文，继续推演或对照写稿，还可在读写权限下由宿主 AI 将结论笔记挂回原卡片或暂存新提纲回流至浮窗。
 
 立项需求正本来自用户 t4624u 于 2026-11-10 的记录：
 
@@ -27,7 +27,8 @@
 项目拒绝双数据库双向同步与半原生半网页胶水层，围绕阿里云轻量应用服务器上的单实例原版 `usememos/memos` 构建极薄边缘端：
 
 - **单一事实源后端 `deploy/vps/`**，直接运行官方固定版本 `neosmemo/memos:26.11.0` 容器承接 `/api/memos` REST 存储，旁挂约百行纯 Python 3 标准库编写的幂等语境增强器 `rewind-enricher`，结合前文 4 轮对话生成标题、会话主题、脉络摘要与关键词引用头，100% 保留用户选中原文不改动。
-- **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`usememos/memos`、`raycast/extensions`、`GaimsDevSoftware/linuxpop`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文时自动在选区附近弹出非激活“暂存”胶囊，默认使用 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。浮窗内置停靠式“脉络”预览抽屉（点击卡片 `脉络` 按钮或按 `⌘I` 展开，三级 `Esc` 逐层收起），原地查看完整选中原文、会话或网页开头留底、紧邻提问、近期轮次与 AI 笔记；按来源平台诚实提供网页直达跳转（含失败反馈）与 Antigravity 会话 ID 一键复制/唤醒，支持单条或批量归档（`⌘E`）与删除（`⌘⌫` 底部行内确认，`⌥⌘⌫` 或按住 `Option` 点击直接删除），`⌘Return` 将勾选卡片连同卡片 ID 交给浮窗选定的 Antigravity 或 Codex 并支持推演后闭环回写，接聊方式见下文。
+- **macOS 原生状态栏与毛玻璃浮窗 `Sources/CodingRewindApp/` 与 `Sources/CodingRewindCore/`**，基于 Swift 6、AppKit（`NSStatusItem` + `NSMenu` + 主菜单）与 SwiftUI 实现轻量状态栏与悬浮面板，吸收 MIT 项目 `p0deje/Maccy`、`usememos/memos`、`raycast/extensions`、`GaimsDevSoftware/linuxpop`、`tisfeng/SelectedTextKit` 与 `wxtsky/CodeIsland` 的成熟做法，在 Antigravity、ChatGPT 与 Gemini 桌面端划选对话正文时自动在选区附近弹出非激活“暂存”胶囊，在 DSH 桌面端由轻量插件在选区下方渲染闭合 Shadow DOM“暂存”胶囊，默认使用 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选段、`⌃⌥R` 唤出 72 小时热流浮窗，支持离线队列幂等重放。浮窗内置停靠式“脉络”预览抽屉（点击卡片 `脉络` 按钮或按 `⌘I` 展开，三级 `Esc` 逐层收起），原地查看完整选中原文、会话或网页开头留底、紧邻提问、近期轮次与 AI 笔记；按来源平台诚实提供网页直达跳转（含失败反馈）、DSH 原会话直达跳转（未就绪时回退复制会话 ID）与 Antigravity 会话 ID 一键复制/唤醒，支持单条或批量归档（`⌘E`）与删除（`⌘⌫` 底部行内确认，`⌥⌘⌫` 或按住 `Option` 点击直接删除），`⌘Return` 将勾选卡片连同卡片 ID 交给浮窗选定的 Antigravity 或 DSH 并支持推演后闭环回写，接聊方式见下文。
+- **DSH（DeepSeek Harness）零依赖桌面插件 `dsh-plugin/coding-rewind-dsh/`**，随应用包分发并在安装或修复时暂存至 `~/Library/Application Support/CodingRewind/dsh-plugin/coding-rewind-dsh/`，通过 `dsh plugin --profile desktop add` 接入 `~/.dsh/profiles/desktop`，支持从 DSH 聊天选区下方一键暂存（保留代码块、会话 ID、首轮开场提问与近 4 轮上下文，`#source/dsh`）、在浮窗一键回跳原 DSH 会话，以及将浮窗草稿追加预填进 DSH 当前或最近工作区的空白新会话输入框（不自动发送），全程不接触 Memos 凭据。
 - **单二进制 Agent CLI 与内嵌 MCP `Sources/CodingRewindCLI/`**，应用包内嵌并同步安装至固定路径 `~/Library/Application Support/CodingRewind/bin/coding-rewind`，与桌面端共用 `CodingRewindCore` 查询与写入层、凭据解析及 `hot_cache.json`/`outbox.jsonl`/`local_notes.json` 离线与本机回退，既提供 `list`、`search`、`get`、`create`、`update`、`note`、`archive`、`delete` 八个命令行子命令，也通过 `coding-rewind mcp` 提供受只读/读写权限门控的 7 个高信噪比领域工具（`list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`、`create_snippet`、`update_snippet_metadata`、`append_snippet_note`）标准 `stdio` MCP 服务（绝不向 Agent MCP 暴露物理删除工具），默认聚焦近 72 小时未归档片段并支持按需查询 `>72h` 历史与 `#rewind/synthesized` 已归档片段。
 - **Antigravity 2.x 上下文与官方插件**，桌面捕获从选区所属聊天页面（支持 `http://127.0.0.1:<port>/c/<uuid>` 与 `https://127.0.0.1/c/<uuid>`）确认会话编号，只读取该会话的官方 transcript，提取会话 ID、整个会话首轮开场提问（`Session Opening`）、紧邻提问与最近 4 轮对话；插件安装器向 `~/.gemini/config/plugins/coding-rewind/` 写入 `plugin.json`、`coding-rewind/launcher` sidecar 配置与引导调用 `coding-rewind` 领域工具的 `/rewind` 技能。
 - **ChatGPT 与 Gemini App 剪藏**，在 ChatGPT 与 Gemini 桌面端选中对话文本后点击选区上方的“暂存”胶囊，或按 `⌃⌥⇧⌘S`（`Hyper+S`），自动保存来源、私有会话链接、会话首轮开场提问（窗口无前序折叠缺口时）、紧邻提问与截止选中消息的最多四个用户轮。通过当前窗口的辅助功能树和系统复制读取内容，不读取其他会话日志。回链使用应用自带的打开会话入口，完成后关闭本次打开的浏览器标签。Gemini 的回链读取目前支持默认浏览器为 Google Chrome。
@@ -45,15 +46,15 @@
 
 [官方 sidecar 文档](https://antigravity.google/docs/sidecars)说明宿主运行环境、项目配置和 `agentapi`。普通外部进程直接调用 CLI 不能替代 sidecar。交接请求和宿主事件的留存范围见 [隐私说明](docs/privacy.md#4-一键接聊的短期请求与宿主记录)。
 
-## 在 Codex 接聊
+## 在 DSH 接聊
 
-安装并登录 Codex，在浮窗的对话应用选择器中选择 **Codex**，勾选片段后按 `⌘Return` 展开可编辑草稿框：默认按 `⌘Return` 或点击“复制并唤醒 Codex”复制调整后的提示词并唤醒 Codex 手动粘贴；点击“直接新建对话”则自动创建真实新会话，发送与 Antigravity 相同的卡片标识（`- 卡片 ID` / `- Clip ID`）、片段原文、已有对话上下文、来源及读写模式下的结论回写说明，并打开该会话供继续追问。首次默认目标仍是 Antigravity，之后保存所选应用。应用菜单与状态菜单也提供两种应用的开始对话动作。
+安装并打开 **DeepSeek Harness**（`com.deepseek.dsh`），在应用菜单或“设置 → 插件与权限”点击“安装或修复 DSH 插件”，安装器会将零依赖插件 `coding-rewind-dsh` 暂存到 `~/Library/Application Support/CodingRewind/dsh-plugin/coding-rewind-dsh/` 并经 `dsh plugin --profile desktop add` 注册到 `~/.dsh/profiles/desktop`（首次安装或更新后请重启 DeepSeek Harness Desktop 使插件生效）。
 
-Codex 接聊使用应用自带的官方 CLI，不需要安装 Antigravity 插件。找不到捆绑 CLI 时会检查 `~/.local/bin/codex`，开发或排障时可用绝对路径环境变量 `CODING_REWIND_CODEX_BIN` 指定。模型和审批沿用 Codex 自己的配置，新会话的工作目录为当前用户主目录。
+在浮窗的对话应用选择器中选择 **DSH**，勾选片段后按 `⌘Return` 展开可编辑草稿框：选中 DSH 时主按钮（`⌘Return`）为 **填入 DSH 新会话**，插件自动定位 DSH 当前打开或最近使用的工作区（无可用工作区时回退默认工作区），复用其空白会话并以 `whenDraftExists: 'append'` 将草稿追加填入输入框（**不自动发送**，也不覆盖未发草稿），随后激活 DeepSeek Harness 窗口供选择模型、模式并手动回车发送；次按钮保留 **复制并唤醒 DSH** 作为未装插件时的兜底。首次默认目标仍是 Antigravity，若旧配置存有 `"codex"` 启动时自动平滑迁移为 `"dsh"`。
 
-应用先把提示词交给 Codex 的新会话队列，再唤醒 Codex 运行。只有从真实会话读回首轮用户消息、确认请求编号和完整原文字节一致后，才显示已发送并按已保存的“发送后归档”意图归档。排队回执或打开应用本身不算发送成功。
+在 DSH 聊天正文划选文本时，选区下方（避让 DSH 原生顶部引用浮层）自动弹出闭合 Shadow DOM“暂存”胶囊，也可按 `⌃⌥⇧⌘S`（`Hyper+S`）捕获选区并由插件快照补齐会话 ID、首轮开场提问与近 4 轮对话上下文（`#source/dsh`）。在浮窗点击 `#source/dsh` 卡片的 **打开原对话** 按钮可直接切回该 DSH 会话；若 DSH 未运行或插件未就绪，自动诚实回退为复制会话 ID 并提示。
 
-已有请求优先于新的目标、片段选择与归档偏好。等待超时或进程中断后不会自动重发，也不会归档。先到对应应用核对，再使用浮窗中的清除请求动作。归档失败时点击“重试归档”只处理剩余片段。会话已发送而打开失败时，可点击 **打开 Codex 对话** 重试打开同一会话。
+已有请求优先于新的目标、片段选择与归档偏好。等待超时或进程中断后不会自动重发，也不会归档。勾选 **填入后归档** 时，仅在 DSH 插件确认草稿已成功写入输入框并返回会话编号后才归档所选卡片；归档失败可点击“重试归档”只处理剩余片段。开发或排障时可用绝对路径环境变量 `CODING_REWIND_DSH_BIN` 指定 `dsh` CLI，用 `CODING_REWIND_DSH_HOME` 隔离测试用 `DSH_HOME`。
 
 ## Coding Agent CLI 与内嵌 MCP 接入
 
@@ -63,14 +64,14 @@ Codex 接聊使用应用自带的官方 CLI，不需要安装 Antigravity 插件
   - `coding-rewind list [--window 72h|all|<N>h] [--status active|ready|pending|synthesized|all] [--source <platform>] [--limit 1..500] [--data-dir <path>] [--json]`
   - `coding-rewind search <query> [--window 72h|all|<N>h] [--status active|ready|pending|synthesized|all] [--source <platform>] [--limit 1..500] [--data-dir <path>] [--json]`
   - `coding-rewind get <id> [--no-context|--with-context] [--data-dir <path>] [--json]`（返回片段详情、对话上下文及按时间排序的 `notes`）
-  - `coding-rewind create (--text <markdown> | --stdin) [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--tag <tag>...] [--source <platform>] [--source-title <st>] [--source-url <u>] [--data-dir <path>] [--json]`（默认标记 `#source/agent`，来源标签支持 `antigravity|chatgpt|claude|gemini|macos|web|agent`）
+  - `coding-rewind create (--text <markdown> | --stdin) [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--tag <tag>...] [--source <platform>] [--source-title <st>] [--source-url <u>] [--data-dir <path>] [--json]`（默认标记 `#source/agent`，来源标签支持 `antigravity|dsh|chatgpt|claude|gemini|macos|web|agent`）
   - `coding-rewind update <id> [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--add-tag <tag>...] [--remove-tag <tag>...] [--archive | --unarchive] [--data-dir <path>] [--json]`（仅改写首行标签与顶部引用块元数据 `Title`、`Session`、`Context`、`Keywords`，100% 逐字节原样保留正文原文）
   - `coding-rewind note <id> (--text <markdown> | --stdin) [--author <name>] [--data-dir <path>] [--json]`（通过首行带 `<!-- rewind-note-v1 -->` 的 `PRIVATE` 评论追加 AI 笔记，与 `<!-- rewind-context-v1 -->` 严格隔离；未配置 Memos 的纯本机模式下存入 `<dataDir>/local_notes.json`）
   - `coding-rewind archive <id> [--data-dir <path>] [--json]`
   - `coding-rewind delete <id> [--data-dir <path>] [--json]`（严格保留给人工终端操作，绝不通过 MCP 向 AI 暴露；仅删除尚未同步的离线队列项或经云端 `DELETE` 确认的已同步片段，离线状态下拒绝删除已同步片段）
 - **内嵌领域 MCP 服务（`coding-rewind mcp`）**：通过标准 `stdio` JSON-RPC 2.0 固定暴露 7 个领域工具：`list_snippets`、`search_snippets`、`get_snippet`、`archive_snippet`、`create_snippet`、`update_snippet_metadata`、`append_snippet_note`（替代通用 Memos 远端 41 个低信噪比工具与外部 Node 桥接进程，绝不向 Agent 暴露物理删除能力）。默认返回近 72 小时未归档片段；需要调阅更早历史或已归档片段时传入 `window: "all"` 或 `status: "synthesized"` / `"all"`。未配置云端或离线时自动回退读写本机 `hot_cache.json`、`outbox.jsonl` 与 `local_notes.json`。
 - **只读与读写权限门控**：`<dataDir>/config.json` 持久化 `ai_access_mode`（`"read_only"` | `"read_write"`，默认 `"read_write"`，与 `memos_url` 互不覆盖且绝不存储任何令牌），可通过环境变量 `CODING_REWIND_AI_ACCESS=read_only|read_write` 覆盖（非空非法值按故障关闭降级为 `read_only`）。`coding-rewind mcp` 在每次工具调用时实时解析权限，切换设置无须重启 MCP 进程；处于 `read_only` 时立即拒绝全部 4 个写入工具（`create_snippet`、`update_snippet_metadata`、`append_snippet_note`、`archive_snippet`），仅放行 3 个读取工具。
-- **跨宿主零明文接线**：可在桌面端“设置 → 插件与权限 → AI 接入与权限”中点击“复制 MCP 配置”一键粘贴至 Claude Desktop、Cursor、Codex、Antigravity 等客户端，也可在 `~/.config/agent-mcp/servers.json` 中注册后运行 `mcp-sync apply` 统一同步，无需在任何 JSON 配置文件写入访问令牌：
+- **跨宿主零明文接线**：可在桌面端“设置 → 插件与权限 → AI 接入与权限”中点击“复制 MCP 配置”一键粘贴至 Claude Desktop、Cursor、DSH、Antigravity 等客户端，也可在 `~/.config/agent-mcp/servers.json` 中注册后运行 `mcp-sync apply` 统一同步，无需在任何 JSON 配置文件写入访问令牌：
 
 ```json
 {

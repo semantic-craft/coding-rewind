@@ -12,6 +12,7 @@ struct HUDCardInspectorView: View {
     let onCopyText: () -> Void
     let onSourceAction: () -> Void
     let onWakeAntigravity: () -> Void
+    let onWakeDSH: () -> Void
     let onCopySessionID: (String) -> Void
     let onRetry: () -> Void
     let onClose: () -> Void
@@ -96,6 +97,14 @@ struct HUDCardInspectorView: View {
                         .focusEffectDisabled()
                         .font(.system(size: 10.5))
                         .accessibilityIdentifier("hud.inspector.wakeAntigravity")
+                    } else if case .dshSession = locator {
+                        Button(AppStrings.wakeDSHButton(in: language)) {
+                            onWakeDSH()
+                        }
+                        .rewindButtonRole(.toolbar)
+                        .focusEffectDisabled()
+                        .font(.system(size: 10.5))
+                        .accessibilityIdentifier("hud.inspector.wakeDSH")
                     }
                 }
 

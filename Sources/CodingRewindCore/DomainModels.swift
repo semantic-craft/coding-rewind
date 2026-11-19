@@ -168,12 +168,13 @@ public struct CaptureContext: Codable, Equatable, Hashable, Sendable {
 public enum SourceLocator: Equatable, Hashable, Sendable {
     case web(url: URL, sessionID: String?)
     case antigravitySession(sessionID: String)
+    case dshSession(sessionID: String)
 
     public var sessionID: String? {
         switch self {
         case .web(_, let sessionID):
             return sessionID
-        case .antigravitySession(let sessionID):
+        case .antigravitySession(let sessionID), .dshSession(let sessionID):
             return sessionID
         }
     }
@@ -194,6 +195,13 @@ public enum SourceLocator: Equatable, Hashable, Sendable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !combined.isEmpty else { return nil }
             return .antigravitySession(sessionID: combined)
+        case "dsh-session":
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let combined = ((components?.host ?? url.host ?? "") + (components?.path ?? url.path))
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !combined.isEmpty else { return nil }
+            return .dshSession(sessionID: combined)
         case "http", "https":
             guard let host = url.host, !host.isEmpty else { return nil }
             return .web(url: url, sessionID: extractChatSessionID(from: url))
@@ -247,6 +255,7 @@ public enum SourceLocator: Equatable, Hashable, Sendable {
 
 public struct CapturedSelection: Equatable, Sendable {
     public static let antigravityBundleIdentifier = "com.google.antigravity"
+    public static let dshBundleIdentifier = "com.deepseek.dsh"
 
     public let text: String
     public let bundleIdentifier: String
