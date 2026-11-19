@@ -11,7 +11,6 @@ public enum AppCommand: Equatable, Sendable {
     case captureSelection
     case captureSelectionHotkey
     case launchConversation
-    case launchIn(ConversationHost)
     case copyDraftAndWakeHost
     case sendConversationDraft
     case refreshHotStream
@@ -21,6 +20,7 @@ public enum AppCommand: Equatable, Sendable {
     case requestAccessibility
     case resetAccessibility
     case openSettings
+    case openSettingsPage(SettingsPage)
     case checkForUpdates
     case selectRecentCard(String)
     case showAbout
@@ -83,8 +83,6 @@ public enum MainMenuBuilder {
         appMenu.addItem(makeCommandMenuItem(title: AppStrings.checkForUpdatesMenu(in: language), command: .checkForUpdates, handler: onCommand))
         appMenu.addItem(.separator())
         appMenu.addItem(makeCommandMenuItem(title: AppStrings.settingsEllipsis(in: language), command: .openSettings, keyEquivalent: ",", handler: onCommand))
-        appMenu.addItem(makeCommandMenuItem(title: AppStrings.installOrRepairAntigravityPlugin(in: language), command: .installOrRepairPlugin, handler: onCommand))
-        appMenu.addItem(makeCommandMenuItem(title: AppStrings.installOrRepairDSHPlugin(in: language), command: .installOrRepairDSHPlugin, handler: onCommand))
         appMenu.addItem(.separator())
 
         let hideItem = NSMenuItem(title: AppStrings.hideApp(in: language), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -114,20 +112,13 @@ public enum MainMenuBuilder {
         actionsMenu.addItem(captureItem)
         actionsMenu.addItem(
             makeCommandMenuItem(
-                title: AppStrings.startChatInSelectedApp(in: language),
+                title: AppStrings.startChat(in: language),
                 command: .launchConversation,
                 keyEquivalent: "\r",
                 modifiers: [.command],
                 handler: onCommand
             )
         )
-        for host in ConversationHost.allCases {
-            actionsMenu.addItem(makeCommandMenuItem(
-                title: AppStrings.startChatInHost(host, in: language),
-                command: .launchIn(host),
-                handler: onCommand
-            ))
-        }
         actionsMenu.addItem(
             makeCommandMenuItem(
                 title: AppStrings.syncNow(in: language),
@@ -337,7 +328,6 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
     public init(
         shortcuts: AppShortcuts,
-        language: AppLanguage = .zhHans,
         snapshotProvider: @escaping @MainActor () -> MenuStatusSnapshot,
         onCommand: @escaping @MainActor (AppCommand) -> Void
     ) {
@@ -353,7 +343,6 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
 
         if let button = statusItem.button {
             button.setAccessibilityLabel("Coding Rewind")
-            button.toolTip = AppStrings.statusItemTooltip(in: language)
             button.target = self
             button.action = #selector(handleStatusButtonClick(_:))
             button.sendAction(on: [.leftMouseDown, .rightMouseDown])
@@ -364,10 +353,6 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
             }
         }
         refreshIcon()
-    }
-
-    public func updateLanguage(_ language: AppLanguage) {
-        statusItem.button?.toolTip = AppStrings.statusItemTooltip(in: language)
     }
 
     public var anchorFrame: NSRect? {
@@ -404,6 +389,10 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
     public func menuNeedsUpdate(_ menu: NSMenu) {
         let snapshot = snapshotProvider()
         let lang = snapshot.language
+        let isMemosConfigured: Bool = {
+            if case .configured = snapshot.connection { return true }
+            return false
+        }()
         applyIcon(for: snapshot)
         menu.removeAllItems()
 
@@ -441,31 +430,6 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
         menu.addItem(captureItem)
-        menu.addItem(
-            makeCommandMenuItem(
-                title: snapshot.launchTitle,
-                command: .launchConversation,
-                keyEquivalent: "\r",
-                modifiers: [.command],
-                handler: onCommand
-            )
-        )
-        for host in ConversationHost.allCases {
-            menu.addItem(makeCommandMenuItem(
-                title: AppStrings.startChatInHost(host, in: lang),
-                command: .launchIn(host),
-                handler: onCommand
-            ))
-        }
-        menu.addItem(
-            makeCommandMenuItem(
-                title: AppStrings.syncNow(in: lang),
-                command: .refreshHotStream,
-                keyEquivalent: "r",
-                modifiers: [.command],
-                handler: onCommand
-            )
-        )
 
         if !snapshot.recentCards.isEmpty {
             let recentTitle = AppStrings.recentClips(in: lang)
@@ -486,44 +450,38 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
             menu.addItem(recentRoot)
         }
 
+        if isMemosConfigured {
+            menu.addItem(
+                makeCommandMenuItem(
+                    title: AppStrings.syncNow(in: lang),
+                    command: .refreshHotStream,
+                    keyEquivalent: "r",
+                    modifiers: [.command],
+                    handler: onCommand
+                )
+            )
+        }
+
         menu.addItem(.separator())
 
-        let isMemosConfigured: Bool = {
-            if case .configured = snapshot.connection { return true }
-            return false
-        }()
-        menu.addItem(
-            makeCommandMenuItem(
-                title: AppStrings.openMemosWeb(withArrow: true, in: lang),
-                command: .openMemosWeb,
-                isEnabled: isMemosConfigured,
-                handler: onCommand
+        if isMemosConfigured {
+            menu.addItem(
+                makeCommandMenuItem(
+                    title: AppStrings.openMemosWeb(withArrow: true, in: lang),
+                    command: .openMemosWeb,
+                    handler: onCommand
+                )
             )
-        )
-        menu.addItem(
-            makeCommandMenuItem(
-                title: AppStrings.installOrRepairAntigravityPlugin(in: lang),
-                command: .installOrRepairPlugin,
-                state: snapshot.isPluginReady ? .on : .off,
-                handler: onCommand
+        }
+        if let attentionTitle = snapshot.attentionTitle {
+            menu.addItem(
+                makeCommandMenuItem(
+                    title: attentionTitle,
+                    command: .openSettingsPage(.integrations),
+                    handler: onCommand
+                )
             )
-        )
-        menu.addItem(
-            makeCommandMenuItem(
-                title: AppStrings.installOrRepairDSHPlugin(in: lang),
-                command: .installOrRepairDSHPlugin,
-                state: snapshot.isDSHPluginReady ? .on : .off,
-                handler: onCommand
-            )
-        )
-        menu.addItem(
-            makeCommandMenuItem(
-                title: AppStrings.accessibilityStatusMenu(isTrusted: snapshot.isAccessibilityTrusted, in: lang),
-                command: .requestAccessibility,
-                state: snapshot.isAccessibilityTrusted ? .on : .off,
-                handler: onCommand
-            )
-        )
+        }
         menu.addItem(
             makeCommandMenuItem(
                 title: AppStrings.settingsEllipsis(in: lang),

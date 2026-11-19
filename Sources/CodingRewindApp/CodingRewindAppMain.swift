@@ -279,7 +279,6 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
             let statusController = StatusItemController(
                 shortcuts: shortcuts,
-                language: initialLanguage,
                 snapshotProvider: { [weak self] in
                     guard let self, let coord = self.coordinator else {
                         return MenuStatusSnapshot(
@@ -355,7 +354,6 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                     )
                 }
                 self.selectionPopupController?.language = lang
-                self.statusItemController?.updateLanguage(lang)
                 self.settingsWindowController?.updateLanguage(lang)
             }
 
@@ -400,14 +398,12 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             triggerCapture(preferInPlacePopup: true)
         case .captureSelection:
             triggerCapture(preferInPlacePopup: false)
-        case .launchConversation, .launchIn:
+        case .launchConversation:
             guard let coord = coordinator, !coord.isLaunchingConversation else { return }
-            let host: ConversationHost?
-            if case .launchIn(let target) = command { host = target } else { host = nil }
 
             if coord.hasActiveHandoffConversation {
                 Task { @MainActor [weak self] in
-                    let outcome = await coord.launchChecked(in: host)
+                    let outcome = await coord.launchChecked()
                     guard let self else { return }
                     self.statusItemController?.refreshIcon()
                     if outcome == nil || coord.isErrorBanner {
@@ -418,16 +414,13 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if coord.conversationDraft != nil {
-                if let host {
-                    coord.selectConversationDraftHost(host)
-                }
                 hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
                 hudPanel?.focusDraftEditorIfPresent()
                 statusItemController?.refreshIcon()
                 return
             }
 
-            if coord.openConversationDraft(in: host) {
+            if coord.openConversationDraft() {
                 hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
                 hudPanel?.focusDraftEditorIfPresent()
                 statusItemController?.refreshIcon()
@@ -469,7 +462,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             if let baseURL = coord.paths.resolveMemosBaseURL(environment: coord.environment) {
                 coord.openURL(baseURL)
             } else {
-                perform(.openSettings)
+                perform(.openSettingsPage(.connection))
             }
         case .installOrRepairPlugin:
             installPlugin()
@@ -496,6 +489,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             statusItemController?.refreshIcon()
         case .openSettings:
             settingsWindowController?.show()
+        case .openSettingsPage(let page):
+            settingsWindowController?.show(page: page)
         case .checkForUpdates:
             settingsWindowController?.show(page: .about)
             Task { @MainActor [weak self] in

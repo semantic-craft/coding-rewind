@@ -39,7 +39,6 @@ extension AppShortcutsTests {
         var currentLanguage = appearance.effectiveLanguage
         let statusController = StatusItemController(
             shortcuts: shortcuts,
-            language: currentLanguage,
             snapshotProvider: {
                 MenuStatusSnapshot(
                     isHUDVisible: false,
@@ -83,7 +82,6 @@ extension AppShortcutsTests {
                 language: lang,
                 onCommand: { _ in }
             )
-            statusController.updateLanguage(lang)
             popup.language = lang
         }
 
@@ -91,6 +89,8 @@ extension AppShortcutsTests {
         #expect(zhAppSubmenu.items.contains { $0.title == "关于 Coding Rewind" })
         #expect(zhAppSubmenu.items.contains { $0.title == "检查更新…" })
         #expect(NSApplication.shared.mainMenu?.items.contains { $0.title == "操作" } == true)
+        #expect(statusController.statusItem.button?.toolTip == nil)
+        #expect(statusController.statusItem.button?.accessibilityLabel() == "Coding Rewind")
         statusController.menuNeedsUpdate(statusController.menu)
         #expect(!statusController.menu.items.contains { $0.title == "检查更新…" })
         #expect(!statusController.menu.items.contains { $0.title == "关于 Coding Rewind" })
@@ -112,7 +112,8 @@ extension AppShortcutsTests {
         #expect(statusController.menu.items.contains { $0.title == "Settings…" })
         #expect(statusController.menu.items.contains { $0.title == "Quit Coding Rewind" })
         #expect(statusController.menu.items.contains { $0.title == "Show Clips HUD" })
-        #expect(statusController.statusItem.button?.toolTip == AppStrings.statusItemTooltip(in: .en))
+        #expect(statusController.statusItem.button?.toolTip == nil)
+        #expect(statusController.statusItem.button?.accessibilityLabel() == "Coding Rewind")
         #expect(popup.phase.labelText(in: popup.language) == "Stash")
         #expect(popup.isVisible)
         #expect(KeyboardShortcuts.localizationLanguageCode == "en")
@@ -930,7 +931,6 @@ extension AppShortcutsTests {
         defer { settings.window?.close() }
         let statusController = StatusItemController(
             shortcuts: shortcuts,
-            language: .zhHans,
             snapshotProvider: {
                 coord.menuStatusSnapshot(isHUDVisible: false, isAccessibilityTrusted: true)
             },
@@ -1055,6 +1055,332 @@ extension AppShortcutsTests {
         #expect(AppStrings.aboutGitHubRepoAccessibilityLabel(in: .en) == "GitHub Repository")
         #expect(AppStrings.aboutReleaseNotesAccessibilityLabel(in: .zhHans) == "发布版本与更新日志")
         #expect(AppStrings.aboutReleaseNotesAccessibilityLabel(in: .en) == "Releases & Changelog")
+    }
+
+    @Test func statusMenuLayoutCoversHealthyConfiguredLocalOnlyAndAttentionRouting() throws {
+        let root = makeTestRoot()
+        let defaults = try #require(UserDefaults(suiteName: Self.updaterSuite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            Self.cleanUpdaterSuite()
+        }
+
+        struct NoopCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection {
+                throw RewindError.emptySelection
+            }
+        }
+
+        func assertCleanSeparators(_ items: [NSMenuItem]) {
+            #expect(items.first?.isSeparatorItem == false)
+            #expect(items.last?.isSeparatorItem == false)
+            #expect(!zip(items, items.dropFirst()).contains { $0.isSeparatorItem && $1.isSeparatorItem })
+        }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true),
+            dshHomeDirectoryURL: root.appendingPathComponent("DSHHome", isDirectory: true)
+        )
+        let qaEnv = [
+            StoragePaths.qaEnvironmentKey: "1",
+            StoragePaths.dataDirEnvironmentKey: paths.dataDirectoryURL.path,
+            StoragePaths.antigravityConfigEnvironmentKey: paths.antigravityConfigDirectoryURL.path
+        ]
+        let coord = try AppCoordinator(paths: paths, environment: qaEnv, capturer: NoopCapturer(), language: .zhHans)
+        let appearance = AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in true },
+            preferredLanguagesProvider: { ["zh-Hans-CN"] }
+        )
+        let delegate = CodingRewindAppDelegate()
+        let shortcuts = AppShortcuts(language: .zhHans) { delegate.perform($0) }
+        defer { shortcuts.stop() }
+        let settings = SettingsWindowController(
+            coordinator: coord,
+            appearance: appearance,
+            shortcuts: shortcuts,
+            onCommand: { delegate.perform($0) }
+        )
+        defer { settings.window?.close() }
+        delegate.coordinator = coord
+        delegate.appearance = appearance
+        delegate.shortcuts = shortcuts
+        delegate.settingsWindowController = settings
+
+        let baseURL = try #require(URL(string: "https://memos.example.com"))
+        let sampleRecent = [
+            MenuStatusSnapshot.RecentCardItem(
+                id: "clip-1",
+                titlePreview: "Swift concurrency note",
+                sourcePlatform: "claude",
+                isChecked: true
+            )
+        ]
+
+        @MainActor final class SnapshotBox {
+            var value: MenuStatusSnapshot
+            init(_ value: MenuStatusSnapshot) { self.value = value }
+        }
+        let snapshotBox = SnapshotBox(
+            MenuStatusSnapshot(
+                isHUDVisible: false,
+                hotCardCount: 1,
+                checkedCardCount: 1,
+                pendingOutboxCount: 0,
+                connection: .configured(hostSummary: "memos.example.com", baseURL: baseURL),
+                isPluginReady: true,
+                isDSHPluginReady: false,
+                pluginSummary: "",
+                isAccessibilityTrusted: true,
+                recentCards: sampleRecent,
+                conversationHost: .antigravity,
+                language: .zhHans
+            )
+        )
+        let statusController = StatusItemController(
+            shortcuts: shortcuts,
+            snapshotProvider: { snapshotBox.value },
+            onCommand: { delegate.perform($0) }
+        )
+        defer { NSStatusBar.system.removeStatusItem(statusController.statusItem) }
+        delegate.statusItemController = statusController
+
+        #expect(statusController.statusItem.button?.toolTip == nil)
+        #expect(statusController.statusItem.button?.accessibilityLabel() == "Coding Rewind")
+
+        statusController.menuNeedsUpdate(statusController.menu)
+        let configuredItems = statusController.menu.items
+        assertCleanSeparators(configuredItems)
+        let configuredTitles = configuredItems.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(configuredTitles == [
+            "Coding Rewind · 1 条片段",
+            "Memos 已配置（memos.example.com）",
+            "显示片段浮窗",
+            "保存所选文本",
+            "最近片段",
+            "立即同步",
+            "查看全部历史（Memos）↗",
+            "设置…",
+            "退出 Coding Rewind"
+        ])
+        #expect(!configuredItems.contains { $0.keyEquivalent == "\r" })
+        #expect(!configuredItems.contains { $0.state == .on })
+        #expect(!configuredTitles.contains { $0.contains("开始对话") || $0.contains("插件") || $0.contains("辅助功能") })
+        let recentSubmenu = try #require(configuredItems.first { $0.title == "最近片段" }?.submenu)
+        #expect(recentSubmenu.items.count == 1)
+        #expect(recentSubmenu.items[0].title == "Swift concurrency note · #claude")
+        #expect(recentSubmenu.items[0].state == .on)
+
+        snapshotBox.value = MenuStatusSnapshot(
+            isHUDVisible: false,
+            hotCardCount: 0,
+            checkedCardCount: 0,
+            pendingOutboxCount: 0,
+            connection: .unconfigured,
+            isPluginReady: true,
+            isDSHPluginReady: false,
+            pluginSummary: "",
+            isAccessibilityTrusted: true,
+            recentCards: [],
+            conversationHost: .antigravity,
+            language: .zhHans
+        )
+        statusController.menuNeedsUpdate(statusController.menu)
+        let localOnlyItems = statusController.menu.items
+        assertCleanSeparators(localOnlyItems)
+        let localOnlyTitles = localOnlyItems.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(localOnlyTitles == [
+            "Coding Rewind · 0 条片段",
+            "仅保存在本机（未配置 Memos）",
+            "显示片段浮窗",
+            "保存所选文本",
+            "设置…",
+            "退出 Coding Rewind"
+        ])
+        #expect(!localOnlyTitles.contains("立即同步"))
+        #expect(!localOnlyTitles.contains("查看全部历史（Memos）↗"))
+        #expect(!localOnlyTitles.contains("最近片段"))
+
+        snapshotBox.value = MenuStatusSnapshot(
+            isHUDVisible: false,
+            hotCardCount: 0,
+            checkedCardCount: 0,
+            pendingOutboxCount: 0,
+            connection: .unconfigured,
+            isPluginReady: false,
+            isDSHPluginReady: true,
+            pluginSummary: "",
+            isAccessibilityTrusted: true,
+            recentCards: [],
+            conversationHost: .dsh,
+            language: .zhHans
+        )
+        statusController.menuNeedsUpdate(statusController.menu)
+        let inactiveAntigravityItems = statusController.menu.items
+        assertCleanSeparators(inactiveAntigravityItems)
+        #expect(!inactiveAntigravityItems.contains { $0.title.hasPrefix("需要处理：") })
+
+        let unhealthyCases: [(Bool, Bool, Bool, ConversationHost, String)] = [
+            (false, true, true, .antigravity, "需要处理：辅助功能权限未授权…"),
+            (true, false, true, .antigravity, "需要处理：Antigravity 插件待安装或修复…"),
+            (true, true, false, .dsh, "需要处理：DSH 插件待安装或修复…"),
+            (false, false, true, .antigravity, "需要处理：辅助功能权限与 Antigravity 插件…"),
+            (false, true, false, .dsh, "需要处理：辅助功能权限与 DSH 插件…")
+        ]
+        for (axTrusted, agReady, dshReady, host, expectedTitle) in unhealthyCases {
+            snapshotBox.value = MenuStatusSnapshot(
+                isHUDVisible: false,
+                hotCardCount: 0,
+                checkedCardCount: 0,
+                pendingOutboxCount: 0,
+                connection: .configured(hostSummary: "memos.example.com", baseURL: baseURL),
+                isPluginReady: agReady,
+                isDSHPluginReady: dshReady,
+                pluginSummary: "",
+                isAccessibilityTrusted: axTrusted,
+                recentCards: [],
+                conversationHost: host,
+                language: .zhHans
+            )
+            statusController.menuNeedsUpdate(statusController.menu)
+            let items = statusController.menu.items
+            assertCleanSeparators(items)
+            let attentionItems = items.filter { $0.title.hasPrefix("需要处理：") }
+            #expect(attentionItems.count == 1)
+            #expect(attentionItems[0].title == expectedTitle)
+        }
+
+        settings.navigationModel.selectedPage = .general
+        settings.window?.close()
+        #expect(settings.window?.isVisible != true)
+
+        let attentionItem = try #require(statusController.menu.items.first { $0.title.hasPrefix("需要处理：") })
+        let attentionAction = try #require(attentionItem.action)
+        _ = attentionItem.target?.perform(attentionAction, with: attentionItem)
+        #expect(settings.window?.isVisible == true)
+        #expect(settings.navigationModel.selectedPage == .integrations)
+    }
+
+    @Test func mainMenuStreamlinesAppAndActionsSubmenusAndRoutesUnconfiguredMemosToConnectionSettings() throws {
+        let root = makeTestRoot()
+        let defaults = try #require(UserDefaults(suiteName: Self.updaterSuite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            Self.cleanUpdaterSuite()
+        }
+
+        struct NoopCapturer: SelectionCapturing {
+            func captureFrontmostSelection() async throws -> CapturedSelection {
+                throw RewindError.emptySelection
+            }
+        }
+
+        let paths = try StoragePaths(
+            dataDirectoryURL: root.appendingPathComponent("Data", isDirectory: true),
+            antigravityConfigDirectoryURL: root.appendingPathComponent("Config", isDirectory: true),
+            dshHomeDirectoryURL: root.appendingPathComponent("DSHHome", isDirectory: true)
+        )
+        let qaEnv = [
+            StoragePaths.qaEnvironmentKey: "1",
+            StoragePaths.dataDirEnvironmentKey: paths.dataDirectoryURL.path,
+            StoragePaths.antigravityConfigEnvironmentKey: paths.antigravityConfigDirectoryURL.path
+        ]
+        let coord = try AppCoordinator(paths: paths, environment: qaEnv, capturer: NoopCapturer(), language: .zhHans)
+        var openedURLs: [URL] = []
+        coord.onOpenURL = { url in
+            openedURLs.append(url)
+            return true
+        }
+        let appearance = AppAppearancePreferences(
+            defaults: defaults,
+            applyPolicy: { _ in true },
+            preferredLanguagesProvider: { ["zh-Hans-CN"] }
+        )
+        let delegate = CodingRewindAppDelegate()
+        let shortcuts = AppShortcuts(language: .zhHans) { delegate.perform($0) }
+        defer { shortcuts.stop() }
+        let settings = SettingsWindowController(
+            coordinator: coord,
+            appearance: appearance,
+            shortcuts: shortcuts,
+            onCommand: { delegate.perform($0) }
+        )
+        defer { settings.window?.close() }
+        delegate.coordinator = coord
+        delegate.appearance = appearance
+        delegate.shortcuts = shortcuts
+        delegate.settingsWindowController = settings
+
+        let zhMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts, language: .zhHans) {
+            delegate.perform($0)
+        }
+        #expect(zhMenu.items.map(\.title) == ["Coding Rewind", "操作", "编辑", "窗口"])
+
+        let appSubmenu = try #require(zhMenu.items[0].submenu)
+        let appTitles = appSubmenu.items.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(appTitles == [
+            "关于 Coding Rewind",
+            "检查更新…",
+            "设置…",
+            "隐藏 Coding Rewind",
+            "隐藏其他",
+            "全部显示",
+            "退出 Coding Rewind"
+        ])
+        #expect(!appTitles.contains { $0.contains("插件") })
+        #expect(!zip(appSubmenu.items, appSubmenu.items.dropFirst()).contains { $0.isSeparatorItem && $1.isSeparatorItem })
+
+        let actionsSubmenu = try #require(zhMenu.items[1].submenu)
+        let actionsTitles = actionsSubmenu.items.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(actionsTitles == [
+            "显示或隐藏片段浮窗",
+            "保存所选文本",
+            "开始对话",
+            "立即同步",
+            "查看全部历史（Memos）"
+        ])
+        let chatItems = actionsSubmenu.items.filter { $0.title.contains("开始对话") }
+        #expect(chatItems.count == 1)
+        #expect(chatItems[0].keyEquivalent == "\r")
+        #expect(chatItems[0].keyEquivalentModifierMask == [.command])
+        #expect(!actionsTitles.contains { $0.contains("Antigravity") || $0.contains("DSH") })
+
+        let editSubmenu = try #require(zhMenu.items[2].submenu)
+        #expect(editSubmenu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
+            "撤销", "重做", "剪切", "拷贝", "粘贴", "全选"
+        ])
+        let windowSubmenu = try #require(zhMenu.items[3].submenu)
+        #expect(windowSubmenu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
+            "关闭窗口", "前置片段浮窗"
+        ])
+
+        settings.navigationModel.selectedPage = .general
+        settings.window?.close()
+        let memosItem = try #require(actionsSubmenu.items.first { $0.title == "查看全部历史（Memos）" })
+        let memosAction = try #require(memosItem.action)
+        _ = memosItem.target?.perform(memosAction, with: memosItem)
+        #expect(settings.window?.isVisible == true)
+        #expect(settings.navigationModel.selectedPage == .connection)
+        #expect(openedURLs.isEmpty)
+
+        try paths.saveMemosURLString("https://memos.example.com")
+        _ = memosItem.target?.perform(memosAction, with: memosItem)
+        #expect(openedURLs.map(\.absoluteString) == ["https://memos.example.com"])
+
+        let enMenu = MainMenuBuilder.buildMainMenu(shortcuts: shortcuts, language: .en) {
+            delegate.perform($0)
+        }
+        let enAppTitles = try #require(enMenu.items[0].submenu).items.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(!enAppTitles.contains { $0.contains("Plugin") })
+        let enActionsTitles = try #require(enMenu.items[1].submenu).items.filter { !$0.isSeparatorItem }.map(\.title)
+        #expect(enActionsTitles == [
+            "Show or Hide Clips HUD",
+            "Save Selection",
+            "Start Chat",
+            "Sync Now",
+            "View All History (Memos)"
+        ])
     }
 
     private func makeTestRoot() -> URL {

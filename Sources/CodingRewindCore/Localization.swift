@@ -228,30 +228,46 @@ public enum L10n {
 
     public static func menuHeaderSubtitle(
         connection: MenuStatusSnapshot.ConnectionState,
-        isPluginReady: Bool,
         in language: AppLanguage
     ) -> String {
-        switch language {
-        case .zhHans:
-            let memosPart: String
-            switch connection {
-            case .configured(let hostSummary, _):
-                memosPart = "Memos 已配置 \(hostSummary)"
-            case .unconfigured:
-                memosPart = "Memos 尚未设置，可先保存到本机"
-            }
-            let pluginPart = isPluginReady ? "插件已安装" : "插件需要安装或修复"
-            return "\(memosPart) · \(pluginPart)"
-        case .en:
-            let memosPart: String
-            switch connection {
-            case .configured(let hostSummary, _):
-                memosPart = "Memos configured (\(hostSummary))"
-            case .unconfigured:
-                memosPart = "Memos not configured (saving locally)"
-            }
-            let pluginPart = isPluginReady ? "Plugin installed" : "Plugin needs install or repair"
-            return "\(memosPart) · \(pluginPart)"
+        switch (language, connection) {
+        case (.zhHans, .configured(let hostSummary, _)):
+            return "Memos 已配置（\(hostSummary)）"
+        case (.zhHans, .unconfigured):
+            return "仅保存在本机（未配置 Memos）"
+        case (.en, .configured(let hostSummary, _)):
+            return "Memos configured (\(hostSummary))"
+        case (.en, .unconfigured):
+            return "Local only (Memos not configured)"
+        }
+    }
+
+    public static func menuAttentionTitle(
+        issues: [MenuStatusSnapshot.AttentionIssue],
+        in language: AppLanguage
+    ) -> String? {
+        guard !issues.isEmpty else { return nil }
+        let needsAccessibility = issues.contains(.accessibilityPermission)
+        let pluginHost: ConversationHost? = issues.compactMap { issue in
+            if case .activeHostPlugin(let host) = issue { return host }
+            return nil
+        }.first
+
+        switch (language, needsAccessibility, pluginHost) {
+        case (.zhHans, true, .some(let host)):
+            return "需要处理：辅助功能权限与 \(host.displayName) 插件…"
+        case (.en, true, .some(let host)):
+            return "Needs Attention: Accessibility & \(host.displayName) Plugin…"
+        case (.zhHans, true, .none):
+            return "需要处理：辅助功能权限未授权…"
+        case (.en, true, .none):
+            return "Needs Attention: Accessibility Permission…"
+        case (.zhHans, false, .some(let host)):
+            return "需要处理：\(host.displayName) 插件待安装或修复…"
+        case (.en, false, .some(let host)):
+            return "Needs Attention: \(host.displayName) Plugin…"
+        case (_, false, .none):
+            return nil
         }
     }
 
@@ -261,19 +277,6 @@ public enum L10n {
             return isHUDVisible ? "隐藏片段浮窗" : "显示片段浮窗"
         case .en:
             return isHUDVisible ? "Hide Clips HUD" : "Show Clips HUD"
-        }
-    }
-
-    public static func menuLaunchTitle(checkedCardCount: Int, in language: AppLanguage) -> String {
-        switch language {
-        case .zhHans:
-            return checkedCardCount > 0
-                ? "在所选应用中开始对话（已选 \(checkedCardCount) 条）"
-                : "在所选应用中开始对话"
-        case .en:
-            return checkedCardCount > 0
-                ? "Start Chat in Selected App (\(checkedCardCount) selected)"
-                : "Start Chat in Selected App"
         }
     }
 
