@@ -12,9 +12,9 @@
 <article id="places-local-upgrade-and-live-cli"><h3>本机签名升级与真实 Memos 位置导入</h3><span class="badge">done</span><p>build-app-bundle.sh /Applications 以 Developer ID Application（LQAVR62TK2）重建并通过 codesign --verify --deep --strict；已安装 CLI 对真实 Memos 26.11.0 执行 place add 两次结果一致（409 回退更新路径实测成立），并幂等导入 ~/Writing 下 21 个论文与书稿为 #project 位置（重跑全部 kept）；HUD 实屏显示「热流 72h | 未落位 · 20 | 地图」分段。</p><ul>
 <li>note : 本机 CLI 与实屏截图核验，见会话 walkthrough</li>
 </ul><p>Next: </p></article>
-<article id="places-vps-enricher-rollout"><h3>VPS enricher 位置落位部署</h3><span class="badge">blocked</span><p>enricher 新版本已合入 main 但未部署：ssh aliyun-research 经 1Password SSH agent 与 cloudflared access 需要用户在本机批准，代理会话无法完成。</p><ul>
-<li>note : ssh 在等待批准时挂起，未越过凭据门禁</li>
-</ul><p>Next: 用户批准 1Password / Cloudflare Access 后，同步 deploy/vps/enricher/enricher.py 至 /srv/data/apps/coding-rewind 并原位重建 rewind-enricher，新建一条剪藏回读首行确认带 #project 标签。</p></article>
+<article id="places-vps-enricher-rollout"><h3>VPS enricher 位置落位部署</h3><span class="badge">done</span><p>用户批准 1Password SSH 后，将 enricher.py 与 test_enricher.py 同步至 aliyun-research:/srv/data/apps/coding-rewind（root 0644，SHA-256 c70351c0…955d69 与 main 一致，旧版备份为 ~/enricher.py.prev），目标机 19/19 单测通过；docker compose up -d --build --no-deps rewind-enricher 原位重建，coding-rewind-memos-1 零重启，容器 /app/enricher.py 哈希一致，/healthz 200。端到端：CLI 新建 Warhol 主题验收片段，5 秒内翻转为 #rewind/ready 并自动带上 #project/paper-02，原文逐字节一致，list --place project/paper-02 可取回；验收片段已 DELETE 清理。</p><ul>
+<li>note : VPS 部署与端到端回读核验</li>
+</ul><p>Next: </p></article>
 <article id="places-hud-interactive-acceptance"><h3>HUD 位置交互实机点检</h3><span class="badge">unverified</span><p>位置标签移除、⌘P 选择器在非激活面板中的输入与地图视图点击仅由离屏 AX 测试覆盖，尚未实机逐项点检。</p><ul>
 </ul><p>Next: 在 HUD 切到「未落位」，对一条片段按 ⌘P 选择 论文02 回车，确认标签出现且 coding-rewind list --place project/paper-02 能查到；再点 × 移除。</p></article>
 </section>

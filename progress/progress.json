@@ -527,14 +527,14 @@
           "evidence": [
             {
               "kind": "note",
-              "note": "ssh 在等待批准时挂起，未越过凭据门禁",
-              "ref": ""
+              "ref": "",
+              "note": "VPS 部署与端到端回读核验"
             }
           ],
           "id": "places-vps-enricher-rollout",
-          "next": "用户批准 1Password / Cloudflare Access 后，同步 deploy/vps/enricher/enricher.py 至 /srv/data/apps/coding-rewind 并原位重建 rewind-enricher，新建一条剪藏回读首行确认带 #project 标签。",
-          "status": "blocked",
-          "summary": "enricher 新版本已合入 main 但未部署：ssh aliyun-research 经 1Password SSH agent 与 cloudflared access 需要用户在本机批准，代理会话无法完成。",
+          "next": "",
+          "status": "done",
+          "summary": "用户批准 1Password SSH 后，将 enricher.py 与 test_enricher.py 同步至 aliyun-research:/srv/data/apps/coding-rewind（root 0644，SHA-256 c70351c0…955d69 与 main 一致，旧版备份为 ~/enricher.py.prev），目标机 19/19 单测通过；docker compose up -d --build --no-deps rewind-enricher 原位重建，coding-rewind-memos-1 零重启，容器 /app/enricher.py 哈希一致，/healthz 200。端到端：CLI 新建 Warhol 主题验收片段，5 秒内翻转为 #rewind/ready 并自动带上 #project/paper-02，原文逐字节一致，list --place project/paper-02 可取回；验收片段已 DELETE 清理。",
           "title": "VPS enricher 位置落位部署"
         },
         {
