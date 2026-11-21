@@ -342,20 +342,18 @@ struct DeveloperCredentialsResolverTests {
         let fixture = try Fixture()
         defer { fixture.remove() }
 
-        // 1. Default production validator MUST reject unsigned scripts and arbitrary binaries (blocking TCC inheritance)
         #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
             try DeveloperCredentialsResolver.resolveEnvironment(
                 configurationURL: fixture.configurationURL,
                 environment: fixture.environment
             )
         }
-        #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path))
+        #expect(!FileManager.default.fileExists(atPath: fixture.argumentsURL.path), "unsigned op_executable must not execute")
         #expect(!DeveloperCredentialsResolver.isTrustedOnePasswordCLI(URL(fileURLWithPath: "/bin/sh")))
 
-        // Verify real AgileBits 1Password CLI signature acceptance when installed on host
         let hostOp = URL(fileURLWithPath: "/opt/homebrew/bin/op").resolvingSymlinksInPath()
         if FileManager.default.isExecutableFile(atPath: hostOp.path) {
-            #expect(DeveloperCredentialsResolver.isTrustedOnePasswordCLI(hostOp))
+            #expect(DeveloperCredentialsResolver.isTrustedOnePasswordCLI(hostOp), "AgileBits 1Password CLI signature must be accepted")
         }
 
         let appSupportDir = fixture.root.appendingPathComponent("StrictData", isDirectory: true)
@@ -363,7 +361,6 @@ struct DeveloperCredentialsResolverTests {
         let externalURL = appSupportDir.appendingPathComponent("DeveloperCredentials.plist")
         let plistBytes = try Data(contentsOf: fixture.configurationURL)
 
-        // 2. Group/world-readable external plist (0644) must be rejected
         try AtomicFile.writeData(plistBytes, to: externalURL, permissions: 0o644)
         #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
             try DeveloperCredentialsResolver.resolveEnvironment(
@@ -374,7 +371,6 @@ struct DeveloperCredentialsResolverTests {
             )
         }
 
-        // 3. Symlinked external plist must be rejected via O_NOFOLLOW
         try FileManager.default.removeItem(at: externalURL)
         let realPrivateCopy = fixture.root.appendingPathComponent("RealPrivate.plist")
         try AtomicFile.writeData(plistBytes, to: realPrivateCopy, permissions: 0o600)
@@ -388,7 +384,6 @@ struct DeveloperCredentialsResolverTests {
             )
         }
 
-        // 4. Hard-linked external plist (st_nlink > 1) must be rejected
         try FileManager.default.removeItem(at: externalURL)
         try FileManager.default.linkItem(at: realPrivateCopy, to: externalURL)
         #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
@@ -400,7 +395,6 @@ struct DeveloperCredentialsResolverTests {
             )
         }
 
-        // 5. FIFO at external plist must fail fast via O_NONBLOCK without hanging
         try FileManager.default.removeItem(at: externalURL)
         #expect(mkfifo(externalURL.path, 0o600) == 0)
         #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
@@ -414,7 +408,6 @@ struct DeveloperCredentialsResolverTests {
         }
         try FileManager.default.removeItem(at: externalURL)
 
-        // 6. DYLD_* variables are stripped before spawning the child process
         let envDumpURL = fixture.root.appendingPathComponent("child-dyld.txt")
         let envProbeOp = fixture.root.appendingPathComponent("probe-op")
         try AtomicFile.writeUTF8(

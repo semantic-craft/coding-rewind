@@ -3701,28 +3701,26 @@ test("initOptionsPage handles dynamic token placeholders, blank save preservatio
   await urlInput.dispatch("input");
   assert.equal(consoleBtn.disabled, true);
 
-  // Also check stripping via normalizeMemosBaseUrl for /api/v1/memos/ suffix
-  urlInput.value = "https://memos.example.com/api/v1/memos/"; // checked via normalizeMemosBaseUrl
+  const normalizeMemosBaseUrlInput = "https://memos.example.com/api/v1/memos/";
+  urlInput.value = normalizeMemosBaseUrlInput;
   await urlInput.dispatch("input");
   assert.equal(consoleBtn.disabled, false);
 
   await consoleBtn.dispatch("click");
   assert.deepEqual(openedTabs.at(-1), { url: "https://memos.example.com" });
 
-  // Submit with valid URL and missing token skips network probe, sends flush, and does not claim connected
   urlInput.value = "https://memos.example.com/api/memos/";
   await urlInput.dispatch("input");
   await form.dispatch("submit");
   assert.equal(persisted.memosUrl, "https://memos.example.com");
   assert.equal(persisted.memosToken, "");
-  assert.equal(fetchRequests.length, 0);
+  assert.equal(fetchRequests.length, 0, "missing token must skip network probe");
   assert.equal(sentRuntimeMessages.length, 1);
   assert.deepEqual(sentRuntimeMessages.at(-1), { type: "REWIND_FLUSH_OUTBOX" });
   assert.equal(status.textContent, "设置已保存。缺少访问令牌，尚未验证连接。");
   assert.equal(status.getAttribute("data-kind"), "info");
   assert.doesNotMatch(status.textContent, /已连接/);
 
-  // Submit with new token saves, clears input, updates placeholder, flushes, and verifies connection
   tokenInput.value = "secret-tok-1";
   await form.dispatch("submit");
   assert.equal(persisted.memosToken, "secret-tok-1");
@@ -3735,21 +3733,18 @@ test("initOptionsPage handles dynamic token placeholders, blank save preservatio
   assert.equal(status.getAttribute("data-kind"), "ok");
   assert.equal(sentRuntimeMessages.length, 2);
 
-  // Blank submit preserves existing token, flushes, and re-verifies with preserved token
   assert.equal(tokenInput.value, "");
   await form.dispatch("submit");
-  assert.equal(persisted.memosToken, "secret-tok-1");
+  assert.equal(persisted.memosToken, "secret-tok-1", "blank token submit must preserve saved token");
   assert.equal(fetchRequests.length, 2);
   assert.equal(fetchRequests[1].init.headers.Authorization, "Bearer secret-tok-1");
   assert.equal(sentRuntimeMessages.length, 3);
 
-  // Manual Test Connection click with blank token uses savedToken
   await testBtn.dispatch("click");
   assert.equal(fetchRequests.length, 3);
   assert.equal(fetchRequests[2].init.headers.Authorization, "Bearer secret-tok-1");
   assert.equal(status.getAttribute("data-kind"), "ok");
 
-  // HTML 200 failure on Save still dispatches idempotent outbox flush and reports inline error
   nextFetchMode = "html200";
   await form.dispatch("submit");
   assert.equal(fetchRequests.length, 4);
@@ -3757,18 +3752,16 @@ test("initOptionsPage handles dynamic token placeholders, blank save preservatio
   assert.match(status.textContent, /设置已保存，但连接验证失败/);
   assert.equal(sentRuntimeMessages.length, 4);
 
-  // Clearing URL preserves savedToken, disables console button, and skips network probe and flush
   urlInput.value = "";
   await form.dispatch("submit");
   assert.equal(persisted.memosUrl, "");
-  assert.equal(persisted.memosToken, "secret-tok-1");
+  assert.equal(persisted.memosToken, "secret-tok-1", "clearing URL must preserve saved token");
   assert.equal(consoleBtn.disabled, true);
   assert.equal(fetchRequests.length, 4);
   assert.equal(sentRuntimeMessages.length, 4);
   assert.equal(status.textContent, "设置已保存。未填写服务地址，云端同步未启用。");
   assert.equal(status.getAttribute("data-kind"), "ok");
 
-  // Fallback to globalThis.open when chrome.tabs is unavailable
   const fallbackOpened = [];
   globalThis.chrome.tabs = undefined;
   globalThis.open = (u, target, rel) => fallbackOpened.push({ u, target, rel });
@@ -4414,7 +4407,6 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
     pickedSelector: "#safe-para"
   });
 
-  // 1. Untrusted synthetic events from page scripts must never pop the pill or trigger Hyper+S
   harness.document.dispatch("mousedown", { isTrusted: false, button: 0, clientX: 80, clientY: 80 });
   harness.document.dispatch("mouseup", { isTrusted: false, button: 0, clientX: 180, clientY: 80, detail: 1 });
   harness.advanceTime(30);
@@ -4439,7 +4431,6 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
   await new Promise((r) => setImmediate(r));
   assert.equal(harness.sentMessages.length, 0, "untrusted Hyper+S must never capture selection");
 
-  // 2. Trusted user drag mounts a CLOSED ShadowRoot (host.shadowRoot === null to page scripts)
   harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
   harness.document.dispatch("mouseup", { button: 0, clientX: 180, clientY: 80, detail: 1 });
   harness.advanceTime(20);
@@ -4450,21 +4441,18 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
   const pill = harness.getPill();
   assert.equal(pill?.getAttribute("data-state"), "ready");
 
-  // Untrusted Escape or untrusted mousedown on pill must be ignored
   harness.document.dispatch("keydown", { isTrusted: false, key: "Escape", code: "Escape" });
-  assert.equal(pill.getAttribute("data-state"), "ready");
+  assert.equal(pill.getAttribute("data-state"), "ready", "untrusted Escape must not dismiss pill");
   pill.dispatch("mousedown", { isTrusted: false, button: 0 });
   await new Promise((r) => setImmediate(r));
-  assert.equal(harness.sentMessages.length, 0);
+  assert.equal(harness.sentMessages.length, 0, "untrusted pill mousedown must be ignored");
 
-  // Right-click (button: 2) on pill must not trigger stash or poison suppressNextMouseUp on next drag
   pill.dispatch("mousedown", { isTrusted: true, button: 2 });
   harness.document.dispatch("mouseup", { isTrusted: true, button: 2, clientX: 120, clientY: 110 });
   await new Promise((r) => setImmediate(r));
   assert.equal(harness.sentMessages.length, 0, "right-click on pill must not stash");
   assert.equal(pill.getAttribute("data-state"), "ready");
 
-  // Trusted left-click on closed-ShadowRoot pill (where document capture composedPath omits pill and sees only host) must save
   const trustedPillClick = pill.dispatch("mousedown", { isTrusted: true, button: 0 });
   assert.equal(trustedPillClick.defaultPrevented, true);
   assert.equal(trustedPillClick.propagationStopped, true);
@@ -4475,13 +4463,11 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
   harness.advanceTime(1000);
   assert.equal(pill.getAttribute("data-state"), "hidden");
 
-  // Re-open pill via fresh drag to verify TOCTOU selection swap
   harness.document.dispatch("mousedown", { button: 0, clientX: 80, clientY: 80 });
   harness.document.dispatch("mouseup", { button: 0, clientX: 180, clientY: 80, detail: 1 });
   harness.advanceTime(20);
   assert.equal(pill.getAttribute("data-state"), "ready");
 
-  // 3. Pill TOCTOU re-validation: if page script swaps selection into an editable composer right before trusted pill click, capture aborts
   harness.setPickedElement(harness.parsedDoc.querySelector("#secret-editor"));
   pill.dispatch("mousedown", { isTrusted: true, button: 0 });
   await new Promise((r) => setImmediate(r));
@@ -4489,7 +4475,6 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
   assert.equal(harness.sentMessages.length, 1, "pill click must re-validate disallowed editable selection target");
   assert.equal(pill.getAttribute("data-state"), "hidden");
 
-  // 4. Password fields (including readonly password inputs) are rejected across pill, Hyper+S, and REWIND_EXTRACT_SELECTION
   for (const pwSelector of ["#pw-input", "#pw-ro-input"]) {
     harness.advanceTime(400);
     harness.setPickedElement(harness.parsedDoc.querySelector(pwSelector));
@@ -4516,7 +4501,6 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
     assert.equal(pwExtract?.clip, null, `${pwSelector} must never be extracted`);
     assert.equal(pwExtract?.blocked, true, `${pwSelector} must explicitly report blocked=true to stop context-menu fallback`);
 
-    // Real Chromium <input type="password"> keeps window.getSelection() collapsed while document.activeElement is the input
     harness.setSelectionCollapsed(true);
     harness.setActiveElement(harness.parsedDoc.querySelector(pwSelector));
     const collapsedPwExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
@@ -4526,12 +4510,11 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
     harness.setActiveElement(harness.parsedDoc.body);
   }
 
-  // Ordinary editable <textarea> with collapsed DOM selection must NOT set blocked=true so context-menu fallback still works
   harness.setSelectionCollapsed(true);
   harness.setActiveElement(harness.parsedDoc.querySelector("#secret-editor"));
   const textareaExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
   assert.equal(textareaExtract?.clip, null);
-  assert.notEqual(textareaExtract?.blocked, true);
+  assert.notEqual(textareaExtract?.blocked, true, "collapsed textarea selection must not set blocked=true so context-menu fallback still works");
 });
 
 test("security: background context menu blocks fallbackSelectionText when content script reports blocked password input, and wire payloads reject remote file:// hosts", async () => {
@@ -4577,7 +4560,6 @@ test("security: background context menu blocks fallbackSelectionText when conten
     await import("./background.js?password-context-menu-block");
     assert.equal(typeof menuClickListener, "function");
 
-    // 1. Password field (blocked: true) must NOT fall back to info.selectionText
     menuClickListener(
       { menuItemId: "save-to-coding-rewind", selectionText: "hunter2-secret" },
       { id: 11, url: "https://example.com/login", title: "Login" }
@@ -4585,7 +4567,6 @@ test("security: background context menu blocks fallbackSelectionText when conten
     await new Promise((r) => setTimeout(r, 25));
     assert.equal(savedOutboxes.length, 0, "blocked password selection must never fall back to info.selectionText");
 
-    // 2. First-time script injection retry that returns blocked: true must also block fallbackSelectionText
     let calls = 0;
     extractResponder = async () => {
       calls += 1;
@@ -4599,14 +4580,13 @@ test("security: background context menu blocks fallbackSelectionText when conten
     await new Promise((r) => setTimeout(r, 25));
     assert.equal(savedOutboxes.length, 0, "retry path blocked password selection must not save fallbackSelectionText");
 
-    // 3. Normal non-DOM selection (blocked: false) still saves via fallbackSelectionText
     extractResponder = async () => ({ clip: null });
     menuClickListener(
       { menuItemId: "save-to-coding-rewind", selectionText: "Normal textarea note" },
       { id: 13, url: "https://example.com/notes", title: "Notes" }
     );
     await new Promise((r) => setTimeout(r, 25));
-    assert.equal(savedOutboxes.length, 1);
+    assert.equal(savedOutboxes.length, 1, "unblocked fallbackSelectionText must save");
     assert.match(savedOutboxes[0][0].memoBody.content, /Normal textarea note/);
   } finally {
     globalThis.chrome = previousChrome;

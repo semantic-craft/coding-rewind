@@ -45,8 +45,6 @@ def github_files(path, commit=False):
     batches = [page['files'] if commit else page for page in pages]
     require(all(isinstance(batch, list) for batch in batches), 'Invalid file listing: ' + path)
     files = [f for batch in batches for f in batch]
-    # Both endpoints cap listings at 3,000 files. A full final page cannot
-    # establish completeness, even if gh has followed every available Link.
     require(len(files) < 3000 and len(batches[-1]) < 100,
             'Incomplete file listing: ' + path)
     return files
@@ -192,7 +190,6 @@ def paths(c):
 
 
 def normalized_css(text):
-    # Comments are not resource references. Decode CSS escapes before URL matching.
     text = re.sub(r'/\*.*?\*/', '', text, flags=re.S)
     text = re.sub(r'\\([0-9a-fA-F]{1,6})\s?|\\([^\n\r])',
                   lambda m: chr(int(m[1], 16)) if m[1] else m[2], text)
@@ -207,7 +204,6 @@ def css_urls(text):
 
 
 def srcset_urls(value):
-    # A URL token may contain commas (notably data URLs); descriptors end at a comma.
     while value:
         value = value.lstrip(' ,\t\r\n\f')
         if not value:
@@ -246,8 +242,6 @@ class HTML(HTMLParser):
             self.resource(url, self.getpos()[0] + text.count('\n', 0, max(0, text.find(url))))
 
     def javascript(self, text):
-        # The same dependency policy applies to inline and external scripts.
-        # Tokenize strings before comments so https:// inside a specifier survives.
         token_pattern = r"""(?P<string>"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(?P<comment>/\*.*?\*/|//[^\r\n]*)|(?P<word>[$\w]+)|(?P<punct>[^\s])"""
         tokens = [m for m in re.finditer(token_pattern, text, re.S) if m.lastgroup != 'comment']
         for i, token in enumerate(tokens):
@@ -266,7 +260,6 @@ class HTML(HTMLParser):
                         break
             if specifier is not None:
                 self.resource(specifier[0][1:-1], self.getpos()[0] + text.count('\n', 0, specifier.start()))
-        # Preserve line positions while removing comments and string contents.
         code = re.sub(token_pattern, lambda m: re.sub(r'[^\n]', ' ', m[0])
                       if m.lastgroup in {'string', 'comment'} else m[0], text, flags=re.S)
         pattern = r'fetch\s*\(|XMLHttpRequest|import\s*\(|WebSocket|EventSource|navigator\s*\.\s*sendBeacon|importScripts\s*\(|\b(?:Worker|SharedWorker)\s*\('
@@ -352,7 +345,6 @@ def relative_target(path, link):
     require(not urlsplit(link).scheme and not link.startswith('/'), f'Nonrelative URL: {link}')
     url_path = unquote(urlsplit(link).path)
     target = (ROOT / path).parent / url_path if url_path else ROOT / path
-    # URL identity and relative bases follow the reference, not a symlink target.
     target = Path(os.path.normpath(target))
     require(target.resolve().is_relative_to(ROOT.resolve()), f'Link outside repository: {link}')
     if target.is_dir():
@@ -395,7 +387,7 @@ def resources(c, roots, strict=True):
             except ValueError:
                 if strict:
                     raise
-                continue  # relative-links owns missing/invalid local targets.
+                continue
             if target:
                 todo.append(target)
 

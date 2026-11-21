@@ -318,7 +318,6 @@ extension AppShortcutsTests {
         )
         let defaults = try #require(UserDefaults(suiteName: Self.suiteName))
 
-        // 1. Non-QA production AppUpdater must block .adhoc -> .adhoc replacement
         let adhocProdUpdater = AppUpdater(
             paths: paths,
             environment: [:],
@@ -342,7 +341,6 @@ extension AppShortcutsTests {
         }
         #expect(stagingDirectories(in: paths.updatesDirectoryURL).isEmpty)
 
-        // 2. .developerID candidate failing Gatekeeper/notarization assessment must fail closed before staging
         let team = BundleSignatureAuthority.defaultReleaseTeamID
         let devIDInspector = FixedAuthoritySignatureInspector(
             authority: .developerID(teamID: team),
@@ -368,7 +366,6 @@ extension AppShortcutsTests {
         #expect(unnotarizedUpdater.state == .failed("Code signature verification failed; update was rejected."))
         #expect(stagingDirectories(in: paths.updatesDirectoryURL).isEmpty)
 
-        // 3. .developerID candidate passing Gatekeeper/notarization assessment reaches .readyToInstall
         let notarizedUpdater = AppUpdater(
             paths: paths,
             environment: [:],
@@ -394,7 +391,6 @@ extension AppShortcutsTests {
             Issue.record("Expected notarized .developerID candidate to stage cleanly, got \(notarizedUpdater.state)")
         }
 
-        // 4. Symlinked <dataDir>/updates directory must fail closed rather than following EEXIST
         let symlinkDataRoot = root.appendingPathComponent("SymlinkUpdatesData", isDirectory: true)
         let symlinkPaths = try StoragePaths(
             dataDirectoryURL: symlinkDataRoot,
@@ -427,7 +423,6 @@ extension AppShortcutsTests {
             Issue.record("Expected symlinked updates directory to be rejected, got \(symlinkUpdater.state)")
         }
 
-        // 5. Real spctl assessor rejects ad-hoc bundles even when path contains 'Notarized Developer ID'
         let spoofDir = root.appendingPathComponent("source=Notarized Developer ID", isDirectory: true)
         let spoofAppURL = spoofDir.appendingPathComponent("CodingRewind.app", isDirectory: true)
         defer { AppUpdater.unregisterBundleFromLaunchServices(spoofAppURL) }
@@ -435,9 +430,8 @@ extension AppShortcutsTests {
         let spoofAccepted = await Task.detached(priority: .userInitiated) {
             AppUpdater.defaultAssessNotarizedDeveloperID(spoofAppURL)
         }.value
-        #expect(!spoofAccepted)
+        #expect(!spoofAccepted, "spctl assessor must reject ad-hoc bundle regardless of path string")
 
-        // 6. Existing v0.6.0 plugin install with pre-hardening SKILL.md auto-migrates CLI read_only guidance on launch
         let pluginDataDir = root.appendingPathComponent("PluginMigData", isDirectory: true)
         let pluginConfigDir = root.appendingPathComponent("PluginMigConfig", isDirectory: true)
         let migPaths = try StoragePaths(dataDirectoryURL: pluginDataDir, antigravityConfigDirectoryURL: pluginConfigDir)

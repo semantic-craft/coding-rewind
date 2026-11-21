@@ -669,7 +669,6 @@ struct SnippetHardeningTests {
             #expect(parsed.url == allowedSourceURL)
         }
 
-        // Markdown link breakout attempts in Source lines must be rejected on read and sanitized in ConversationPrompt
         for breakoutRaw in [
             "[Title](https://example.com) [click](javascript:alert(1)) · 2026-11-15T10:13:20Z",
             "[Title](https://example.com)[evil](javascript:alert(1)) · 2026-11-15T10:13:20Z",
@@ -692,15 +691,13 @@ struct SnippetHardeningTests {
         let promptEn = ConversationPrompt.buildPrompt(for: [tamperedCard], language: .en, aiAccessMode: .readOnly)
         #expect(!promptEn.contains("javascript:"))
 
-        // Corrupt config.json or non-string ai_access_mode must fail closed to .readOnly while preserving memos_url
         try AtomicFile.writeUTF8(#"{"memos_url":"https://memos.example.com","ai_access_mode":false}"#, to: paths.configFileURL)
-        #expect(paths.resolveAIAccessMode(environment: [:]) == .readOnly)
+        #expect(paths.resolveAIAccessMode(environment: [:]) == .readOnly, "non-string ai_access_mode must fail closed to .readOnly")
         #expect(paths.readConfiguredMemosURLString(environment: [:]) == "https://memos.example.com")
 
         try AtomicFile.writeUTF8("{corrupted-json", to: paths.configFileURL)
-        #expect(paths.resolveAIAccessMode(environment: [:]) == .readOnly)
+        #expect(paths.resolveAIAccessMode(environment: [:]) == .readOnly, "corrupt config.json must fail closed to .readOnly")
 
-        // Redirect to cleartext remote HTTP must be refused immediately (returning 302 without following Location)
         let listenFD = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         #expect(listenFD >= 0)
         defer { if listenFD >= 0 { Darwin.close(listenFD) } }

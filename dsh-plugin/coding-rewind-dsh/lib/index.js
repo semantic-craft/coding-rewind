@@ -41,7 +41,6 @@ export function validateApiRequest(req) {
   if (origin === "dsh-app://app") {
     originAllowed = host === "" || hostLocal;
   } else if (origin === undefined || origin === "") {
-    // Electron's dsh-app:// proxy deletes Origin and Sec-Fetch-Site before forwarding to loopback webServer.
     originAllowed = hostLocal && (site === "" || site === "none" || site === "same-origin");
   } else if (typeof origin === "string") {
     try {
