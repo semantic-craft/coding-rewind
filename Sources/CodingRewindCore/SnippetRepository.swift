@@ -37,6 +37,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
     public let contextSummary: String?
     public let keywords: [String]
     public let tags: [String]
+    public let places: [PlaceRef]
     public let sourceTitle: String
     public let sourceURL: String?
     public let verbatimText: String
@@ -54,6 +55,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         case contextSummary
         case keywords
         case tags
+        case places
         case sourceTitle
         case sourceURL
         case verbatimText
@@ -88,6 +90,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         self.contextSummary = contextSummary
         self.keywords = keywords
         self.tags = tags
+        self.places = PlaceRef.refs(inTags: tags)
         self.sourceTitle = sourceTitle
         self.sourceURL = sourceURL
         self.verbatimText = verbatimText
@@ -107,6 +110,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         self.contextSummary = try container.decodeIfPresent(String.self, forKey: .contextSummary)
         self.keywords = try container.decodeIfPresent([String].self, forKey: .keywords) ?? []
         self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
+        self.places = PlaceRef.refs(inTags: tags)
         self.sourceTitle = try container.decode(String.self, forKey: .sourceTitle)
         self.sourceURL = try container.decodeIfPresent(String.self, forKey: .sourceURL)
         self.verbatimText = try container.decode(String.self, forKey: .verbatimText)
@@ -114,6 +118,10 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         self.dataOrigin = try container.decode(SnippetDataOrigin.self, forKey: .dataOrigin)
         self.conversationContext = try container.decodeIfPresent(CaptureContext.self, forKey: .conversationContext)
         self.notes = try container.decodeIfPresent([SnippetNote].self, forKey: .notes) ?? []
+    }
+
+    public var isUnplaced: Bool {
+        (status == .ready || status == .synthesized) && places.isEmpty
     }
 
     public func withConversationContext(_ conversationContext: CaptureContext?) -> SnippetRecord {
@@ -231,6 +239,8 @@ public struct SnippetQuery: Equatable, Sendable {
     public var status: SnippetStatusFilter
     public var sourcePlatform: String?
     public var searchText: String?
+    public var place: PlaceRef?
+    public var unplaced: Bool
     public var limit: Int
 
     public init(
@@ -238,12 +248,16 @@ public struct SnippetQuery: Equatable, Sendable {
         status: SnippetStatusFilter = .active,
         sourcePlatform: String? = nil,
         searchText: String? = nil,
+        place: PlaceRef? = nil,
+        unplaced: Bool = false,
         limit: Int = 50
     ) {
         self.windowHours = windowHours
         self.status = status
         self.sourcePlatform = sourcePlatform
         self.searchText = searchText
+        self.place = place
+        self.unplaced = unplaced
         self.limit = min(max(limit, 1), 500)
     }
 }
@@ -286,6 +300,8 @@ public protocol SnippetQuerying: Sendable {
     func appendSnippetNote(id: String, input: SnippetNoteInput, now: Date) async throws -> SnippetRecord
     func archiveSnippet(id: String) async throws -> SnippetRecord
     func deleteSnippet(id: String) async throws -> SnippetDeletionResult
+    func listPlaces(includeArchived: Bool) async throws -> PlaceListResult
+    func upsertPlace(_ place: PlaceRecord) async throws -> PlaceRecord
 }
 
 public struct SnippetRepository: SnippetQuerying, Sendable {
@@ -307,6 +323,10 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
     private var localNotesStore: LocalNotesStore {
         LocalNotesStore(fileURL: paths.localNotesFileURL)
+    }
+
+    private var placesCache: PlacesCache {
+        PlacesCache(fileURL: paths.placesCacheFileURL)
     }
 
     private var isQAMode: Bool {
@@ -927,6 +947,90 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         )
     }
 
+    public func listPlaces(includeArchived: Bool = false) async throws -> PlaceListResult {
+        func cached(_ resolution: SnippetResolutionMode) -> PlaceListResult {
+            PlaceListResult(places: Self.visiblePlaces(placesCache.load(), includeArchived: includeArchived), resolution: resolution)
+        }
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+            return cached(.localOnly)
+        }
+        let token: String
+        switch resolveToken() {
+        case .resolved(let resolvedToken):
+            token = resolvedToken
+        case .developerCredentialsFailed(let failure):
+            return cached(.offlineFallback(reason: failure.localizedDescription(in: .en)))
+        case .missing:
+            if isQAMode {
+                throw RewindError.missingCredentials
+            }
+            return cached(.localOnly)
+        }
+
+        let remoteDTOs: [MemoWireDTO]
+        do {
+            remoteDTOs = try await client.listAllMemos(baseURL: baseURL, token: token)
+        } catch {
+            return cached(.offlineFallback(reason: Self.describeFallbackReason(error)))
+        }
+        var placesByRef: [PlaceRef: PlaceRecord] = [:]
+        for dto in remoteDTOs {
+            guard let place = MemosWireFormat.parsePlaceMemo(dto.content)?.place else { continue }
+            let memoID = dto.name.hasPrefix("memos/") ? String(dto.name.dropFirst("memos/".count)) : dto.name
+            if placesByRef[place.ref] == nil || memoID == place.ref.memoID {
+                placesByRef[place.ref] = place
+            }
+        }
+        let allPlaces = Array(placesByRef.values)
+        try? placesCache.save(allPlaces)
+        return PlaceListResult(places: Self.visiblePlaces(allPlaces, includeArchived: includeArchived), resolution: .online)
+    }
+
+    public func upsertPlace(_ place: PlaceRecord) async throws -> PlaceRecord {
+        guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+            throw RewindError.missingCredentials
+        }
+        let token: String
+        switch resolveToken() {
+        case .resolved(let resolvedToken):
+            token = resolvedToken
+        case .developerCredentialsFailed(let failure):
+            throw failure
+        case .missing:
+            throw RewindError.missingCredentials
+        }
+
+        let memoID = place.ref.memoID
+        let savedContent: String
+        if let created = try await client.createMemo(
+            memoID: memoID,
+            content: MemosWireFormat.formatPlaceMemo(place),
+            baseURL: baseURL,
+            token: token
+        ) {
+            savedContent = created.content
+        } else {
+            let existing = try await client.getMemo(id: memoID, baseURL: baseURL, token: token)
+            guard let parsed = MemosWireFormat.parsePlaceMemo(existing.content), parsed.place.ref == place.ref else {
+                throw RewindError.invalidMetadataUpdate("Memo '\(memoID)' exists but is not the place record #\(place.ref.tag).")
+            }
+            let updatedContent = MemosWireFormat.formatPlaceMemo(place, body: parsed.body)
+            let patched = try await client.updateMemoContent(id: memoID, content: updatedContent, baseURL: baseURL, token: token)
+            savedContent = (patched?.content.isEmpty == false) ? patched!.content : updatedContent
+        }
+        guard let saved = MemosWireFormat.parsePlaceMemo(savedContent)?.place else {
+            throw RewindError.invalidServerResponse
+        }
+        try? placesCache.upsert(saved)
+        return saved
+    }
+
+    private static func visiblePlaces(_ places: [PlaceRecord], includeArchived: Bool) -> [PlaceRecord] {
+        places
+            .filter { includeArchived || !$0.archived }
+            .sorted { $0.ref < $1.ref }
+    }
+
     private func finalizePendingDeletion(
         id normalizedID: String,
         disposition: SnippetDeletionDisposition = .localPendingOnly
@@ -1192,6 +1296,12 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             }
             if let platformFilter,
                record.sourcePlatform.caseInsensitiveCompare(platformFilter) != .orderedSame {
+                return false
+            }
+            if let place = query.place, !record.places.contains(place) {
+                return false
+            }
+            if query.unplaced, !record.isUnplaced {
                 return false
             }
             if let needle {

@@ -213,6 +213,23 @@ actor FakeSnippetBackend: SnippetQuerying {
             : .remoteAndLocal
         return SnippetDeletionResult(id: cleanID, deleted: true, disposition: disposition)
     }
+
+    private(set) var places: [PlaceRecord] = []
+    private(set) var recordedUpsertPlaces: [PlaceRecord] = []
+
+    func seedPlaces(_ seeded: [PlaceRecord]) {
+        places = seeded
+    }
+
+    func listPlaces(includeArchived: Bool) async throws -> PlaceListResult {
+        PlaceListResult(places: places.filter { includeArchived || !$0.archived }, resolution: resolution)
+    }
+
+    func upsertPlace(_ place: PlaceRecord) async throws -> PlaceRecord {
+        recordedUpsertPlaces.append(place)
+        places = places.filter { $0.ref != place.ref } + [place]
+        return place
+    }
 }
 
 final class OutputCollector: @unchecked Sendable {

@@ -731,7 +731,7 @@ public enum MemosWireFormat {
         return updatedHeader + rawContent[headerEnd...]
     }
 
-    private static func headerTokens(_ rawContent: String) -> [Substring] {
+    static func headerTokens(_ rawContent: String) -> [Substring] {
         rawContent.prefix { !$0.isNewline }.split(whereSeparator: \.isWhitespace)
     }
 

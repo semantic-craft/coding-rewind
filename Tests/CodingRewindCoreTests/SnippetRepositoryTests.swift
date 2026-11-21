@@ -970,3 +970,174 @@ struct SnippetRepositoryTests {
         }
     }
 }
+
+private final class MemoStore: @unchecked Sendable {
+    private let lock = NSLock()
+    private var contents: [String: String]
+
+    init(_ contents: [String: String]) {
+        self.contents = contents
+    }
+
+    subscript(id: String) -> String? {
+        get { lock.lock(); defer { lock.unlock() }; return contents[id] }
+        set { lock.lock(); contents[id] = newValue; lock.unlock() }
+    }
+
+    var all: [(String, String)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return contents.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+    }
+}
+
+private func installMemoStoreHandler(suiteID: String, store: MemoStore, createTime: String) {
+    SnippetMockURLProtocol.register(suiteID: suiteID) { req, body in
+        let components = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!
+        let path = components.path
+        let respond: (String, String) -> (Int, Data) = { id, content in
+            (200, try! JSONSerialization.data(withJSONObject: ["name": "memos/\(id)", "content": content, "createTime": createTime]))
+        }
+        switch (req.httpMethod ?? "GET", path) {
+        case ("GET", "/api/memos"):
+            let memos = store.all.map { ["name": "memos/\($0.0)", "content": $0.1, "createTime": createTime] }
+            return (200, try! JSONSerialization.data(withJSONObject: ["memos": memos, "nextPageToken": ""]))
+        case ("POST", "/api/memos"):
+            let id = components.queryItems!.first { $0.name == "memoId" }!.value!
+            if store[id] != nil { return (409, Data()) }
+            let content = (try! JSONSerialization.jsonObject(with: body) as! [String: Any])["content"] as! String
+            store[id] = content
+            return respond(id, content)
+        case ("GET", _):
+            let id = String(path.dropFirst("/api/memos/".count))
+            guard let content = store[id] else { return (404, Data()) }
+            return respond(id, content)
+        case ("PATCH", _):
+            let id = String(path.dropFirst("/api/memos/".count))
+            let content = (try! JSONSerialization.jsonObject(with: body) as! [String: Any])["content"] as! String
+            store[id] = content
+            return respond(id, content)
+        default:
+            return (400, Data())
+        }
+    }
+}
+
+@Suite("SnippetRepository places: list, upsert, cache and place filters")
+struct SnippetRepositoryPlacesTests {
+    private let now = Date(timeIntervalSince1970: 1_763_200_000)
+
+    private func makeContext() throws -> (dir: URL, paths: StoragePaths, suiteID: String, env: [String: String]) {
+        let dir = try makeTempDir()
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let suiteID = UUID().uuidString.lowercased()
+        let env = [
+            StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local",
+            StoragePaths.memosTokenEnvironmentKey: "token",
+            StoragePaths.qaEnvironmentKey: "1"
+        ]
+        return (dir, paths, suiteID, env)
+    }
+
+    @Test("listPlaces reads place memos, hides archived by default, writes a 0600 cache and falls back to it offline")
+    func listPlacesOnlineAndOffline() async throws {
+        let ctx = try makeContext()
+        defer { try? FileManager.default.removeItem(at: ctx.dir); SnippetMockURLProtocol.unregister(suiteID: ctx.suiteID) }
+        let paper = PlaceRecord(ref: PlaceRef(tag: "project/paper-02")!, title: "身体预设", aliases: ["论文02"])
+        let old = PlaceRecord(ref: PlaceRef(tag: "topic/old")!, title: "Old", archived: true)
+        let ada = PlaceRecord(ref: PlaceRef(tag: "person/ada")!, title: "Ada")
+        let store = MemoStore([
+            paper.ref.memoID: MemosWireFormat.formatPlaceMemo(paper, body: "notes"),
+            old.ref.memoID: MemosWireFormat.formatPlaceMemo(old),
+            ada.ref.memoID: MemosWireFormat.formatPlaceMemo(ada),
+            "rw-1": "#rewind/ready #source/web #project/paper-02\n\nbody"
+        ])
+        installMemoStoreHandler(suiteID: ctx.suiteID, store: store, createTime: MemosWireFormat.formatISO8601UTC(now))
+        let repo = SnippetRepository(paths: ctx.paths, environment: ctx.env, client: makeMockClient())
+
+        let active = try await repo.listPlaces(includeArchived: false)
+        #expect(active.resolution == .online)
+        #expect(active.places == [paper, ada])
+        #expect(try await repo.listPlaces(includeArchived: true).places == [paper, old, ada])
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: ctx.paths.placesCacheFileURL.path)
+        #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
+
+        SnippetMockURLProtocol.unregister(suiteID: ctx.suiteID)
+        let offline = try await repo.listPlaces(includeArchived: false)
+        guard case .offlineFallback = offline.resolution else {
+            Issue.record("expected offline fallback, got \(offline.resolution)")
+            return
+        }
+        #expect(offline.places == [paper, ada])
+
+        let localOnly = SnippetRepository(paths: ctx.paths, environment: [StoragePaths.qaEnvironmentKey: "1"], client: makeMockClient())
+        let local = try await localOnly.listPlaces(includeArchived: true)
+        #expect(local.resolution == .localOnly)
+        #expect(local.places == [paper, old, ada])
+    }
+
+    @Test("upsertPlace creates with the deterministic memoId, updates in place preserving the free body, and never queues offline")
+    func upsertPlaceIsIdempotentAndOnlineOnly() async throws {
+        let ctx = try makeContext()
+        defer { try? FileManager.default.removeItem(at: ctx.dir); SnippetMockURLProtocol.unregister(suiteID: ctx.suiteID) }
+        let store = MemoStore([:])
+        installMemoStoreHandler(suiteID: ctx.suiteID, store: store, createTime: MemosWireFormat.formatISO8601UTC(now))
+        let repo = SnippetRepository(paths: ctx.paths, environment: ctx.env, client: makeMockClient())
+        let ref = try #require(PlaceRef(tag: "project/paper-02"))
+
+        let first = PlaceRecord(ref: ref, title: "身体预设", aliases: ["论文02"], externalRef: "Linear XWR-12")
+        #expect(try await repo.upsertPlace(first) == first)
+        #expect(store["pl-p-paper-02"] == MemosWireFormat.formatPlaceMemo(first))
+        #expect(SnippetMockURLProtocol.recordedRequests(suiteID: ctx.suiteID).first?.body.contains("\"visibility\":\"PRIVATE\"") == true)
+
+        let handBody = "## 位置页\n\n  手写正文\t保留\r\n\n"
+        store["pl-p-paper-02"] = MemosWireFormat.formatPlaceMemo(first, body: handBody)
+        let second = PlaceRecord(ref: ref, title: "著作权法的身体预设", aliases: ["论文02", "embodiment"], archived: true)
+        #expect(try await repo.upsertPlace(second) == second)
+        #expect(try await repo.upsertPlace(second) == second)
+        let stored = try #require(store["pl-p-paper-02"])
+        #expect(stored == MemosWireFormat.formatPlaceMemo(second, body: handBody))
+        #expect(Data(try #require(MemosWireFormat.parsePlaceMemo(stored)).body.utf8) == Data(handBody.utf8))
+        #expect(PlacesCache(fileURL: ctx.paths.placesCacheFileURL).load() == [second])
+
+        store["pl-t-clash"] = "#rewind/ready #source/web\n\nnot a place"
+        await #expect(throws: RewindError.self) {
+            _ = try await repo.upsertPlace(PlaceRecord(ref: PlaceRef(tag: "topic/clash")!, title: "Clash"))
+        }
+        #expect(store["pl-t-clash"] == "#rewind/ready #source/web\n\nnot a place")
+
+        SnippetMockURLProtocol.unregister(suiteID: ctx.suiteID)
+        await #expect(throws: RewindError.self) {
+            _ = try await repo.upsertPlace(first)
+        }
+        let localOnly = SnippetRepository(paths: ctx.paths, environment: [StoragePaths.qaEnvironmentKey: "1"], client: makeMockClient())
+        await #expect(throws: RewindError.missingCredentials) {
+            _ = try await localOnly.upsertPlace(first)
+        }
+        #expect(OfflineOutbox(fileURL: ctx.paths.outboxFileURL).loadEntries().isEmpty)
+    }
+
+    @Test("listSnippets filters by place across all time and derives the unplaced queue")
+    func listSnippetsPlaceAndUnplacedFilters() async throws {
+        let ctx = try makeContext()
+        defer { try? FileManager.default.removeItem(at: ctx.dir); SnippetMockURLProtocol.unregister(suiteID: ctx.suiteID) }
+        let store = MemoStore([
+            "pl-p-paper-02": MemosWireFormat.formatPlaceMemo(PlaceRecord(ref: PlaceRef(tag: "project/paper-02")!, title: "P")),
+            "rw-placed": "#rewind/ready #source/web #Project/Paper-02\n\nplaced",
+            "rw-placed-synth": "#rewind/synthesized #source/web #project/paper-02\n\nplaced archived",
+            "rw-unplaced-ready": "#rewind/ready #source/web #habit/run\n\nunplaced",
+            "rw-unplaced-synth": "#rewind/synthesized #source/web\n\nunplaced archived",
+            "rw-pending": "#rewind/pending #source/web\n\npending"
+        ])
+        installMemoStoreHandler(suiteID: ctx.suiteID, store: store, createTime: MemosWireFormat.formatISO8601UTC(now.addingTimeInterval(-200 * 3600)))
+        let repo = SnippetRepository(paths: ctx.paths, environment: ctx.env, client: makeMockClient())
+
+        let placed = try await repo.listSnippets(SnippetQuery(windowHours: nil, status: .all, place: PlaceRef(tag: "project/paper-02")), now: now)
+        #expect(placed.snippets.map(\.id) == ["rw-placed", "rw-placed-synth"])
+        #expect(try await repo.listSnippets(SnippetQuery(place: PlaceRef(tag: "project/paper-02")), now: now).snippets.isEmpty)
+
+        let unplaced = try await repo.listSnippets(SnippetQuery(windowHours: nil, status: .all, unplaced: true), now: now)
+        #expect(unplaced.snippets.map(\.id) == ["rw-unplaced-ready", "rw-unplaced-synth"])
+    }
+}

@@ -64,6 +64,7 @@ public struct StoragePaths: Equatable, Sendable {
     public var outboxFileURL: URL { dataDirectoryURL.appendingPathComponent("outbox.jsonl", isDirectory: false) }
     public var hotCacheFileURL: URL { dataDirectoryURL.appendingPathComponent("hot_cache.json", isDirectory: false) }
     public var localNotesFileURL: URL { dataDirectoryURL.appendingPathComponent("local_notes.json", isDirectory: false) }
+    public var placesCacheFileURL: URL { dataDirectoryURL.appendingPathComponent("places_cache.json", isDirectory: false) }
     public var binDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("bin", isDirectory: true) }
     public var developerCredentialsFileURL: URL { dataDirectoryURL.appendingPathComponent("DeveloperCredentials.plist", isDirectory: false) }
     public var updatesDirectoryURL: URL { dataDirectoryURL.appendingPathComponent("updates", isDirectory: true) }
@@ -637,6 +638,32 @@ public struct HotCache: Sendable {
                 isOfflinePending: card.isOfflinePending
             )
         }.sorted { $0.createdAt > $1.createdAt }
+    }
+}
+
+public struct PlacesCache: Sendable {
+    public let fileURL: URL
+
+    public init(fileURL: URL) {
+        self.fileURL = fileURL.standardizedFileURL
+    }
+
+    public func load() -> [PlaceRecord] {
+        guard let data = try? Data(contentsOf: fileURL), !data.isEmpty else {
+            return []
+        }
+        return (try? JSONDecoder().decode([PlaceRecord].self, from: data)) ?? []
+    }
+
+    public func save(_ places: [PlaceRecord]) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(places.sorted { $0.ref < $1.ref })
+        try AtomicFile.writeData(data, to: fileURL, permissions: 0o600)
+    }
+
+    public func upsert(_ place: PlaceRecord) throws {
+        try save(load().filter { $0.ref != place.ref } + [place])
     }
 }
 
