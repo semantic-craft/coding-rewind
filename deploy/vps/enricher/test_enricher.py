@@ -1111,5 +1111,171 @@ class EnricherUnitTests(unittest.TestCase):
             srv.server_close()
 
 
+def _place_memo(ref: str, title: str, aliases: str = "", status: str = "active") -> str:
+    return (
+        f"#rewind/place #{ref}\n\n"
+        f"> **Title:** {title}\n"
+        f"> **Aliases:** {aliases}\n"
+        f"> **Ref:** Linear XWR-12\n"
+        f"> **Status:** {status}\n\n"
+        "Place page notes with #rewind/pending inside the body.\n"
+    )
+
+
+class PlaceVocabularyTests(unittest.TestCase):
+    def _run_upstream(self, state: MockBackendState):
+        srv, base_url = _start_mock_upstream(state)
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        return enricher.EnricherService(
+            memos_url=base_url,
+            memos_token="memos-tok",
+            ai_base_url=f"{base_url}/v1",
+            ai_api_key="ai-tok",
+            ai_model="fixture-model",
+            summary_language="zh-Hans",
+        )
+
+    def test_parse_place_memo_wire_format(self) -> None:
+        self.assertEqual(
+            enricher.parse_place_memo(_place_memo("project/paper-02", "著作权法的身体预设", "论文02, 身体预设, embodiment")),
+            {"place": "project/paper-02", "title": "著作权法的身体预设", "aliases": ["论文02", "身体预设", "embodiment"], "active": True},
+        )
+        crlf = _place_memo("person/zhang-san", "张三", status="archived").replace("\n", "\r\n")
+        self.assertEqual(
+            enricher.parse_place_memo(crlf),
+            {"place": "person/zhang-san", "title": "张三", "aliases": [], "active": False},
+        )
+        rejected = [
+            "#project/paper-02\n\n> **Title:** Missing marker\n",
+            "#rewind/place\n\n> **Title:** No ref\n",
+            "#rewind/place #project/a #topic/b\n\n> **Title:** Two refs\n",
+            "#rewind/place #Project/paper-02\n\n> **Title:** Uppercase kind\n",
+            "#rewind/place #project/Paper-02\n\n> **Title:** Uppercase slug\n",
+            "#rewind/place #project/paper-\n\n> **Title:** Trailing hyphen\n",
+            "#rewind/place #habit/paper-02\n\n> **Title:** Unknown kind\n",
+            "#rewind/place #topic/" + "a" * 29 + "\n\n> **Title:** Slug too long\n",
+            "#rewind/ready #source/web\n\n> **Title:** A clip\n",
+        ]
+        for content in rejected:
+            self.assertIsNone(enricher.parse_place_memo(content), content)
+        self.assertIsNotNone(enricher.parse_place_memo("#rewind/place #topic/" + "a" * 28 + "\n"))
+        self.assertIsNone(enricher.parse_raw_memo("#rewind/place #rewind/pending #project/paper-02\n\nBody"))
+
+    def test_empty_vocabulary_keeps_prompt_and_output_identical(self) -> None:
+        state = MockBackendState()
+        state.ai_response = {**state.ai_response, "places": ["project/paper-02"]}
+        clip = "#rewind/pending #source/web\n\n> **Source:** [Page](https://example.com/a) · 2026-11-21T00:00:00Z\n\n  verbatim  body\n"
+        state.memos["clip"] = {"name": "memos/clip", "createTime": "2026-11-21T00:00:00Z", "content": clip}
+        state.memos["archived"] = {"name": "memos/archived", "content": _place_memo("project/paper-02", "旧论文", status="archived")}
+        svc = self._run_upstream(state)
+
+        self.assertEqual(svc.reconcile_once(), 1)
+
+        parsed = enricher.parse_raw_memo(clip)
+        messages = state.ai_calls[0]["messages"]
+        self.assertEqual(messages[0]["content"], enricher.SYSTEM_PROMPT)
+        self.assertEqual(messages[1]["content"], json.dumps({
+            "selected_excerpt": parsed["verbatim_body"],
+            "captured_chat_context": None,
+            "source": parsed["source_line"],
+        }, ensure_ascii=False))
+        self.assertEqual(state.memos["clip"]["content"], enricher.build_enriched_content(parsed, state.ai_response, language="zh-Hans"))
+        self.assertEqual(state.patch_calls, [("clip", state.memos["clip"]["content"])])
+
+    def test_places_are_closed_over_vocabulary_and_appended_to_tag_line(self) -> None:
+        state = MockBackendState()
+        verbatim = "\n  身体在著作权法中被预设为作者。\n```\ncode  stays\n```\n"
+        state.memos["clip"] = {
+            "name": "memos/clip",
+            "createTime": "2026-11-21T00:00:00Z",
+            "content": "#rewind/pending #source/web #PROJECT/paper-02\n\n" + verbatim,
+        }
+        places = {
+            "p-paper": ("project/paper-02", "著作权法的身体预设", "论文02, 身体预设, embodiment", "active"),
+            "p-embodiment": ("topic/embodiment", "具身", "", "active"),
+            "p-law": ("topic/law-tech", "法律与技术", "", "active"),
+            "p-zhang": ("person/zhang-san", "张三", "老张", "active"),
+            "p-old": ("person/old-friend", "旧友", "", "archived"),
+        }
+        for memo_id, (ref, title, aliases, status) in places.items():
+            state.memos[memo_id] = {"name": f"memos/{memo_id}", "content": _place_memo(ref, title, aliases, status)}
+        place_contents = {memo_id: state.memos[memo_id]["content"] for memo_id in places}
+        state.ai_response = {
+            **state.ai_response,
+            "places": [
+                "#project/paper-02", "project/unknown", "person/old-friend", 7, None,
+                "TOPIC/Embodiment", "topic/embodiment", "person/zhang-san", "topic/law-tech",
+            ],
+        }
+        svc = self._run_upstream(state)
+
+        self.assertEqual(svc.reconcile_once(), 1)
+
+        messages = state.ai_calls[0]["messages"]
+        self.assertEqual(messages[0]["content"], enricher.SYSTEM_PROMPT + enricher.PLACES_PROMPT)
+        self.assertEqual(json.loads(messages[1]["content"])["place_vocabulary"], [
+            {"place": "person/zhang-san", "title": "张三", "aliases": ["老张"]},
+            {"place": "project/paper-02", "title": "著作权法的身体预设", "aliases": ["论文02", "身体预设", "embodiment"]},
+            {"place": "topic/embodiment", "title": "具身", "aliases": []},
+            {"place": "topic/law-tech", "title": "法律与技术", "aliases": []},
+        ])
+        content = state.memos["clip"]["content"]
+        self.assertEqual(content.split("\n", 1)[0], "#rewind/ready #source/web #PROJECT/paper-02 #topic/embodiment #person/zhang-san")
+        self.assertTrue(content.endswith("\n\n" + verbatim))
+        self.assertEqual([memo_id for memo_id, _ in state.patch_calls], ["clip"])
+        self.assertEqual({memo_id: state.memos[memo_id]["content"] for memo_id in places}, place_contents)
+
+    def test_english_prompt_appends_english_places_instruction(self) -> None:
+        state = MockBackendState()
+        state.memos["clip"] = {"name": "memos/clip", "content": "#rewind/pending #source/web\n\nPlain English clip about embodiment theory."}
+        state.memos["p"] = {"name": "memos/p", "content": _place_memo("topic/embodiment", "Embodiment")}
+        svc = self._run_upstream(state)
+        svc.summary_language = "en"
+
+        self.assertEqual(svc.reconcile_once(), 1)
+
+        self.assertEqual(state.ai_calls[0]["messages"][0]["content"], enricher.SYSTEM_PROMPT_EN + enricher.PLACES_PROMPT_EN)
+
+    def test_malformed_places_output_is_ignored(self) -> None:
+        for raw_places in ("topic/embodiment", {"topic/embodiment": True}, None, [["topic/embodiment"]]):
+            state = MockBackendState()
+            state.ai_response = {**state.ai_response, "places": raw_places}
+            state.memos["clip"] = {"name": "memos/clip", "content": "#rewind/pending #source/web\n\nClip body"}
+            state.memos["p"] = {"name": "memos/p", "content": _place_memo("topic/embodiment", "具身")}
+            svc = self._run_upstream(state)
+
+            self.assertEqual(svc.reconcile_once(), 1)
+
+            content = state.memos["clip"]["content"]
+            self.assertTrue(content.startswith("#rewind/ready #source/web\n\n> **Title:** "), raw_places)
+            self.assertTrue(content.endswith("\n\nClip body"))
+
+    def test_vocabulary_cache_is_refreshed_by_polling_scan_and_expires(self) -> None:
+        now = [1_000.0]
+        list_calls = []
+        place = {"name": "memos/p", "content": _place_memo("topic/embodiment", "具身")}
+
+        def request(method, url, auth, payload=None):
+            self.assertEqual((method, urlparse(url).path), ("GET", "/api/memos"))
+            list_calls.append(url)
+            return {"memos": [place]}
+
+        svc = enricher.EnricherService("http://memos.invalid", "memos-tok", "http://ai.invalid", "ai-tok", "fixture", clock=lambda: now[0])
+        expected = [{"place": "topic/embodiment", "title": "具身", "aliases": []}]
+        with patch.object(enricher, "_json_req", side_effect=request):
+            self.assertEqual(svc.reconcile_once(), 0)
+            self.assertEqual(len(list_calls), 1)
+            now[0] += 59
+            self.assertEqual(svc.places_vocabulary(), expected)
+            self.assertEqual(len(list_calls), 1)
+            now[0] += 2
+            self.assertEqual(svc.places_vocabulary(), expected)
+            self.assertEqual(len(list_calls), 2)
+            now[0] += 30
+            self.assertEqual(svc.places_vocabulary(), expected)
+            self.assertEqual(len(list_calls), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

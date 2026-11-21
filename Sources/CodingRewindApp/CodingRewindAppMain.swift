@@ -542,6 +542,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor [weak self] in
             await coord.refresh()
             self?.statusItemController?.refreshIcon()
+            await coord.refreshPlaceLibrary()
         }
     }
 

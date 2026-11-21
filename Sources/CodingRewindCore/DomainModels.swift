@@ -351,6 +351,10 @@ public struct RewindCard: Identifiable, Codable, Equatable, Hashable, Sendable {
         SourceLocator.parse(sourceURL: sourceURL)
     }
 
+    public var places: [PlaceRef] {
+        PlaceRef.refs(inTags: MemosWireFormat.headerTokens(rawContent).map(String.init))
+    }
+
     public func effectiveSessionID(context: CaptureContext? = nil) -> String? {
         sourceLocator?.sessionID ?? context?.sessionID
     }

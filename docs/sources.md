@@ -118,3 +118,16 @@
 | `obsidianmd/obsidian-clipper` 与 `kepano/defuddle` | [obsidian-clipper](https://github.com/obsidianmd/obsidian-clipper)（`MIT`）、[defuddle](https://github.com/kepano/defuddle)（`MIT`） | 参考以结构化页面导语（标题、描述、开头正文）搭配选区前后短文本锚点（`TextQuoteAnchor`）替代重型页面截图的轻量留底设计 |
 | `WICG/scroll-to-text-fragment` | [scroll-to-text-fragment](https://github.com/WICG/scroll-to-text-fragment)，W3C 社区组规范 | 遵循 URL Fragment Text Directives 标准语法 `#:~:text=[prefix-,]textStart[,textEnd][,-suffix]` 及词边界对齐、`%2D` 连字符转义与 `#hash:~:text=` 组合规则，使普通网页链接在现代浏览器中无需扩展即可直达原句高亮 |
 | `entireio/cli` 与 `daaain/claude-code-log` | [entireio/cli](https://github.com/entireio/cli)（`MIT`）、[claude-code-log](https://github.com/daaain/claude-code-log)（`MIT`） | 参考面向 Coding Agent 本地会话采用会话 UUID 与首轮开场提问（`Session Opening`）锁定全局任务意图，配合 `p0deje/Maccy` 的 `PreviewItemView` 思路在浮窗内提供两步渐进式脉络预览 |
+
+## 2026-11-21 位置（Places）与对象化笔记设计对照
+
+许可经 `gh api repos/<repo>` 于 2026-11-21 实测，均仅作设计对照，**零第三方代码复制**：
+
+| 项目或来源 | 链接与核实许可 | 设计参考（零代码复制） |
+| --- | --- | --- |
+| Paco Cantero〈Your Thoughts Are Objects, Not Notes〉 | [x.com/PacomyICOR/status/2123739890449805718](https://x.com/PacomyICOR/status/2123739890449805718) | ICOR「My Life」地图与「捕获与思考两个世界、两个工具」的分治原则 |
+| `usememos/memos` | [usememos/memos](https://github.com/usememos/memos)，`MIT License` | 层级标签树承载 `#project/<slug>` 等位置标签；`ListMemoRelations` / `SetMemoRelations` 双向 `REFERENCE` 关系留作后续片段连接 |
+| `silverbulletmd/silverbullet` | [silverbulletmd/silverbullet](https://github.com/silverbulletmd/silverbullet)，`MIT License` | 在纯 Markdown 中以标签与字段表达带类型对象的写法，对照位置记录引用头格式 |
+| `raycast/extensions` | [raycast/extensions](https://github.com/raycast/extensions)，`MIT License` | 单行模糊搜索列表加动作面板，对照浮窗 `⌘P` 落位选择器 |
+| `logseq/logseq`、`siyuan-note/siyuan`、`TriliumNext/Trilium` | `AGPL-3.0` | 仅对照块引用、页面属性与大纲交互概念，严禁复制代码 |
+| `anyproto/anytype-ts`、`toeverything/AFFiNE` | GitHub 许可识别为 `NOASSERTION` | 仅对照 Type / Relation 对象模型概念，严禁复制代码 |

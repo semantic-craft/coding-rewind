@@ -192,6 +192,40 @@ public struct MemosClient: Sendable {
         )
     }
 
+    /// Returns nil when a memo with `memoID` already exists.
+    public func createMemo(
+        memoID: String,
+        content: String,
+        baseURL: URL,
+        token: String
+    ) async throws -> MemoWireDTO? {
+        guard MemosWireFormat.isValidMemoID(memoID) else {
+            throw RewindError.invalidClipID(memoID)
+        }
+        let createURL = try endpointURL(
+            baseURL: baseURL,
+            path: "/api/memos",
+            queryItems: [URLQueryItem(name: "memoId", value: memoID)]
+        )
+        let jsonEncoder = JSONEncoder()
+        jsonEncoder.outputFormatting = [.withoutEscapingSlashes]
+        let body = try jsonEncoder.encode(CreateMemoRequestDTO(content: content, visibility: "PRIVATE"))
+        let (data, status) = try await performCheckedRequest(url: createURL, method: "POST", token: token, body: body)
+        if status == 409 {
+            return nil
+        }
+        guard (200..<300).contains(status) else {
+            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+        }
+        let decoded = try? JSONDecoder().decode(MemoWireDTO.self, from: data)
+        return MemoWireDTO(
+            name: decoded?.name.isEmpty == false ? decoded!.name : "memos/\(memoID)",
+            content: decoded?.content.isEmpty == false ? decoded!.content : content,
+            createTime: decoded?.createTime,
+            updateTime: decoded?.updateTime
+        )
+    }
+
     public func listHotClips(
         baseURL: URL,
         token: String,

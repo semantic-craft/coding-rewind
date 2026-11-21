@@ -65,6 +65,28 @@ public enum SnippetFormatter {
         }
     }
 
+    public static func formatPlaceListMarkdown(_ result: PlaceListResult) -> String {
+        let header = "# Coding Rewind places (\(result.places.count) place\(result.places.count == 1 ? "" : "s"), resolution: \(describeResolution(result.resolution)))"
+        guard !result.places.isEmpty else {
+            return "\(header)\n\nNo places."
+        }
+        return "\(header)\n\n" + result.places.map(formatPlaceLine).joined(separator: "\n")
+    }
+
+    public static func formatPlaceLine(_ place: PlaceRecord) -> String {
+        var line = "- #\(place.ref.tag) \(place.title)"
+        if !place.aliases.isEmpty {
+            line += " · aliases: \(place.aliases.joined(separator: ", "))"
+        }
+        if let externalRef = place.externalRef {
+            line += " · ref: \(externalRef)"
+        }
+        if place.archived {
+            line += " · archived"
+        }
+        return line
+    }
+
     private static func describeResolution(_ mode: SnippetResolutionMode) -> String {
         switch mode {
         case .online:

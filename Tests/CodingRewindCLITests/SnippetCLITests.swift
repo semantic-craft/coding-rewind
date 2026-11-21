@@ -79,14 +79,14 @@ struct SnippetCLITests {
             _ = try CLIParser.parse(arguments: ["coding-rewind"])
             Issue.record("Expected CLIValidationError for missing subcommand")
         } catch let error as CLIValidationError {
-            #expect(error.message.contains("list, search, get, create, update, note, archive, delete, mcp"))
+            #expect(error.message.contains("list, search, get, create, update, note, archive, delete, place, mcp"))
         }
 
         do {
             _ = try CLIParser.parse(arguments: ["coding-rewind", "unknown-cmd"])
             Issue.record("Expected CLIValidationError for unknown subcommand")
         } catch let error as CLIValidationError {
-            #expect(error.message.contains("list, search, get, create, update, note, archive, delete, mcp"))
+            #expect(error.message.contains("list, search, get, create, update, note, archive, delete, place, mcp"))
         }
     }
 

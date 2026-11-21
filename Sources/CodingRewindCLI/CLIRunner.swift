@@ -275,6 +275,51 @@ public enum CLIRunner {
                 return 1
             }
 
+        case .placeList(let includeArchived, let dataDir, let json):
+            do {
+                let repo = try makeRepository(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath,
+                    factory: factory
+                )
+                let result = try await repo.listPlaces(includeArchived: includeArchived)
+                if json {
+                    writeStdout(try SnippetFormatter.encodePrettyJSON(result) + "\n")
+                } else {
+                    writeStdout(SnippetFormatter.formatPlaceListMarkdown(result) + "\n")
+                }
+                return 0
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+
+        case .placeAdd(let place, let dataDir, let json):
+            do {
+                try ensureCLIWriteAccessAllowed(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath
+                )
+                let repo = try makeRepository(
+                    dataDirOverride: dataDir,
+                    environment: environment,
+                    executablePath: executablePath,
+                    factory: factory
+                )
+                let saved = try await repo.upsertPlace(place)
+                if json {
+                    writeStdout(try SnippetFormatter.encodePrettyJSON(saved) + "\n")
+                } else {
+                    writeStdout("Saved place #\(saved.ref.tag)\n\n" + SnippetFormatter.formatPlaceLine(saved) + "\n")
+                }
+                return 0
+            } catch {
+                writeStderr("Error: \(describeError(error))\n")
+                return 1
+            }
+
         case .mcp(let dataDir):
             let sessionTokenBox = MCPSessionTokenBox()
             let server = MCPServer(

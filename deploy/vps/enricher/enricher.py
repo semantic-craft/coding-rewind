@@ -33,6 +33,22 @@ SYSTEM_PROMPT_EN = (
     '{"title": "<concise English title>", "session_topic": "<session title or topic>", '
     '"context_summary": "<1-2 English sentences>", "keywords": ["<keyword>"]}'
 )
+PLACES_PROMPT = (
+    "place_vocabulary 是用户已建立的位置列表，每项含 place（kind/slug）、title 与 aliases。"
+    '输出 JSON 另含 "places": ["<kind/slug>"]，列出剪藏明确属于的 0 到 3 个位置，只能取 place_vocabulary 中的 place 值；'
+    "不确定时输出空数组。"
+)
+PLACES_PROMPT_EN = (
+    " place_vocabulary lists the user's existing places; each entry has place (kind/slug), title, and aliases. "
+    'Also output "places": ["<kind/slug>"] with 0 to 3 places the clip clearly belongs to, using only place values from place_vocabulary; '
+    "output an empty array when unsure."
+)
+PLACE_TAG = "#rewind/place"
+PLACE_CACHE_SECONDS = 60.0
+MAX_PLACES_PER_CLIP = 3
+MAX_PLACE_SLUG_LENGTH = 28
+_PLACE_REF_RE = re.compile(r"(?:project|topic|person)/[a-z0-9]+(?:-[a-z0-9]+)*")
+_PLACE_HEADER_RE = re.compile(r"^> \*\*(Title|Aliases|Ref|Status):\*\*[ \t]*(.*?)[ \t]*$")
 
 _FENCED_CODE_RE = re.compile(r"(`{3,}|~{3,})[\s\S]*?(?:\1|$)")
 _INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
@@ -149,7 +165,7 @@ def _strip_single_newline(text: str) -> str:
 def parse_raw_memo(content: str) -> dict | None:
     first_line, sep, rest = content.partition("\n")
     tags = first_line.removesuffix("\r").split()
-    if "#rewind/pending" not in tags or "#rewind/ready" in tags or "#rewind/synthesized" in tags:
+    if "#rewind/pending" not in tags or "#rewind/ready" in tags or "#rewind/synthesized" in tags or PLACE_TAG in tags:
         return None
     out_tags: list[str] = []
     for tok in tags:
@@ -166,6 +182,61 @@ def parse_raw_memo(content: str) -> dict | None:
         else:
             body = _strip_single_newline(rest)
     return {"has_ctx": "#rewind/has-ctx" in tags, "ready_tag_line": " ".join(out_tags), "source_line": source_line, "verbatim_body": body}
+
+
+def _place_ref(text: str) -> str | None:
+    ref = text.strip().removeprefix("#").lower()
+    if not _PLACE_REF_RE.fullmatch(ref) or len(ref.split("/", 1)[1]) > MAX_PLACE_SLUG_LENGTH:
+        return None
+    return ref
+
+
+def parse_place_memo(content: str) -> dict | None:
+    first_line, _, rest = content.partition("\n")
+    tags = first_line.removesuffix("\r").split()
+    if PLACE_TAG not in tags:
+        return None
+    refs = [tok[1:] for tok in tags if tok.startswith("#") and _place_ref(tok) == tok[1:]]
+    if len(refs) != 1:
+        return None
+    headers: dict[str, str] = {}
+    for line in rest.splitlines():
+        if not line.strip() and not headers:
+            continue
+        match = _PLACE_HEADER_RE.match(line)
+        if not match:
+            break
+        headers.setdefault(match.group(1), match.group(2))
+    return {
+        "place": refs[0],
+        "title": headers.get("Title", ""),
+        "aliases": [a.strip() for a in headers.get("Aliases", "").split(",") if a.strip()],
+        "active": headers.get("Status", "active").lower() != "archived",
+    }
+
+
+def select_places(raw: object, vocabulary: list[dict]) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    known = {entry["place"] for entry in vocabulary}
+    chosen: list[str] = []
+    for item in raw:
+        ref = _place_ref(item) if isinstance(item, str) else None
+        if ref in known and ref not in chosen:
+            chosen.append(ref)
+        if len(chosen) == MAX_PLACES_PER_CLIP:
+            break
+    return chosen
+
+
+def append_place_tags(tag_line: str, places: list[str]) -> str:
+    tokens = tag_line.split()
+    present = {tok.lower() for tok in tokens}
+    for ref in places:
+        if f"#{ref}" not in present:
+            tokens.append(f"#{ref}")
+            present.add(f"#{ref}")
+    return " ".join(tokens)
 
 
 def extract_context_comment(payload: dict) -> str | None:
@@ -274,9 +345,36 @@ class EnricherService:
     summary_language: str = "auto"
     _wake: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _stop: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
+    _places_cache: tuple[float, list[dict]] | None = field(default=None, init=False, repr=False)
 
     def _base_url(self) -> str:
         return re.sub(r"/api(?:/v1)?(?:/memos)?$", "", self.memos_url.strip().rstrip("/"), flags=re.IGNORECASE).rstrip("/")
+
+    def _list_memos(self):
+        page_token = ""
+        while True:
+            query = {"pageSize": 50}
+            if page_token:
+                query["pageToken"] = page_token
+            page = _json_req("GET", f"{self._base_url()}/api/memos?{urlencode(query)}", self.memos_token)
+            yield from page.get("memos", [])
+            page_token = page.get("nextPageToken")
+            if not page_token:
+                return
+
+    def _store_places(self, place_memos: list[dict]) -> list[dict]:
+        by_ref: dict[str, dict] = {}
+        for p in place_memos:
+            if p["active"]:
+                by_ref.setdefault(p["place"], {"place": p["place"], "title": p["title"], "aliases": p["aliases"]})
+        vocabulary = [by_ref[ref] for ref in sorted(by_ref)]
+        self._places_cache = (self.clock(), vocabulary)
+        return vocabulary
+
+    def places_vocabulary(self) -> list[dict]:
+        if self._places_cache is not None and self.clock() - self._places_cache[0] < PLACE_CACHE_SECONDS:
+            return self._places_cache[1]
+        return self._store_places([p for m in self._list_memos() if (p := parse_place_memo(m.get("content", ""))) is not None])
 
     def process_memo(self, memo: dict) -> str:
         parsed, name = parse_raw_memo(memo.get("content", "")), memo.get("name", "")
@@ -293,11 +391,16 @@ class EnricherService:
                 ctx_text = found.replace(CONTEXT_MARKER, "").strip()
         lang = resolve_summary_language(self.summary_language, parsed["verbatim_body"], ctx_text or None)
         sys_prompt = SYSTEM_PROMPT_EN if lang == "en" else SYSTEM_PROMPT
-        prompt = json.dumps({
+        user_input = {
             "selected_excerpt": parsed["verbatim_body"][:6000],
             "captured_chat_context": ctx_text or None,
             "source": parsed["source_line"] or None,
-        }, ensure_ascii=False)
+        }
+        vocabulary = self.places_vocabulary()
+        if vocabulary:
+            sys_prompt += PLACES_PROMPT_EN if lang == "en" else PLACES_PROMPT
+            user_input["place_vocabulary"] = vocabulary
+        prompt = json.dumps(user_input, ensure_ascii=False)
         req_payload = _build_chat_completion_payload(
             self.ai_base_url, self.ai_model, sys_prompt, prompt
         )
@@ -307,29 +410,27 @@ class EnricherService:
             self.ai_api_key,
             req_payload,
         )
-        raw_json = ai_resp["choices"][0]["message"].get("content") or ""
+        ai_meta = _parse_ai_json(ai_resp["choices"][0]["message"].get("content") or "")
+        places = select_places(ai_meta.get("places"), vocabulary)
+        placed = {**parsed, "ready_tag_line": append_place_tags(parsed["ready_tag_line"], places)}
         _json_req(
             "PATCH",
             f"{base}/api/memos/{memo_id}?updateMask=content",
             self.memos_token,
-            {"content": build_enriched_content(parsed, _parse_ai_json(raw_json), language=lang)},
+            {"content": build_enriched_content(placed, ai_meta, language=lang)},
         )
         return "enriched"
 
     def reconcile_once(self) -> int:
         candidates = {}
-        page_token = ""
-        while True:
-            query = {"pageSize": 50}
-            if page_token:
-                query["pageToken"] = page_token
-            page = _json_req("GET", f"{self._base_url()}/api/memos?{urlencode(query)}", self.memos_token)
-            for memo in page.get("memos", []):
-                if parse_raw_memo(memo.get("content", "")) is not None:
-                    candidates[memo.get("name", "")] = memo
-            page_token = page.get("nextPageToken")
-            if not page_token:
-                break
+        place_memos = []
+        for memo in self._list_memos():
+            content = memo.get("content", "")
+            if parse_raw_memo(content) is not None:
+                candidates[memo.get("name", "")] = memo
+            elif (place := parse_place_memo(content)) is not None:
+                place_memos.append(place)
+        self._store_places(place_memos)
 
         enriched = 0
         for memo in candidates.values():

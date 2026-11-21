@@ -316,7 +316,7 @@ struct AIWriteSurfaceCLIMCPTests {
         #expect(noteHumanOut.value().contains("Conclusion via --stdin"))
     }
 
-    @Test("CLIRunner enforces AI read_only gate (and fail-closed invalid env) across create, update, note, archive, and delete while keeping list/search/get active")
+    @Test("CLIRunner enforces AI read_only gate (and fail-closed invalid env) across create, update, note, archive, delete, and place add while keeping list/search/get/place list active")
     func cliEnforcesReadOnlyAndFailClosedGateAcrossAllMutatingAndDeletingCommands() async throws {
         let dir = try SnippetCLIFixtures.makeIsolatedDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -334,7 +334,8 @@ struct AIWriteSurfaceCLIMCPTests {
         for readArgs in [
             ["coding-rewind", "list", "--data-dir", dataDir.path, "--json"],
             ["coding-rewind", "search", "actor", "--data-dir", dataDir.path, "--json"],
-            ["coding-rewind", "get", "rw-recent-ready", "--data-dir", dataDir.path, "--json"]
+            ["coding-rewind", "get", "rw-recent-ready", "--data-dir", dataDir.path, "--json"],
+            ["coding-rewind", "place", "list", "--data-dir", dataDir.path, "--json"]
         ] {
             let out = OutputCollector()
             let err = OutputCollector()
@@ -357,7 +358,8 @@ struct AIWriteSurfaceCLIMCPTests {
             ["coding-rewind", "note", "rw-recent-ready", "--text", "blocked", "--data-dir", dataDir.path],
             ["coding-rewind", "note", "rw-recent-ready", "--stdin", "--data-dir", dataDir.path],
             ["coding-rewind", "archive", "rw-recent-ready", "--data-dir", dataDir.path],
-            ["coding-rewind", "delete", "rw-recent-ready", "--data-dir", dataDir.path]
+            ["coding-rewind", "delete", "rw-recent-ready", "--data-dir", dataDir.path],
+            ["coding-rewind", "place", "add", "--kind", "project", "--slug", "blocked", "--title", "Blocked", "--data-dir", dataDir.path]
         ]
 
         let openPipe = Pipe()
@@ -402,5 +404,6 @@ struct AIWriteSurfaceCLIMCPTests {
         #expect(await backend.recordedUpdateCalls.isEmpty)
         #expect(await backend.recordedNoteCalls.isEmpty)
         #expect(await backend.recordedArchiveIDs.isEmpty)
+        #expect(await backend.recordedUpsertPlaces.isEmpty)
     }
 }
