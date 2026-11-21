@@ -13,6 +13,7 @@
 | [docs/privacy.md](docs/privacy.md) | 原文与 AI 摘要边界、凭据存储、导出与删除规则 |
 | [docs/milestones.md](docs/milestones.md) | M0 至 M4 分期验收标准 |
 | [docs/contributing.md](docs/contributing.md) | 人机协作与公开仓库提交边界 |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | 跨进程文件锁、宿主代理头与静态扫描等非显然工程约束记录 |
 
 ## 统一架构与源码导航
 

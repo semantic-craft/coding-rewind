@@ -236,7 +236,6 @@ extension AppShortcutsTests {
             try? FileManager.default.removeItem(at: dir)
         }
 
-        // 1. Present HUD, check two cards, press ⌘Return -> opens editable draft box, does NOT send to host
         panel.presentAndFocus()
         try await settleDraftLoop()
         coord.checkedCardIDs = [card1.id, card2.id]
@@ -251,7 +250,7 @@ extension AppShortcutsTests {
         #expect(panel.performKeyEquivalent(with: cmdReturn))
         try await settleDraftLoop()
 
-        #expect(coord.conversationDraft != nil)
+        #expect(coord.conversationDraft != nil, "Cmd+Return must open editable draft instead of dispatching immediately")
         #expect(coord.conversationDraft?.isEdited == false)
         #expect(coord.conversationDraft?.text.contains("rw-draft-1") == true)
         #expect(coord.conversationDraft?.text.contains("First verbatim snippet") == true)
@@ -275,23 +274,20 @@ extension AppShortcutsTests {
         #expect(!textView.isAutomaticDashSubstitutionEnabled)
         #expect(panel.firstResponder === textView)
 
-        // 2. Unedited draft refreshes dynamically on language switch, but preserves edits once modified
         coord.setLanguage(.en)
-        #expect(coord.conversationDraft?.text.contains("### Clip 1:") == true)
+        #expect(coord.conversationDraft?.text.contains("### Clip 1:") == true, "unedited draft must localize on language switch")
         coord.setLanguage(.zhHans)
         #expect(coord.conversationDraft?.text.contains("### 卡片 1：") == true)
 
-        // 3. Esc inside draft editor returns to card list WITHOUT closing HUD or clearing checked cards
         let escEvent = try makeDraftKeyEvent(windowNumber: panel.windowNumber, keyCode: 53, characters: "\u{1B}")
         panel.sendEvent(escEvent)
         try await settleDraftLoop()
 
-        #expect(coord.conversationDraft == nil)
+        #expect(coord.conversationDraft == nil, "Esc inside draft editor must return to card list without closing HUD")
         #expect(panel.isVisible)
         #expect(coord.checkedCardIDs == [card1.id, card2.id])
         #expect(hasDraftAXIdentifier("hud.launch", in: panel))
 
-        // 4. Reopen via hud.launch button, edit text, verify Reset restores default, then edit again & press ⌘Return to Copy & Wake Antigravity
         #expect(pressDraftAXButton("hud.launch", in: panel))
         try await settleDraftLoop()
         #expect(coord.conversationDraft != nil)
@@ -302,18 +298,15 @@ extension AppShortcutsTests {
         #expect(coord.conversationDraft?.isEdited == true)
         #expect(hasDraftAXIdentifier("hud.draft.reset", in: panel))
 
-        // Switching language while edited must NOT clobber user's custom draft
         coord.setLanguage(.en)
-        #expect(coord.conversationDraft?.text == customDraft)
+        #expect(coord.conversationDraft?.text == customDraft, "language switch must preserve user-edited draft")
         coord.setLanguage(.zhHans)
 
-        // Reset restores unedited prompt
         #expect(pressDraftAXButton("hud.draft.reset", in: panel))
         try await settleDraftLoop()
-        #expect(coord.conversationDraft?.isEdited == false)
+        #expect(coord.conversationDraft?.isEdited == false, "reset must restore unedited prompt")
         #expect(coord.conversationDraft?.text.contains("自定义开场指令") == false)
 
-        // Apply user edit and trigger Primary Action via ⌘Return -> copies edited text, wakes Antigravity, orders out HUD, sends zero handoff
         coord.updateConversationDraftText(customDraft)
         try await settleDraftLoop()
         #expect(panel.performKeyEquivalent(with: cmdReturn))
@@ -328,14 +321,13 @@ extension AppShortcutsTests {
         #expect(coord.isErrorBanner == false)
         #expect(coord.bannerMessage?.contains("Antigravity") == true)
 
-        // 5. Empty/whitespace draft disables both actions and rejects copy/send; unavailable host still copies draft and keeps HUD open with warning
         panel.presentAndFocus()
         #expect(coord.openConversationDraft())
         try await settleDraftLoop()
         coord.updateConversationDraftText("   \n\t  ")
         try await settleDraftLoop()
-        #expect(!isDraftAXEnabled("hud.draft.copyAndWake", in: panel))
-        #expect(!isDraftAXEnabled("hud.draft.sendDirect", in: panel))
+        #expect(!isDraftAXEnabled("hud.draft.copyAndWake", in: panel), "whitespace-only draft must disable primary action")
+        #expect(!isDraftAXEnabled("hud.draft.sendDirect", in: panel), "whitespace-only draft must disable direct send")
         #expect(coord.copyConversationDraftAndWakeHost() == false)
         #expect(coord.isErrorBanner)
         #expect(await coord.sendConversationDraft(waitSeconds: 0) == nil)
@@ -390,7 +382,6 @@ extension AppShortcutsTests {
 
         coord.conversationHost = .antigravity
 
-        // 7. Uncommitted IME marked text in DraftPromptTextView: pressing Esc ONLY discards marked text (does NOT close HUD or dismiss draft), and button click commits marked text
         panel.presentAndFocus()
         coord.checkedCardIDs = [card1.id]
         #expect(coord.openConversationDraft())
@@ -407,7 +398,7 @@ extension AppShortcutsTests {
         panel.sendEvent(imeEsc)
         try await settleDraftLoop()
         #expect(panel.isVisible)
-        #expect(coord.conversationDraft != nil)
+        #expect(coord.conversationDraft != nil, "Esc with marked text must only discard IME composition")
         #expect(!imeTextView.hasMarkedText())
         #expect(imeTextView.string == baseUneditedPrompt)
         #expect(coord.conversationDraft?.text == baseUneditedPrompt)
@@ -417,9 +408,8 @@ extension AppShortcutsTests {
         #expect(imeTextView.hasMarkedText())
         #expect(pressDraftAXButton("hud.draft.copyAndWake", in: panel))
         try await settleDraftLoop()
-        #expect(copiedTexts.last?.hasPrefix("【未提交拼音】") == true)
+        #expect(copiedTexts.last?.hasPrefix("【未提交拼音】") == true, "button click must commit uncommitted IME marked text")
 
-        // 8. Edited draft survives Esc / HUD hide for same selection, resets cleanly on new selection, supports ⌘A/⌘Z/⇧⌘Z without mainMenu, and never crashes on Reset -> ⌘Z
         let previousMainMenu = NSApplication.shared.mainMenu
         NSApplication.shared.mainMenu = nil
         defer { NSApplication.shared.mainMenu = previousMainMenu }
@@ -453,12 +443,11 @@ extension AppShortcutsTests {
         try await settleDraftLoop()
         #expect(coord.conversationDraft?.text == typedDraft)
 
-        // Esc back to list AND panel.orderOut preserve unsent user edits for the same card selection
         panel.sendEvent(escEvent)
         try await settleDraftLoop()
         #expect(coord.conversationDraft == nil)
         #expect(coord.openConversationDraft())
-        #expect(coord.conversationDraft?.isEdited == true)
+        #expect(coord.conversationDraft?.isEdited == true, "Esc must stash edited draft for same card selection")
         #expect(coord.conversationDraft?.text == typedDraft)
 
         panel.orderOut(nil)
@@ -467,10 +456,9 @@ extension AppShortcutsTests {
         panel.presentAndFocus()
         #expect(coord.openConversationDraft())
         try await settleDraftLoop()
-        #expect(coord.conversationDraft?.isEdited == true)
+        #expect(coord.conversationDraft?.isEdited == true, "panel.orderOut must stash edited draft for same card selection")
         #expect(coord.conversationDraft?.text == typedDraft)
 
-        // Menu .launchConversation while draft is open brings HUD forward & keeps draft open instead of prematurely copying/closing
         panel.orderOut(nil)
         #expect(coord.openConversationDraft())
         let copiedCountBeforeMenu = copiedTexts.count
@@ -478,9 +466,8 @@ extension AppShortcutsTests {
         try await settleDraftLoop()
         #expect(panel.isVisible)
         #expect(coord.conversationDraft?.text == typedDraft)
-        #expect(copiedTexts.count == copiedCountBeforeMenu)
+        #expect(copiedTexts.count == copiedCountBeforeMenu, "menu launchConversation while draft open must focus HUD without premature copy")
 
-        // Reset shrinking textStorage followed by ⌘Z must NOT throw NSRangeException
         let resetEditor = try #require(panel.contentView.flatMap(findDraftTextView))
         let resetEnd = (resetEditor.string as NSString).length
         resetEditor.setSelectedRange(NSRange(location: resetEnd, length: 0))
@@ -489,24 +476,22 @@ extension AppShortcutsTests {
         coord.resetConversationDraft()
         try await settleDraftLoop()
         #expect(panel.makeFirstResponder(resetEditor))
-        #expect(panel.performKeyEquivalent(with: cmdZ))
+        #expect(panel.performKeyEquivalent(with: cmdZ), "Cmd+Z after reset shrinking textStorage must not throw NSRangeException")
         #expect(coord.conversationDraft?.isEdited == false)
 
-        // Changing checked selection discards stale stashed draft from previous selection
         coord.updateConversationDraftText("Only for card 1")
         coord.dismissConversationDraft()
         coord.checkedCardIDs = [card1.id, card2.id]
         #expect(coord.openConversationDraft())
-        #expect(coord.conversationDraft?.isEdited == false)
+        #expect(coord.conversationDraft?.isEdited == false, "changing checked selection must discard stashed draft")
         #expect(coord.conversationDraft?.text.contains("Second verbatim snippet") == true)
         coord.dismissConversationDraft()
 
-        // 9. AIAccessMode live update refreshes unedited draft, and active handoff takes priority over opening a new draft
         coord.checkedCardIDs = [card1.id]
         #expect(coord.openConversationDraft())
         #expect(coord.conversationDraft?.text.contains("append_snippet_note") == true)
         coord.setAIAccessMode(.readOnly)
-        #expect(coord.conversationDraft?.text.contains("append_snippet_note") == false)
+        #expect(coord.conversationDraft?.text.contains("append_snippet_note") == false, "read_only mode must strip write-back instructions from unedited draft")
         coord.dismissConversationDraft()
 
         let agStore = coord.handoffStore(for: .antigravity)
@@ -678,7 +663,6 @@ extension AppShortcutsTests {
         }
         coord.onOpenConversation = { _ in true }
 
-        // A. Start captureSelection, wait until provisional card is staged before POST /api/memos finishes
         var captureTask: Task<SelectionCaptureOutcome, Never>?
         await withCheckedContinuation { (started: CheckedContinuation<Void, Never>) in
             DraftMockURLProtocol.state.withLock { $0.createStarted = started }
@@ -692,15 +676,13 @@ extension AppShortcutsTests {
         #expect(coord.conversationDraft?.cardIDs == [provisionalID])
         #expect(coord.conversationDraft?.text.contains(provisionalID) == true)
 
-        // Complete POST /api/memos returning server-canonical-id -> open unedited draft remaps ID & prompt live
         DraftMockURLProtocol.createRelease.signal()
         let captureOutcome = await captureTask?.value
         #expect(captureOutcome == .saved(cardID: "server-canonical-id", sourceTitle: "zsh"))
-        #expect(coord.conversationDraft?.cardIDs == ["server-canonical-id"])
+        #expect(coord.conversationDraft?.cardIDs == ["server-canonical-id"], "completed capture must remap provisional ID in open draft")
         #expect(coord.conversationDraft?.text.contains("server-canonical-id") == true)
         #expect(coord.conversationDraft?.text.contains(provisionalID) == false)
 
-        // B. Background refresh brings back enriched Title/Context -> unedited draft updates live
         let enrichedContent = """
         #rewind/ready #source/macos
 
@@ -719,10 +701,9 @@ extension AppShortcutsTests {
             )]
         }
         await coord.refresh()
-        #expect(coord.conversationDraft?.text.contains("服务端异步整理标题") == true)
+        #expect(coord.conversationDraft?.text.contains("服务端异步整理标题") == true, "background enrichment refresh must update unedited draft")
         #expect(coord.conversationDraft?.text.contains("验证草稿打开期间后台增强刷新") == true)
 
-        // Send with markSynthesizedOnLaunch = true -> archives canonical server-canonical-id cleanly
         coord.markSynthesizedOnLaunch = true
         let sendResult1 = await coord.sendConversationDraft(in: .dsh, waitSeconds: 2)
         if case .succeeded = sendResult1 {} else { Issue.record("Expected DSH send to succeed") }
@@ -730,7 +711,6 @@ extension AppShortcutsTests {
         #expect(!coord.isErrorBanner)
         #expect(!coord.canEndUnarchivedConversation)
 
-        // C. Re-seed a card, open unedited draft, remove card remotely -> refresh closes empty unedited draft
         let nowISO = ISO8601DateFormatter().string(from: Date())
         DraftMockURLProtocol.state.withLock { s in
             s.memos = [MemoWireDTO(
@@ -745,9 +725,8 @@ extension AppShortcutsTests {
         DraftMockURLProtocol.state.withLock { $0.memos = [] }
         await coord.refresh()
         #expect(coord.cards.isEmpty)
-        #expect(coord.conversationDraft == nil)
+        #expect(coord.conversationDraft == nil, "remote removal of all cards must close unedited draft")
 
-        // D. Re-seed card, open & EDIT draft, then remove card remotely -> edited text preserved, reset dismisses with warning, or direct send succeeds without false archive lockup
         DraftMockURLProtocol.state.withLock { s in
             s.memos = [MemoWireDTO(
                 name: "memos/edited-ephemeral",
@@ -765,7 +744,6 @@ extension AppShortcutsTests {
         #expect(coord.conversationDraft?.text == "User manually edited prompt surviving external card archive")
         #expect(coord.conversationDraft?.cardIDs.isEmpty == true)
 
-        // Direct send with markSynthesizedOnLaunch = true still delivers custom prompt without false .sentPartialArchiveFailure
         coord.markSynthesizedOnLaunch = true
         let sendResult2 = await coord.sendConversationDraft(in: .dsh, waitSeconds: 2)
         if case .succeeded = sendResult2 {} else { Issue.record("Expected edited orphan draft send to succeed") }
@@ -773,7 +751,6 @@ extension AppShortcutsTests {
         #expect(!coord.isErrorBanner)
         #expect(!coord.canEndUnarchivedConversation)
 
-        // Also verify resetConversationDraft when cards become empty dismisses cleanly with error banner instead of silent no-op
         DraftMockURLProtocol.state.withLock { s in
             s.memos = [MemoWireDTO(
                 name: "memos/reset-ephemeral",
@@ -788,7 +765,7 @@ extension AppShortcutsTests {
         DraftMockURLProtocol.state.withLock { $0.memos = [] }
         await coord.refresh()
         coord.resetConversationDraft()
-        #expect(coord.conversationDraft == nil)
+        #expect(coord.conversationDraft == nil, "resetting orphan draft with zero remaining cards must dismiss cleanly")
         #expect(coord.isErrorBanner)
     }
 }

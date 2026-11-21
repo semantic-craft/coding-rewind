@@ -190,23 +190,34 @@ class EnricherUnitTests(unittest.TestCase):
         headers = {"webhook-id": msg_id, "webhook-timestamp": ts, "webhook-signature": f"v1,invalid {valid_sig}"}
         self.assertTrue(enricher.verify_webhook_signature(prefixed_secret, headers, body, now=now))
 
-        # Tampered payload or wrong signature must fail
-        self.assertFalse(enricher.verify_webhook_signature(prefixed_secret, headers, body + b" ", now=now))
+        self.assertFalse(
+            enricher.verify_webhook_signature(prefixed_secret, headers, body + b" ", now=now),
+            "tampered payload must fail signature verification",
+        )
         bad_headers = {"webhook-id": msg_id, "webhook-timestamp": ts, "webhook-signature": "v1,dGFtcGVyZWQ="}
-        self.assertFalse(enricher.verify_webhook_signature(prefixed_secret, bad_headers, body, now=now))
+        self.assertFalse(
+            enricher.verify_webhook_signature(prefixed_secret, bad_headers, body, now=now),
+            "wrong signature must fail verification",
+        )
 
-        # Stale timestamp outside tolerance window must fail
-        self.assertFalse(enricher.verify_webhook_signature(prefixed_secret, headers, body, now=now + 600))
+        self.assertFalse(
+            enricher.verify_webhook_signature(prefixed_secret, headers, body, now=now + 600),
+            "stale timestamp outside tolerance window must fail",
+        )
 
-        # Raw non-prefixed secret also verifies per Standard Webhooks / Memos fallback
         raw_secret = "plain-hmac-secret-value"
         raw_sig = _sign_standard_webhook(raw_secret.encode("utf-8"), msg_id, ts, body)
         raw_headers = {"Webhook-Id": msg_id, "Webhook-Timestamp": ts, "Webhook-Signature": raw_sig}
-        self.assertTrue(enricher.verify_webhook_signature(raw_secret, raw_headers, body, now=now))
+        self.assertTrue(
+            enricher.verify_webhook_signature(raw_secret, raw_headers, body, now=now),
+            "raw non-prefixed secret must verify per Standard Webhooks fallback",
+        )
 
-        # Empty, whitespace, or empty whsec_ key material must fail closed
         for empty_secret in ("", "   ", "\t\n", "whsec_"):
-            self.assertFalse(enricher.verify_webhook_signature(empty_secret, headers, body, now=now))
+            self.assertFalse(
+                enricher.verify_webhook_signature(empty_secret, headers, body, now=now),
+                f"empty secret material {empty_secret!r} must fail closed",
+            )
             self.assertFalse(enricher.verify_webhook_signature(empty_secret, {}, body, now=now))
 
     def test_verbatim_snippet_preservation(self) -> None:
@@ -370,8 +381,7 @@ class EnricherUnitTests(unittest.TestCase):
                 clock=lambda: now_box[0],
             )
 
-            # 1) Within 15s window & comment not yet posted -> defer (0 AI calls)
-            self.assertEqual(svc.reconcile_once(), 0)
+            self.assertEqual(svc.reconcile_once(), 0, "missing context within 15s window must defer")
             self.assertEqual(len(state.ai_calls), 0)
             self.assertIn("#rewind/pending", state.memos["rw-ctx-1"]["content"])
 
@@ -393,7 +403,6 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertIn(f"> **Context:** {summary}", metadata.splitlines())
             self.assertEqual(stored_excerpt, excerpt)
 
-            # 3) Second memo with #rewind/has-ctx whose comment NEVER arrives -> proceeds gracefully after 15s
             state.memos["rw-ctx-timeout"] = {
                 "name": "memos/rw-ctx-timeout",
                 "createTime": created_iso,
@@ -404,7 +413,7 @@ class EnricherUnitTests(unittest.TestCase):
                 ),
             }
             now_box[0] = t0 + 16.0
-            self.assertEqual(svc.reconcile_once(), 1)
+            self.assertEqual(svc.reconcile_once(), 1, "missing context past 15s grace window must proceed")
             self.assertEqual(len(state.ai_calls), 2)
             sent_prompt = json.loads(state.ai_calls[1]["messages"][1]["content"])
             self.assertEqual(sent_prompt["selected_excerpt"], "SELECT 1;")
@@ -448,8 +457,7 @@ class EnricherUnitTests(unittest.TestCase):
             first_ready = state.memos["rw-idem"]["content"]
             self.assertEqual(len(state.ai_calls), 1)
 
-            # Running reconcile_once again must be a strict no-op with zero extra AI calls
-            self.assertEqual(svc.reconcile_once(), 0)
+            self.assertEqual(svc.reconcile_once(), 0, "second reconcile must be a no-op")
             self.assertEqual(len(state.ai_calls), 1)
             self.assertEqual(state.memos["rw-idem"]["content"], first_ready)
             self.assertEqual(enricher.EnricherService(f"{base_url}/api/memos/", "t", "u", "k", "m")._base_url(), base_url)
@@ -481,7 +489,6 @@ class EnricherUnitTests(unittest.TestCase):
             with urllib.request.urlopen(f"{enricher_url}/healthz", timeout=5) as hresp:
                 self.assertEqual(hresp.status, 200)
 
-            # Insert a pending memo after initial startup poll
             time.sleep(0.05)
             snippet = "```swift\n@MainActor final class HUDPanel: NSPanel {}\n```"
             state.memos["rw-e2e"] = {
@@ -494,14 +501,12 @@ class EnricherUnitTests(unittest.TestCase):
                 ),
             }
 
-            # Unsigned webhook must be rejected with 401
             bad_req = urllib.request.Request(f"{enricher_url}/webhook", data=b"{}", method="POST")
             with self.assertRaises(urllib.error.HTTPError) as ctx:
                 urllib.request.urlopen(bad_req, timeout=5)
-            self.assertEqual(ctx.exception.code, 401)
+            self.assertEqual(ctx.exception.code, 401, "unsigned webhook must be rejected with 401")
             ctx.exception.close()
 
-            # Valid signed Standard Webhook wakes background loop immediately (even though poll_interval=60s)
             payload = b'{"activityType":"memos.memo.created"}'
             msg_id, ts = "msg_e2e_1", str(int(time.time()))
             sig = _sign_standard_webhook(raw_key, msg_id, ts, payload)
@@ -526,7 +531,6 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertTrue(enriched_text.startswith("#rewind/ready #source/antigravity\n\n"))
             self.assertTrue(enriched_text.endswith("\n\n" + snippet))
 
-            # Malformed, negative, oversized Content-Length and Transfer-Encoding must fail fast without hanging
             import http.client
             host, port = http_srv.server_address[0], http_srv.server_address[1]
 
@@ -550,7 +554,6 @@ class EnricherUnitTests(unittest.TestCase):
             self.assertEqual(raw_post("/webhook", {"Content-Length": "2097152"}), 413)
             self.assertEqual(raw_post("/hooks/rewind", {"Transfer-Encoding": "chunked"}), 400)
 
-            # Duplicate Content-Length headers and truncated bodies must fail closed with 400
             dup_conn = http.client.HTTPConnection(host, port, timeout=3)
             try:
                 dup_conn.putrequest("POST", "/webhook")
@@ -559,7 +562,7 @@ class EnricherUnitTests(unittest.TestCase):
                 dup_conn.endheaders(b"{}")
                 dup_resp = dup_conn.getresponse()
                 _ = dup_resp.read()
-                self.assertEqual(dup_resp.status, 400)
+                self.assertEqual(dup_resp.status, 400, "duplicate Content-Length headers must fail closed")
             finally:
                 dup_conn.close()
 
@@ -572,7 +575,7 @@ class EnricherUnitTests(unittest.TestCase):
                 short_conn.sock.shutdown(1)
                 short_resp = short_conn.getresponse()
                 _ = short_resp.read()
-                self.assertEqual(short_resp.status, 400)
+                self.assertEqual(short_resp.status, 400, "truncated body must fail closed")
             finally:
                 short_conn.close()
         finally:
@@ -582,7 +585,6 @@ class EnricherUnitTests(unittest.TestCase):
             upstream_srv.shutdown()
             upstream_srv.server_close()
 
-        # Unconfigured webhook_secret ("") must fail closed with 401 on both /webhook and /hooks/rewind
         unconfigured_svc = enricher.EnricherService(
             memos_url="http://localhost:9",
             memos_token="memos-tok",
@@ -599,7 +601,7 @@ class EnricherUnitTests(unittest.TestCase):
                 req = urllib.request.Request(f"{unconf_url}{endpoint}", data=b"{}", method="POST")
                 with self.assertRaises(urllib.error.HTTPError) as unconf_ctx:
                     urllib.request.urlopen(req, timeout=3)
-                self.assertEqual(unconf_ctx.exception.code, 401)
+                self.assertEqual(unconf_ctx.exception.code, 401, f"unconfigured webhook_secret must fail closed on {endpoint}")
                 unconf_ctx.exception.close()
         finally:
             unconfigured_srv.shutdown()
@@ -1046,7 +1048,6 @@ class EnricherUnitTests(unittest.TestCase):
         self.assertNotIn("enable_thinking", generic_payload)
         self.assertNotIn("thinking", generic_payload)
 
-        # Verify main() defaults AI_BASE_URL to https://api.deepseek.com and AI_MODEL to deepseek-flash
         captured: dict = {}
 
         class _DummyServer:
@@ -1085,7 +1086,6 @@ class EnricherUnitTests(unittest.TestCase):
             enricher.threading.Thread = orig_thread  # type: ignore[assignment]
             enricher.create_http_server = orig_create_server  # type: ignore[assignment]
 
-        # Verify whitespace-only / None JSON mode fallback raises cleanly without patching memo
         state = MockBackendState()
         state.ai_raw_content = "     "
         srv, base_url = _start_mock_upstream(state)
@@ -1105,7 +1105,7 @@ class EnricherUnitTests(unittest.TestCase):
             )
             with self.assertRaises(ValueError):
                 svc.process_memo(state.memos["rw-blank-json"])
-            self.assertEqual(state.memos["rw-blank-json"]["content"], original_content)
+            self.assertEqual(state.memos["rw-blank-json"]["content"], original_content, "blank JSON response must not patch memo")
         finally:
             srv.shutdown()
             srv.server_close()

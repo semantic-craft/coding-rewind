@@ -137,6 +137,11 @@ if errors:
     sys.exit(1)
 PY
 
+COMMENT_RATCHET="${COMMENT_RATCHET_CHECK:-${HOME:-}/Projects/agent-home/tools/comment-ratchet/check_comments.py}"
+if [[ -f "${COMMENT_RATCHET}" ]]; then
+  python3 -B "${COMMENT_RATCHET}" check "${REPO_ROOT}"
+fi
+
 if [[ -f "${REPO_ROOT}/Package.swift" ]]; then
   echo "==> [2/7] Swift test suite"
   swift test

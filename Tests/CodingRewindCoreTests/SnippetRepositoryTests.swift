@@ -704,12 +704,11 @@ struct SnippetRepositoryTests {
             "CODING_REWIND_KEYCHAIN_SERVICE": customKeychainService
         ]
 
-        // Production default validator rejects unsigned fake-op and never falls back to personal Keychain
         let untrustedOpRepo = SnippetRepository(paths: paths, environment: baseEnv, client: makeMockClient())
         await #expect(throws: DeveloperCredentialsResolver.Failure.invalidConfiguration) {
             _ = try await untrustedOpRepo.archiveSnippet(id: "rw-safe-local")
         }
-        #expect(SnippetMockURLProtocol.recordedRequests(suiteID: suiteID).isEmpty)
+        #expect(SnippetMockURLProtocol.recordedRequests(suiteID: suiteID).isEmpty, "unsigned op_executable must fail closed without falling back to Keychain")
 
         let validOpRepo = SnippetRepository(
             paths: paths,

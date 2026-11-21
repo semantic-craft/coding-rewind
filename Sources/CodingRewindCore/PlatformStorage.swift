@@ -544,7 +544,6 @@ public struct OfflineOutbox: Sendable {
 
     private func withFileLock<T>(_ operation: () throws -> T) throws -> T {
         try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        // Atomic writes replace the queue inode, so every writer locks a separate stable file.
         let lockURL = fileURL.appendingPathExtension("lock")
         let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
         guard fd >= 0 else {

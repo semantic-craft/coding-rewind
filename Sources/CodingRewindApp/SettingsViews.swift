@@ -71,7 +71,6 @@ public final class SettingsConnectionDraft {
         saveFailed = false
     }
 
-    /// The Memos web address for the typed URL, or nil while the input is not a valid http or https address.
     public var consoleURL: URL? {
         StoragePaths.normalizedMemosBaseURL(from: urlDraft)
     }

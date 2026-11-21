@@ -338,7 +338,6 @@ struct SnippetMCPServerTests {
             #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"archive_snippet","arguments":{"id":"rw-tok-1"}}}"#
         ].joined(separator: "\n") + "\n"
 
-        // 1. Production subprocess refuses unsigned fake-op in DeveloperCredentials.plist
         let binary = try SnippetCLIFixtures.builtExecutableURL(named: "coding-rewind")
         let subIn = Pipe()
         let subOut = Pipe()
@@ -368,7 +367,6 @@ struct SnippetMCPServerTests {
             Issue.record("Expected production subprocess to reject unsigned op_executable")
         }
 
-        // 2. With trusted executable validator, MCP session caches the resolved token across all 3 tool calls
         let mcpIn = Pipe()
         let mcpOut = Pipe()
         let errCollector = OutputCollector()

@@ -360,7 +360,6 @@ struct AIWriteSurfaceCLIMCPTests {
             ["coding-rewind", "delete", "rw-recent-ready", "--data-dir", dataDir.path]
         ]
 
-        // Non-EOF pipe proves --stdin commands fail closed BEFORE attempting to read stdin
         let openPipe = Pipe()
         defer {
             try? openPipe.fileHandleForWriting.close()
@@ -379,12 +378,11 @@ struct AIWriteSurfaceCLIMCPTests {
                 writeStderr: err.append,
                 repositoryFactory: { _, _, _ in backend }
             )
-            #expect(code == 1, "Expected \(args) to fail closed in read_only mode")
+            #expect(code == 1, "Expected \(args) to fail closed in read_only mode before reading open stdin pipe")
             #expect(out.value().isEmpty)
             #expect(err.value().contains(expectedMsg))
         }
 
-        // Even when config.json is read_write, corrupted CODING_REWIND_AI_ACCESS must fail closed in CLI too
         try paths.saveAIAccessMode(.readWrite)
         for envVal in ["read_only", "corrupted_unexpected_mode"] {
             let err = OutputCollector()
@@ -396,7 +394,7 @@ struct AIWriteSurfaceCLIMCPTests {
                 writeStderr: err.append,
                 repositoryFactory: { _, _, _ in backend }
             )
-            #expect(code == 1)
+            #expect(code == 1, "Expected \(envVal) environment override to fail closed even when config.json is read_write")
             #expect(err.value().contains(expectedMsg))
         }
 
