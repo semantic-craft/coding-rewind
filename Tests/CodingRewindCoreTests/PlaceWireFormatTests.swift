@@ -96,6 +96,19 @@ struct PlaceWireFormatTests {
         #expect(MemosWireFormat.parsePlaceMemo("#rewind/place\n\n> **Title:** no ref") == nil)
     }
 
+    @Test("fuzzy matching ranks prefix over substring over subsequence across title, aliases and tag")
+    func fuzzyMatching() throws {
+        let paper = PlaceRecord(ref: PlaceRef(tag: "project/paper-02")!, title: "著作权法的身体预设", aliases: ["论文02", "embodiment"])
+        let body = PlaceRecord(ref: PlaceRef(tag: "topic/body")!, title: "Body Studies")
+        let ada = PlaceRecord(ref: PlaceRef(tag: "person/ada")!, title: "Ada Lovelace")
+        let all = [paper, body, ada]
+        #expect(PlaceRecord.fuzzyMatches("", in: all).map(\.ref.tag) == ["project/paper-02", "topic/body", "person/ada"])
+        #expect(PlaceRecord.fuzzyMatches("bod", in: all).map(\.ref.tag) == ["topic/body", "project/paper-02"])
+        #expect(PlaceRecord.fuzzyMatches("身体", in: all).map(\.ref.tag) == ["project/paper-02"])
+        #expect(PlaceRecord.fuzzyMatches("alv", in: all).map(\.ref.tag) == ["person/ada"])
+        #expect(PlaceRecord.fuzzyMatches("qqq", in: all).isEmpty)
+    }
+
     @Test("unplaced is derived from ready or synthesized status with no place tags")
     func unplacedDerivation() throws {
         func record(_ header: String) throws -> SnippetRecord {

@@ -67,6 +67,11 @@ public final class QuickPeekHUDPanel: NSPanel {
 
     public override func cancelOperation(_ sender: Any?) {
         guard !hasMarkedTextInput else { return }
+        if coordinator.placePicker != nil {
+            resignTextInputIfNeeded()
+            coordinator.closePlacePicker()
+            return
+        }
         if coordinator.pendingDeleteConfirmation != nil {
             coordinator.cancelDeleteConfirmation()
             return
@@ -113,6 +118,11 @@ public final class QuickPeekHUDPanel: NSPanel {
             return super.performKeyEquivalent(with: event)
         }
         if event.keyCode == 53, modifiers.isEmpty {
+            if coordinator.placePicker != nil {
+                resignTextInputIfNeeded()
+                coordinator.closePlacePicker()
+                return true
+            }
             if coordinator.pendingDeleteConfirmation != nil {
                 coordinator.cancelDeleteConfirmation()
                 return true
@@ -128,6 +138,13 @@ public final class QuickPeekHUDPanel: NSPanel {
                 coordinator.closeCardPreview()
                 return true
             }
+        }
+        if event.charactersIgnoringModifiers?.lowercased() == "p", modifiers == [.command], coordinator.conversationDraft == nil {
+            if coordinator.placePicker == nil {
+                resignTextInputIfNeeded()
+                coordinator.openPlacePicker()
+            }
+            return true
         }
         if (event.keyCode == 36 || event.keyCode == 76), modifiers == [.command] {
             if coordinator.conversationDraft != nil {
@@ -179,6 +196,11 @@ public final class QuickPeekHUDPanel: NSPanel {
            event.type == .keyDown,
            !hasMarkedTextInput {
             let modifiers = relevantModifiers(for: event)
+            if event.keyCode == 53, modifiers.isEmpty, coordinator.placePicker != nil {
+                resignTextInputIfNeeded()
+                coordinator.closePlacePicker()
+                return
+            }
             if event.keyCode == 53,
                modifiers.isEmpty,
                coordinator.conversationDraft != nil {
@@ -521,25 +543,38 @@ public struct QuickPeekHUDRootView: View {
                 .background(Color.primary.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                HStack(spacing: 12) {
-                    ForEach(StatusFilter.allCases, id: \.self) { filter in
-                        Button(filter.label(in: lang)) { coordinator.statusFilter = filter }
-                            .rewindButtonRole(.toolbar)
-                            .font(.system(size: 11, weight: coordinator.statusFilter == filter ? .semibold : .regular))
-                            .foregroundStyle(coordinator.statusFilter == filter ? Color.accentColor : Color.secondary)
-                            .accessibilityAddTraits(coordinator.statusFilter == filter ? .isSelected : [])
-                            .accessibilityIdentifier("hud.filter.\(filter.rawValue)")
-                    }
+                HUDSectionBar(coordinator: coordinator, language: lang)
+
+                if coordinator.placePicker != nil {
+                    HUDPlacePickerView(coordinator: coordinator, language: lang)
                 }
 
-                if coordinator.filteredCards.isEmpty {
-                    emptyStateView
-                } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 7) {
-                            ForEach(coordinator.filteredCards) { cardRow($0) }
+                switch coordinator.hudSection {
+                case .hot:
+                    HStack(spacing: 12) {
+                        ForEach(StatusFilter.allCases, id: \.self) { filter in
+                            Button(filter.label(in: lang)) { coordinator.statusFilter = filter }
+                                .rewindButtonRole(.toolbar)
+                                .font(.system(size: 11, weight: coordinator.statusFilter == filter ? .semibold : .regular))
+                                .foregroundStyle(coordinator.statusFilter == filter ? Color.accentColor : Color.secondary)
+                                .accessibilityAddTraits(coordinator.statusFilter == filter ? .isSelected : [])
+                                .accessibilityIdentifier("hud.filter.\(filter.rawValue)")
                         }
                     }
+
+                    if coordinator.filteredCards.isEmpty {
+                        emptyStateView
+                    } else {
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 7) {
+                                ForEach(coordinator.filteredCards) { cardRow($0) }
+                            }
+                        }
+                    }
+                case .unplaced, .place:
+                    browseList
+                case .map:
+                    HUDPlaceMapView(coordinator: coordinator, language: lang)
                 }
 
                 if let inspectedCard = coordinator.inspectedCard {
@@ -699,9 +734,48 @@ public struct QuickPeekHUDRootView: View {
         .padding(.bottom, 10)
         .frame(minWidth: 440, minHeight: 480)
         .onKeyPress(.space) {
-            guard !isSearchFocused, coordinator.conversationDraft == nil else { return .ignored }
+            guard !isSearchFocused, coordinator.conversationDraft == nil, coordinator.placePicker == nil else { return .ignored }
             coordinator.toggleFocusedCardCheck()
             return .handled
+        }
+    }
+
+    @ViewBuilder
+    private var browseList: some View {
+        if case .place(let ref) = coordinator.hudSection {
+            HStack(spacing: 8) {
+                Button(AppStrings.backToMapButton(in: lang)) { coordinator.hudSection = .map }
+                    .rewindButtonRole(.toolbar)
+                    .font(.system(size: 11))
+                    .accessibilityIdentifier("hud.place.back")
+                Text(coordinator.placeTitle(for: ref)).font(.system(size: 12, weight: .semibold))
+                Text("#\(ref.tag)").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        let records = coordinator.browseRecords
+        if records.isEmpty {
+            Text(AppStrings.browseEmpty(coordinator.hudSection, in: lang))
+                .font(.system(size: 11.5))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            let targetID = coordinator.placeTargetID
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 7) {
+                    ForEach(records) { record in
+                        HUDRecordRowView(
+                            record: record,
+                            isFocused: record.id == targetID,
+                            placeTitle: coordinator.placeTitle(for:),
+                            language: lang,
+                            onFocus: { coordinator.focusedRecordID = record.id },
+                            onRemovePlace: { ref in
+                                Task { @MainActor in await coordinator.removePlace(ref, from: record.id) }
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -761,6 +835,10 @@ public struct QuickPeekHUDRootView: View {
             isMutating: coordinator.isMutatingCards,
             isPendingDelete: isPendingDelete,
             language: lang,
+            placeTitle: coordinator.placeTitle(for:),
+            onRemovePlace: { ref in
+                Task { @MainActor in await coordinator.removePlace(ref, from: card.id) }
+            },
             onToggleSelect: {
                 coordinator.focusedCardID = card.id
                 coordinator.toggleCheck(for: card.id)
@@ -804,6 +882,8 @@ private struct HUDCardRowView: View {
     let isMutating: Bool
     let isPendingDelete: Bool
     let language: AppLanguage
+    let placeTitle: (PlaceRef) -> String
+    let onRemovePlace: (PlaceRef) -> Void
     let onToggleSelect: () -> Void
     let onTogglePreview: () -> Void
     let onCopyText: () -> Void
@@ -906,6 +986,13 @@ private struct HUDCardRowView: View {
             if let title = card.title {
                 Text(title).font(.system(size: 12, weight: .semibold))
             }
+            HUDPlaceChipStrip(
+                snippetID: card.id,
+                refs: card.places,
+                title: placeTitle,
+                language: language,
+                onRemove: onRemovePlace
+            )
             if let ctx = card.contextSummary {
                 Text(ctx).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }

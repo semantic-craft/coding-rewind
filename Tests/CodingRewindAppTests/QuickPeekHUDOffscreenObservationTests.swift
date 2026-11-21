@@ -525,4 +525,89 @@ extension AppShortcutsTests {
         try sendSpaceKeyPress(to: harness.panel)
         #expect(!harness.coordinator.checkedCardIDs.contains("rw-space-card"))
     }
+
+    @Test func quickPeekHUDShowsPlaceChipsSectionsMapAndPickerInsideTheNonActivatingPanel() async throws {
+        let harness = try HUDOffscreenHarness.make()
+        defer { harness.tearDown() }
+        let paper = try #require(PlaceRef(tag: "project/paper-02"))
+        let createTime = ISO8601DateFormatter().string(from: Date())
+        let memos = [
+            MemoWireDTO(name: "memos/pl-p-paper-02", content: MemosWireFormat.formatPlaceMemo(PlaceRecord(ref: paper, title: "身体预设")), createTime: createTime),
+            MemoWireDTO(name: "memos/rw-placed", content: "#rewind/ready #source/macos #project/paper-02\n\nPlaced card body", createTime: createTime),
+            MemoWireDTO(name: "memos/rw-unplaced", content: "#rewind/ready #source/macos\n\nUnplaced card body", createTime: createTime)
+        ]
+        HUDOffscreenMockURLProtocol.setPayload(try JSONEncoder().encode(["memos": memos]), for: harness.suiteID)
+        harness.delegate.perform(.refreshHotStream)
+        for _ in 0..<200 where harness.coordinator.places.isEmpty || harness.coordinator.unplacedCount == nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(harness.coordinator.cards.count == 2)
+        #expect(harness.coordinator.unplacedCount == 1)
+
+        autoreleasepool { harness.panel.presentNonActivating() }
+        try await settleAutoreleaseAndRunLoop()
+        #expect(hasAccessibilityIdentifier("hud.card.place.rw-placed.project/paper-02", in: harness.panel))
+        #expect(hasAccessibilityText("身体预设", in: harness.panel))
+        #expect(hasAccessibilityText("未落位 · 1", in: harness.panel))
+        #expect(hasAccessibilityText("热流 72h", in: harness.panel))
+
+        harness.coordinator.focusedCardID = "rw-unplaced"
+        let panelCount = NSApplication.shared.windows.filter { $0 is NSPanel }.count
+        let commandP = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: harness.panel.windowNumber,
+            context: nil,
+            characters: "p",
+            charactersIgnoringModifiers: "p",
+            isARepeat: false,
+            keyCode: 35
+        ))
+        #expect(harness.panel.performKeyEquivalent(with: commandP))
+        #expect(harness.coordinator.placePicker?.targetID == "rw-unplaced")
+        try await settleAutoreleaseAndRunLoop()
+        #expect(hasAccessibilityIdentifier("hud.placePicker.option.project/paper-02", in: harness.panel))
+        #expect(harness.panel.firstResponder is NSText)
+        #expect(NSApplication.shared.windows.filter { $0 is NSPanel }.count == panelCount)
+        #expect(harness.panel.styleMask.contains(.nonactivatingPanel))
+
+        let escape = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: harness.panel.windowNumber,
+            context: nil,
+            characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}",
+            isARepeat: false,
+            keyCode: 53
+        ))
+        autoreleasepool { harness.panel.sendEvent(escape) }
+        try await settleAutoreleaseAndRunLoop()
+        #expect(harness.coordinator.placePicker == nil)
+        #expect(harness.panel.isVisible)
+        #expect(!hasAccessibilityIdentifier("hud.placePicker", in: harness.panel))
+
+        #expect(pressAccessibilityElement(identifier: "hud.section.map", in: harness.panel))
+        try await settleAutoreleaseAndRunLoop()
+        #expect(harness.coordinator.hudSection == .map)
+        #expect(hasAccessibilityIdentifier("hud.map.column.person", in: harness.panel))
+        #expect(pressAccessibilityElement(identifier: "hud.map.place.project/paper-02", in: harness.panel))
+        for _ in 0..<200 where harness.coordinator.browseRecords.isEmpty {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try await settleAutoreleaseAndRunLoop()
+        #expect(harness.coordinator.hudSection == .place(paper))
+        #expect(hasAccessibilityText("Placed card body", in: harness.panel))
+        #expect(!hasAccessibilityText("Unplaced card body", in: harness.panel))
+
+        harness.coordinator.setLanguage(.en)
+        try await settleAutoreleaseAndRunLoop()
+        #expect(hasAccessibilityText("Hot 72h", in: harness.panel))
+        #expect(hasAccessibilityText("Unplaced · 1", in: harness.panel))
+        #expect(hasAccessibilityText(AppStrings.backToMapButton(in: .en), in: harness.panel))
+    }
 }

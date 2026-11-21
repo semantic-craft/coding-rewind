@@ -16,7 +16,7 @@ public enum PlaceKind: String, CaseIterable, Codable, Sendable {
     }
 }
 
-public struct PlaceSlug: Hashable, Comparable, Codable, Sendable, CustomStringConvertible {
+public struct PlaceSlug: Hashable, Comparable, Codable, Sendable {
     public static let maxLength = 28
 
     public let rawValue: String
@@ -38,8 +38,6 @@ public struct PlaceSlug: Hashable, Comparable, Codable, Sendable, CustomStringCo
         var container = encoder.singleValueContainer()
         try container.encode(rawValue)
     }
-
-    public var description: String { rawValue }
 
     public static func < (lhs: PlaceSlug, rhs: PlaceSlug) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -64,7 +62,7 @@ public struct PlaceSlug: Hashable, Comparable, Codable, Sendable, CustomStringCo
     }
 }
 
-public struct PlaceRef: Hashable, Comparable, Codable, Sendable, CustomStringConvertible {
+public struct PlaceRef: Hashable, Comparable, Codable, Sendable {
     public let kind: PlaceKind
     public let slug: PlaceSlug
 
@@ -89,8 +87,6 @@ public struct PlaceRef: Hashable, Comparable, Codable, Sendable, CustomStringCon
     }
 
     public var tag: String { "\(kind.rawValue)/\(slug.rawValue)" }
-
-    public var description: String { tag }
 
     public var memoID: String { "pl-\(kind.memoIDCode)-\(slug.rawValue)" }
 
@@ -126,6 +122,31 @@ public struct PlaceRecord: Codable, Equatable, Sendable {
         return title.lowercased().contains(lowered)
             || aliases.contains { $0.lowercased().contains(lowered) }
             || ref.slug.rawValue.contains(lowered)
+    }
+
+    /// Lower is better: 0 prefix, 1 substring, 2 subsequence; nil when nothing matches.
+    public func fuzzyScore(_ query: String) -> Int? {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return 0 }
+        let candidates = ([title, ref.tag] + aliases).map { $0.lowercased() }
+        if candidates.contains(where: { $0.hasPrefix(needle) }) { return 0 }
+        if candidates.contains(where: { $0.contains(needle) }) { return 1 }
+        let isSubsequence: (String) -> Bool = { candidate in
+            var remaining = Substring(needle)
+            for character in candidate where character == remaining.first {
+                remaining = remaining.dropFirst()
+                if remaining.isEmpty { return true }
+            }
+            return false
+        }
+        return candidates.contains(where: isSubsequence) ? 2 : nil
+    }
+
+    public static func fuzzyMatches(_ query: String, in places: [PlaceRecord]) -> [PlaceRecord] {
+        places
+            .compactMap { place in place.fuzzyScore(query).map { (place, $0) } }
+            .sorted { lhs, rhs in lhs.1 != rhs.1 ? lhs.1 < rhs.1 : lhs.0.ref < rhs.0.ref }
+            .map(\.0)
     }
 }
 

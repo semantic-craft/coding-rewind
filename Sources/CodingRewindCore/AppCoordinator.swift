@@ -282,6 +282,21 @@ public final class AppCoordinator {
             }
         }
     }
+    public var hudSection: HUDSection = .hot {
+        didSet {
+            if oldValue != hudSection {
+                pendingDeleteConfirmation = nil
+                placePicker = nil
+                reconcileInspectedCardVisibility()
+            }
+        }
+    }
+    public internal(set) var places: [PlaceRecord] = []
+    public internal(set) var libraryRecords: [SnippetRecord]?
+    public internal(set) var placeRecords: [SnippetRecord] = []
+    public internal(set) var placePicker: PlacePickerState?
+    public var focusedRecordID: String?
+    @ObservationIgnored var libraryRevision = 0
     public var checkedCardIDs: Set<String> = []
     public var focusedCardID: String?
     public private(set) var inspectedCardID: String?
@@ -385,6 +400,7 @@ public final class AppCoordinator {
             pendingOutbox: activeOutboxEntries()
         )
         self.focusedCardID = self.cards.first?.id
+        self.places = PlacesCache(fileURL: paths.placesCacheFileURL).load()
         if FileManager.default.fileExists(atPath: conversationHostURL.path) {
             let hostData = try Data(contentsOf: conversationHostURL)
             let rawHostString = try? JSONDecoder().decode(String.self, from: hostData)
@@ -439,6 +455,7 @@ public final class AppCoordinator {
     }
 
     public var filteredCards: [RewindCard] {
+        guard hudSection == .hot else { return [] }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return cards.filter { card in
             switch statusFilter {
@@ -455,7 +472,7 @@ public final class AppCoordinator {
                 card.sourceTitle,
                 card.verbatimText
             ].joined(separator: "\n").lowercased()
-            return haystack.contains(query)
+            return haystack.contains(query) || placesMatch(card.places, query: query)
         }
     }
 
@@ -469,6 +486,7 @@ public final class AppCoordinator {
     }
 
     public func toggleFocusedCardCheck() {
+        guard hudSection == .hot else { return }
         let targetID = focusedCardID ?? filteredCards.first?.id
         if let targetID {
             toggleCheck(for: targetID)
@@ -1907,6 +1925,7 @@ public final class AppCoordinator {
         if inspectedCardID != nil {
             inspectedCardID = nil
         }
+        placePicker = nil
     }
 
     private func remapAndDeduplicateCardIDs(_ rawIDs: [String], idRemapping: [String: String]) -> [String] {
@@ -2235,13 +2254,13 @@ public final class AppCoordinator {
         return title.isEmpty ? nil : title
     }
 
-    private func updateLocalCards(_ change: (inout [RewindCard]) -> Void) {
+    func updateLocalCards(_ change: (inout [RewindCard]) -> Void) {
         localCardsRevision += 1
         change(&cards)
         try? hotCache.saveCards(cards)
     }
 
-    private static func mergeCards(cached: [RewindCard], pendingOutbox: [OutboxEntry]) -> [RewindCard] {
+    static func mergeCards(cached: [RewindCard], pendingOutbox: [OutboxEntry]) -> [RewindCard] {
         var byID: [String: RewindCard] = [:]
         for card in cached {
             byID[card.id] = card
@@ -2273,7 +2292,7 @@ public final class AppCoordinator {
         isErrorBanner = isError
     }
 
-    private func setErrorBanner(_ error: any Error) {
+    func setErrorBanner(_ error: any Error) {
         if let rewindError = error as? RewindError {
             setBanner(.rewindError(rewindError), isError: true)
         } else {

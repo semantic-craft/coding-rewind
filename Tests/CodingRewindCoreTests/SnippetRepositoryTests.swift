@@ -1141,3 +1141,99 @@ struct SnippetRepositoryPlacesTests {
         #expect(unplaced.snippets.map(\.id) == ["rw-unplaced-ready", "rw-unplaced-synth"])
     }
 }
+
+private struct PlacesUnusedCapturer: SelectionCapturing {
+    func captureFrontmostSelection() async throws -> CapturedSelection {
+        throw RewindError.emptySelection
+    }
+}
+
+@MainActor
+@Suite("AppCoordinator places: sections, picker, chips and place search")
+struct AppCoordinatorPlacesTests {
+    @Test("library refresh drives unplaced and map counts; picker and chip removal round-trip tags without touching the body")
+    func placeSectionsPickerAndChips() async throws {
+        let dir = try makeTempDir()
+        let suiteID = UUID().uuidString.lowercased()
+        defer { try? FileManager.default.removeItem(at: dir); SnippetMockURLProtocol.unregister(suiteID: suiteID) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let paper = try #require(PlaceRef(tag: "project/paper-02"))
+        let law = try #require(PlaceRef(tag: "topic/law"))
+        let hotRaw = "#rewind/ready #source/web\n\n> **Title:** Hot one\n\n  hot body\n\n```\ncode\n```\n"
+        let store = MemoStore([
+            paper.memoID: MemosWireFormat.formatPlaceMemo(PlaceRecord(ref: paper, title: "身体预设", aliases: ["embodiment"])),
+            law.memoID: MemosWireFormat.formatPlaceMemo(PlaceRecord(ref: law, title: "著作权法")),
+            "pl-u-old": MemosWireFormat.formatPlaceMemo(PlaceRecord(ref: PlaceRef(tag: "person/old")!, title: "Old", archived: true)),
+            "rw-hot-1": hotRaw,
+            "rw-hot-2": "#rewind/ready #source/web #project/paper-02\n\nplaced body",
+            "rw-synth": "#rewind/synthesized #source/web\n\nold archived body"
+        ])
+        installMemoStoreHandler(suiteID: suiteID, store: store, createTime: MemosWireFormat.formatISO8601UTC(Date()))
+        let coordinator = try AppCoordinator(
+            paths: paths,
+            environment: [
+                StoragePaths.memosURLEnvironmentKey: "https://\(suiteID).snippet.mock.local",
+                StoragePaths.memosTokenEnvironmentKey: "token",
+                StoragePaths.qaEnvironmentKey: "1",
+                KeychainTokenStore.disableKeychainFallbackEnvironmentKey: "1"
+            ],
+            memosClient: makeMockClient(),
+            capturer: PlacesUnusedCapturer()
+        )
+        #expect(coordinator.unplacedCount == nil)
+
+        await coordinator.refresh()
+        await coordinator.refreshPlaceLibrary()
+        #expect(Set(coordinator.cards.map(\.id)) == ["rw-hot-1", "rw-hot-2"])
+        #expect(coordinator.activePlaces.map(\.ref) == [paper, law])
+        #expect(coordinator.unplacedCount == 2)
+        #expect(coordinator.placeClipCounts[paper] == 1)
+        #expect(coordinator.placeTitle(for: paper) == "身体预设")
+        #expect(coordinator.placeTitle(for: PlaceRef(tag: "topic/unknown")!) == "unknown")
+
+        coordinator.searchText = "Embodiment"
+        #expect(coordinator.filteredCards.map(\.id) == ["rw-hot-2"])
+        coordinator.searchText = ""
+
+        coordinator.hudSection = .unplaced
+        #expect(coordinator.filteredCards.isEmpty)
+        #expect(coordinator.browseRecords.map(\.id) == ["rw-hot-1", "rw-synth"])
+        #expect(coordinator.browseRecords.first { $0.id == "rw-synth" }?.status == .synthesized)
+
+        coordinator.hudSection = .hot
+        coordinator.focusedCardID = "rw-hot-1"
+        #expect(coordinator.openPlacePicker())
+        #expect(coordinator.placePicker?.targetID == "rw-hot-1")
+        #expect(coordinator.placePickerMatches.map(\.ref) == [paper, law])
+        coordinator.updatePlacePickerQuery("zzz")
+        #expect(coordinator.placePickerMatches.isEmpty)
+        coordinator.updatePlacePickerQuery("law")
+        await coordinator.commitPlacePicker()
+        #expect(coordinator.placePicker == nil)
+        let placed = try #require(store["rw-hot-1"])
+        #expect(placed.hasPrefix("#rewind/ready #source/web #topic/law\n"))
+        #expect(placed.hasSuffix("\n\n  hot body\n\n```\ncode\n```\n"))
+        #expect(coordinator.cards.first { $0.id == "rw-hot-1" }?.places == [law])
+        #expect(coordinator.unplacedCount == 1)
+
+        await coordinator.removePlace(law, from: "rw-hot-1")
+        #expect(store["rw-hot-1"] == hotRaw)
+        #expect(coordinator.cards.first { $0.id == "rw-hot-1" }?.places == [])
+
+        await coordinator.showPlace(paper)
+        #expect(coordinator.hudSection == .place(paper))
+        #expect(coordinator.filteredCards.isEmpty)
+        #expect(coordinator.browseRecords.map(\.id) == ["rw-hot-2"])
+        #expect(coordinator.openPlacePicker())
+        #expect(coordinator.placePicker?.targetID == "rw-hot-2")
+        #expect(coordinator.placePickerMatches.map(\.ref) == [law])
+        coordinator.hudSection = .map
+        #expect(coordinator.placePicker == nil)
+        #expect(!coordinator.openPlacePicker())
+
+        SnippetMockURLProtocol.unregister(suiteID: suiteID)
+        await coordinator.removePlace(paper, from: "rw-hot-2")
+        #expect(coordinator.isErrorBanner)
+        #expect(store["rw-hot-2"] == "#rewind/ready #source/web #project/paper-02\n\nplaced body")
+    }
+}
