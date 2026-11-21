@@ -99,6 +99,15 @@ public enum SnippetFilterParser {
         return cleaned
     }
 
+    public static func parsePlaceRef(_ raw: String) throws -> PlaceRef {
+        guard let ref = PlaceRef(tag: raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            throw CLIValidationError(
+                "Invalid place '\(raw)'. Expected '<project|topic|person>/<slug>' with a lowercase kebab-case slug of at most \(PlaceSlug.maxLength) characters."
+            )
+        }
+        return ref
+    }
+
     public static func parsePlatform(_ raw: String) throws -> String {
         let trimmed = try normalizeNonEmpty(raw, fieldName: "source platform")
         var cleaned = trimmed
@@ -141,6 +150,8 @@ public enum CLICommand: Equatable, Sendable {
     case note(id: String, textSource: CLITextSource, author: String?, dataDir: String?, json: Bool)
     case archive(id: String, dataDir: String?, json: Bool)
     case delete(id: String, dataDir: String?, json: Bool)
+    case placeList(includeArchived: Bool, dataDir: String?, json: Bool)
+    case placeAdd(place: PlaceRecord, dataDir: String?, json: Bool)
     case mcp(dataDir: String?)
 }
 
@@ -151,15 +162,23 @@ public enum CLIParser {
         coding-rewind \(versionString) — Coding Rewind CLI & Embedded MCP Server
 
         USAGE:
-          coding-rewind list [--window <72h|24h|168h|all>] [--window-hours <N>] [--status <active|ready|pending|synthesized|all>] [--source <platform>] [--limit <1..500>] [--json]
-          coding-rewind search <query> [--window <72h|all|Nh>] [--window-hours <N>] [--status <active|ready|pending|synthesized|all>] [--source <platform>] [--limit <1..500>] [--json]
+          coding-rewind list [--window <72h|24h|168h|all>] [--window-hours <N>] [--status <active|ready|pending|synthesized|all>] [--source <platform>] [--place <kind>/<slug> | --unplaced] [--limit <1..500>] [--json]
+          coding-rewind search <query> [--window <72h|all|Nh>] [--window-hours <N>] [--status <active|ready|pending|synthesized|all>] [--source <platform>] [--place <kind>/<slug> | --unplaced] [--limit <1..500>] [--json]
           coding-rewind get <id> [--no-context | --with-context] [--json]
           coding-rewind create (--text <markdown> | --stdin) [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--tag <tag>...] [--source <platform>] [--source-title <st>] [--source-url <u>] [--json]
           coding-rewind update <id> [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--add-tag <tag>...] [--remove-tag <tag>...] [--archive | --unarchive] [--json]
           coding-rewind note <id> (--text <markdown> | --stdin) [--author <name>] [--json]
           coding-rewind archive <id> [--json]
           coding-rewind delete <id> [--json]
+          coding-rewind place list [--all] [--json]
+          coding-rewind place add --kind <project|topic|person> --slug <slug> --title <t> [--alias <a>...] [--ref <r>] [--archived] [--json]
           coding-rewind mcp
+
+        PLACES:
+          --place <kind>/<slug>   Only snippets tagged #<kind>/<slug> (combine with --window all for full history)
+          --unplaced              Only ready or synthesized snippets without any place tag
+          place list --all        Include archived places
+          place add               Create or update the place memo #rewind/place #<kind>/<slug> (idempotent; requires Memos)
 
         GLOBAL OPTIONS:
           --data-dir <path>   Override Coding Rewind data directory
@@ -195,7 +214,12 @@ public enum CLIParser {
         "--source-url",
         "--add-tag",
         "--remove-tag",
-        "--author"
+        "--author",
+        "--place",
+        "--kind",
+        "--slug",
+        "--alias",
+        "--ref"
     ]
 
     public static func parse(arguments: [String]) throws -> CLICommand {
@@ -298,7 +322,7 @@ public enum CLIParser {
 
         guard let subcommand = parsed.subcommand else {
             throw CLIValidationError(
-                "Missing subcommand. Expected one of: list, search, get, create, update, note, archive, delete, mcp."
+                "Missing subcommand. Expected one of: list, search, get, create, update, note, archive, delete, place, mcp."
             )
         }
 
@@ -381,6 +405,8 @@ public enum CLIParser {
         case "delete":
             let id = try parseSingleIDArguments(parsed, subcommand: "delete")
             return .delete(id: id, dataDir: parsed.dataDir, json: parsed.json)
+        case "place":
+            return try parsePlaceCommand(parsed)
         case "mcp":
             guard parsed.positionals.isEmpty else {
                 throw CLIValidationError("Unexpected argument '\(parsed.positionals[0])' for 'mcp'.")
@@ -391,7 +417,7 @@ public enum CLIParser {
             return .mcp(dataDir: parsed.dataDir)
         default:
             throw CLIValidationError(
-                "Unknown subcommand '\(subcommand)'. Expected one of: list, search, get, create, update, note, archive, delete, mcp."
+                "Unknown subcommand '\(subcommand)'. Expected one of: list, search, get, create, update, note, archive, delete, place, mcp."
             )
         }
     }
@@ -584,6 +610,84 @@ public enum CLIParser {
         throw CLIValidationError("Missing note text for 'note'. Pass '--text <markdown>' or '--stdin'.")
     }
 
+    private static func parsePlaceCommand(_ parsed: TokenizedArgs) throws -> CLICommand {
+        guard let action = parsed.positionals.first else {
+            throw CLIValidationError("Missing place action. Expected one of: list, add.")
+        }
+        guard parsed.positionals.count == 1 else {
+            throw CLIValidationError("Unexpected extra argument '\(parsed.positionals[1])' for 'place \(action)'.")
+        }
+        switch action {
+        case "list":
+            var includeArchived = false
+            for option in parsed.options {
+                guard option.name == "--all" else {
+                    throw CLIValidationError("Unknown option '\(option.name)' for 'place list'.")
+                }
+                guard option.value == nil else {
+                    throw CLIValidationError("Option '--all' does not take a value.")
+                }
+                includeArchived = true
+            }
+            return .placeList(includeArchived: includeArchived, dataDir: parsed.dataDir, json: parsed.json)
+        case "add":
+            return .placeAdd(place: try parsePlaceAddOptions(parsed.options), dataDir: parsed.dataDir, json: parsed.json)
+        default:
+            throw CLIValidationError("Unknown place action '\(action)'. Expected one of: list, add.")
+        }
+    }
+
+    private static func parsePlaceAddOptions(_ options: [(name: String, value: String?)]) throws -> PlaceRecord {
+        var kind: PlaceKind?
+        var slug: PlaceSlug?
+        var title: String?
+        var aliases: [String] = []
+        var externalRef: String?
+        var archived = false
+
+        for option in options {
+            let value = option.value ?? ""
+            switch option.name {
+            case "--kind":
+                guard let parsed = PlaceKind(rawValue: value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) else {
+                    throw CLIValidationError("Invalid place kind '\(value)'. Expected one of: project, topic, person.")
+                }
+                kind = parsed
+            case "--slug":
+                guard let parsed = PlaceSlug(value.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                    throw CLIValidationError(
+                        "Invalid place slug '\(value)'. Expected lowercase letters, digits and single hyphens (e.g. 'paper-02'), at most \(PlaceSlug.maxLength) characters."
+                    )
+                }
+                slug = parsed
+            case "--title":
+                title = try SnippetFilterParser.normalizeNonEmpty(value, fieldName: "--title")
+            case "--alias":
+                aliases.append(try SnippetFilterParser.normalizeNonEmpty(value, fieldName: "--alias"))
+            case "--ref":
+                externalRef = try SnippetFilterParser.normalizeNonEmpty(value, fieldName: "--ref")
+            case "--archived":
+                guard option.value == nil else {
+                    throw CLIValidationError("Option '--archived' does not take a value.")
+                }
+                archived = true
+            default:
+                throw CLIValidationError("Unknown option '\(option.name)' for 'place add'.")
+            }
+        }
+
+        guard let kind else { throw CLIValidationError("Missing required --kind for 'place add'.") }
+        guard let slug else { throw CLIValidationError("Missing required --slug for 'place add'.") }
+        guard let title else { throw CLIValidationError("Missing required --title for 'place add'.") }
+        return PlaceRecord(
+            ref: PlaceRef(kind: kind, slug: slug),
+            title: title,
+            aliases: aliases,
+            externalRef: externalRef,
+            archived: archived
+        )
+    }
+
     private static func parseSingleIDArguments(_ parsed: TokenizedArgs, subcommand: String) throws -> String {
         guard let rawID = parsed.positionals.first else {
             throw CLIValidationError("Missing required <id> argument for '\(subcommand)'.")
@@ -605,6 +709,8 @@ public enum CLIParser {
         var windowHours: Double? = 72
         var status: SnippetStatusFilter = .active
         var sourcePlatform: String?
+        var place: PlaceRef?
+        var unplaced = false
         var limit = defaultLimit
 
         for option in options {
@@ -624,9 +730,19 @@ public enum CLIParser {
                 sourcePlatform = try SnippetFilterParser.normalizeNonEmpty(option.value ?? "", fieldName: "--source platform")
             case "--limit":
                 limit = try SnippetFilterParser.parseLimit(option.value ?? "")
+            case "--place":
+                place = try SnippetFilterParser.parsePlaceRef(option.value ?? "")
+            case "--unplaced":
+                guard option.value == nil else {
+                    throw CLIValidationError("Option '--unplaced' does not take a value.")
+                }
+                unplaced = true
             default:
                 throw CLIValidationError("Unknown option '\(option.name)'.")
             }
+        }
+        if place != nil && unplaced {
+            throw CLIValidationError("Specify either '--place' or '--unplaced', not both.")
         }
 
         return SnippetQuery(
@@ -634,6 +750,8 @@ public enum CLIParser {
             status: status,
             sourcePlatform: sourcePlatform,
             searchText: searchText,
+            place: place,
+            unplaced: unplaced,
             limit: limit
         )
     }
