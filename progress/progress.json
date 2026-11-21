@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0",
+    "main": "3ea47dd5c45e6a836c0792b251aa48c111b29057",
     "open_pulls": [],
     "pulls": [
       {
@@ -387,6 +387,22 @@
         "merged": true,
         "number": 49,
         "state": "closed"
+      },
+      {
+        "base": "b9bf6af3348a4dbb4954bc34a92cfebc4775b7a4",
+        "head": "ff685092416ab6b1d671e8b62993f4cd82cbba2e",
+        "merge_commit": "736ed525b77f3e8fa96a8212fd0b587f7f13153c",
+        "merged": true,
+        "number": 50,
+        "state": "closed"
+      },
+      {
+        "base": "736ed525b77f3e8fa96a8212fd0b587f7f13153c",
+        "head": "a89d39c8ceb45e43484b798294d0bc0996d6c0c3",
+        "merge_commit": "3ea47dd5c45e6a836c0792b251aa48c111b29057",
+        "merged": true,
+        "number": 51,
+        "state": "closed"
       }
     ],
     "releases": [
@@ -459,7 +475,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-19T18:08:50.042171Z",
+  "observed_at": "2026-11-21T10:15:09.409830Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -477,67 +493,123 @@
   "schema_version": 1,
   "sections": [
     {
-      "id": "v0-7-0-notarized-release",
-      "title": "v0.7.0 公证发版与开发残留清理",
+      "id": "places-life-map",
       "items": [
         {
-          "id": "v0-7-0-dev-and-tcc-cleanup",
-          "title": "清理 QA 与旧版 TCC、LaunchServices 及开发目录残留",
-          "status": "done",
-          "summary": "按先 tccutil reset → 再 lsregister -u → 最后删目录顺序重置 dev.codingrewind.app.qa 与旧版 dev.codingrewind.stash 的全部 TCC 授权并反注册；删除 ~/Library/HTTPStorages/dev.codingrewind.app.qa、已退役的 ~/Library/Application Support/CodingRewind/codex-handoff、.build/native-context-tests 与 .build/release-artifacts，并清理失效远端分支引用。核验 lsregister -dump 仅保留 /Applications/CodingRewind.app（dev.codingrewind.app），日常生产配置、钥匙串与 dev.codingrewind.memos-tunnel.plist 均保持完整。",
-          "evidence": [
-            {
-              "kind": "note",
-              "ref": "cleanup-audit-2026-11-20",
-              "note": "tccutil reset All dev.codingrewind.app.qa 与 dev.codingrewind.stash 均返回成功；lsregister -dump 仅余 /Applications/CodingRewind.app。"
-            }
-          ],
-          "next": "后续 QA 验证继续经脚本退出钩子自动回收，不在本机留下孤儿 TCC 或 LaunchServices 条目。"
-        },
-        {
-          "id": "v0-7-0-release-and-notarization",
-          "title": "v0.7.0（build 10）全仓升版、Apple 公证与 GitHub Release 发布",
-          "status": "done",
-          "summary": "PR #49 将应用、CLI/MCP、Antigravity 插件与 Chrome 扩展版本同步升至 0.7.0（build 10 / 0.7.0.0）并清理 README 残留旧表述，./scripts/check 七道门禁全部通过后合入 main（7ea1a18）并打标 v0.7.0。经 ./scripts/package-release.sh --notarize（profile xw-notary，submission_id 064ffcc9-7df9-4b5b-b879-89f4de51953c）通过 Apple 公证、staple 与 spctl Gatekeeper 校验，发布 GitHub Release v0.7.0 及全部三项校验和产物。",
           "evidence": [
             {
               "kind": "pull",
-              "ref": 49,
-              "note": "全仓版本升至 v0.7.0（build 10）并同步 README 与版本测试断言，squash 合入 main。"
+              "note": "实现与文档合入 main",
+              "ref": 51
+            }
+          ],
+          "id": "places-impl-and-checks",
+          "next": "",
+          "status": "done",
+          "summary": "PR #51 squash 合入 main（3ea47dd）：Core 新增 PlaceKind/PlaceSlug/PlaceRef/PlaceRecord 与 #rewind/place 记录线级格式（memoId pl-<p|t|u>-<slug>），片段落位为首行 #<kind>/<slug> 标签，未落位由状态推导；CLI 新增 place list/add 与 list/search 的 --place/--unplaced；enricher 以 active 位置为封闭词表追加 0–3 个位置标签，空词表时提示词与输出逐字节不变；HUD 新增位置标签、⌘P 落位选择器与「热流 72h / 未落位 / 地图」。合并后 main 上 ./scripts/check 七道门禁全绿（Swift Core 141 / CLI 16 / App 100，enricher 19）。",
+          "title": "位置模型、CLI、enricher 封闭词表与 HUD 三视图实现"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "本机 CLI 与实屏截图核验，见会话 walkthrough",
+              "ref": ""
+            }
+          ],
+          "id": "places-local-upgrade-and-live-cli",
+          "next": "",
+          "status": "done",
+          "summary": "build-app-bundle.sh /Applications 以 Developer ID Application（LQAVR62TK2）重建并通过 codesign --verify --deep --strict；已安装 CLI 对真实 Memos 26.11.0 执行 place add 两次结果一致（409 回退更新路径实测成立），并幂等导入 ~/Writing 下 21 个论文与书稿为 #project 位置（重跑全部 kept）；HUD 实屏显示「热流 72h | 未落位 · 20 | 地图」分段。",
+          "title": "本机签名升级与真实 Memos 位置导入"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "ssh 在等待批准时挂起，未越过凭据门禁",
+              "ref": ""
+            }
+          ],
+          "id": "places-vps-enricher-rollout",
+          "next": "用户批准 1Password / Cloudflare Access 后，同步 deploy/vps/enricher/enricher.py 至 /srv/data/apps/coding-rewind 并原位重建 rewind-enricher，新建一条剪藏回读首行确认带 #project 标签。",
+          "status": "blocked",
+          "summary": "enricher 新版本已合入 main 但未部署：ssh aliyun-research 经 1Password SSH agent 与 cloudflared access 需要用户在本机批准，代理会话无法完成。",
+          "title": "VPS enricher 位置落位部署"
+        },
+        {
+          "evidence": [],
+          "id": "places-hud-interactive-acceptance",
+          "next": "在 HUD 切到「未落位」，对一条片段按 ⌘P 选择 论文02 回车，确认标签出现且 coding-rewind list --place project/paper-02 能查到；再点 × 移除。",
+          "status": "unverified",
+          "summary": "位置标签移除、⌘P 选择器在非激活面板中的输入与地图视图点击仅由离屏 AX 测试覆盖，尚未实机逐项点检。",
+          "title": "HUD 位置交互实机点检"
+        }
+      ],
+      "title": "位置（Places）落位：项目 / 主题 / 人物（PR #51）"
+    },
+    {
+      "id": "v0-7-0-notarized-release",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "tccutil reset All dev.codingrewind.app.qa 与 dev.codingrewind.stash 均返回成功；lsregister -dump 仅余 /Applications/CodingRewind.app。",
+              "ref": "cleanup-audit-2026-11-20"
+            }
+          ],
+          "id": "v0-7-0-dev-and-tcc-cleanup",
+          "next": "后续 QA 验证继续经脚本退出钩子自动回收，不在本机留下孤儿 TCC 或 LaunchServices 条目。",
+          "status": "done",
+          "summary": "按先 tccutil reset → 再 lsregister -u → 最后删目录顺序重置 dev.codingrewind.app.qa 与旧版 dev.codingrewind.stash 的全部 TCC 授权并反注册；删除 ~/Library/HTTPStorages/dev.codingrewind.app.qa、已退役的 ~/Library/Application Support/CodingRewind/codex-handoff、.build/native-context-tests 与 .build/release-artifacts，并清理失效远端分支引用。核验 lsregister -dump 仅保留 /Applications/CodingRewind.app（dev.codingrewind.app），日常生产配置、钥匙串与 dev.codingrewind.memos-tunnel.plist 均保持完整。",
+          "title": "清理 QA 与旧版 TCC、LaunchServices 及开发目录残留"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "全仓版本升至 v0.7.0（build 10）并同步 README 与版本测试断言，squash 合入 main。",
+              "ref": 49
             },
             {
               "kind": "commit",
-              "ref": "7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0",
-              "note": "v0.7.0 标签指向提交 7ea1a18。"
+              "note": "v0.7.0 标签指向提交 7ea1a18。",
+              "ref": "7ea1a18838ff56d569b1341c5543fd1fe1d2c6b0"
             },
             {
               "kind": "release",
-              "ref": "v0.7.0",
-              "note": "已发布 CodingRewind-v0.7.0-macos-arm64.zip（SHA-256 c5d97653...）、CodingRewind-WebClipper-v0.7.0.zip（SHA-256 5f7fdd20...）与 SHA256SUMS.txt。"
+              "note": "已发布 CodingRewind-v0.7.0-macos-arm64.zip（SHA-256 c5d97653...）、CodingRewind-WebClipper-v0.7.0.zip（SHA-256 5f7fdd20...）与 SHA256SUMS.txt。",
+              "ref": "v0.7.0"
             }
           ],
-          "next": "桌面端已直接安装公证包；Chrome 扩展需在本机解压覆盖原扩展目录并在 chrome://extensions 点击重新加载。"
+          "id": "v0-7-0-release-and-notarization",
+          "next": "桌面端已直接安装公证包；Chrome 扩展需在本机解压覆盖原扩展目录并在 chrome://extensions 点击重新加载。",
+          "status": "done",
+          "summary": "PR #49 将应用、CLI/MCP、Antigravity 插件与 Chrome 扩展版本同步升至 0.7.0（build 10 / 0.7.0.0）并清理 README 残留旧表述，./scripts/check 七道门禁全部通过后合入 main（7ea1a18）并打标 v0.7.0。经 ./scripts/package-release.sh --notarize（profile xw-notary，submission_id 064ffcc9-7df9-4b5b-b879-89f4de51953c）通过 Apple 公证、staple 与 spctl Gatekeeper 校验，发布 GitHub Release v0.7.0 及全部三项校验和产物。",
+          "title": "v0.7.0（build 10）全仓升版、Apple 公证与 GitHub Release 发布"
         },
         {
-          "id": "v0-7-0-notarized-local-install",
-          "title": "本机 /Applications/CodingRewind.app 公证版替换与运行期核验",
-          "status": "done",
-          "summary": "由公证压缩包 CodingRewind-v0.7.0-macos-arm64.zip 完整替换安装 /Applications/CodingRewind.app（主程序 SHA-256 7e6fb70493d464b51c6adfd3dcbee582405ded26156e090c08148b5c2247aac1，0.7.0 build 10）。实测 codesign --verify --deep --strict、xcrun stapler validate 与 spctl（Notarized Developer ID）全部通过；后台启动 PID 66882 后辅助工具 coding-rewind 自动刷新为 0.7.0，verify-app-presence.swift visible 通过，状态栏 AXHelp 为空，layer=103 提示窗口数为 0。",
           "evidence": [
             {
               "kind": "release",
-              "ref": "v0.7.0",
-              "note": "安装来源为已发布的公证归档 CodingRewind-v0.7.0-macos-arm64.zip。"
+              "note": "安装来源为已发布的公证归档 CodingRewind-v0.7.0-macos-arm64.zip。",
+              "ref": "v0.7.0"
             },
             {
               "kind": "note",
-              "ref": "notarized-live-check-2026-11-20",
-              "note": "PID 66882 实机核验：spctl source=Notarized Developer ID、stapler validate PASS、installed CLI 0.7.0、AXHelp=-25212 (nil)、layer=103 窗口数为 0。"
+              "note": "PID 66882 实机核验：spctl source=Notarized Developer ID、stapler validate PASS、installed CLI 0.7.0、AXHelp=-25212 (nil)、layer=103 窗口数为 0。",
+              "ref": "notarized-live-check-2026-11-20"
             }
           ],
-          "next": "如有需要，用 CodingRewind-WebClipper-v0.7.0.zip 覆盖更新本机 Chrome 解包扩展并点击重新加载。"
+          "id": "v0-7-0-notarized-local-install",
+          "next": "如有需要，用 CodingRewind-WebClipper-v0.7.0.zip 覆盖更新本机 Chrome 解包扩展并点击重新加载。",
+          "status": "done",
+          "summary": "由公证压缩包 CodingRewind-v0.7.0-macos-arm64.zip 完整替换安装 /Applications/CodingRewind.app（主程序 SHA-256 7e6fb70493d464b51c6adfd3dcbee582405ded26156e090c08148b5c2247aac1，0.7.0 build 10）。实测 codesign --verify --deep --strict、xcrun stapler validate 与 spctl（Notarized Developer ID）全部通过；后台启动 PID 66882 后辅助工具 coding-rewind 自动刷新为 0.7.0，verify-app-presence.swift visible 通过，状态栏 AXHelp 为空，layer=103 提示窗口数为 0。",
+          "title": "本机 /Applications/CodingRewind.app 公证版替换与运行期核验"
         }
-      ]
+      ],
+      "title": "v0.7.0 公证发版与开发残留清理"
     },
     {
       "id": "status-menu-and-tooltip-cleanup",
@@ -3168,7 +3240,9 @@
       46,
       47,
       48,
-      49
+      49,
+      50,
+      51
     ]
   }
 }
