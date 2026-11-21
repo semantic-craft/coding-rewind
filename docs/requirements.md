@@ -90,6 +90,7 @@
 | 来源开头留底、浮窗脉络抽屉与分平台回溯 | 决定 | 2026-11-16 | 不采用高权限打扰且不可检索的截图留底；AI 对话额外留存会话 ID 与首轮开场白（`Session Opening`，前 300 字），普通网页提取 `h1`、导语及正文开头数行（`Page Lead`）喂给 `enricher.py` 并生成 W3C `#:~:text=` 精确到句子的高亮回跳链接；浮窗内增设停靠式“脉络”预览抽屉（原地看完整原文、开头留底、提问与笔记），并以 `SourceLocator` 区分网页打开与 Antigravity 会话 ID 复制 |
 | 浮窗可编辑接聊草稿框与直连 DeepSeek 官方 V4.1 Flash | 决定 | 2026-11-17 | 勾选卡片按 `⌘Return`（或点击“开始对话”）不再直接发往宿主 Agent，而是先在浮窗内展开可编辑多行接聊草稿框（`Esc` 返回列表），主操作默认一键复制修改后的提示词并唤醒所选宿主手动粘贴发送，次按钮保留“直接新建对话”；云端 `rewind-enricher` 停用 DashScope 中转，改为直连 DeepSeek 官方 API（`https://api.deepseek.com`，模型 `deepseek-flash` 即 `DeepSeek-V4.1-Flash`，非思考 JSON 模式） |
 | 以 DSH 替换 Codex 接聊并补齐 DSH 桌面端双向协同 | 决定 | 2026-11-19 | 彻底移除 Codex 接聊通道并改由 **DSH**（DeepSeek Harness，`com.deepseek.dsh`）承接：通过随包分发的零依赖 DSH Desktop 插件消费 `dsh-handoff/`，打开当前或最近工作区空白新会话并以 `whenDraftExists: 'append'` 追加预填草稿不自动发送；浮窗选中 DSH 时主按钮（`⌘Return`）为「填入 DSH 新会话」、次按钮为「复制并唤醒 DSH」、勾选框为「填入后归档」（Antigravity 保持原主次顺序不变，默认目标仍为 Antigravity，旧配置 `"codex"` 启动自动迁移为 `"dsh"`）；保留 ChatGPT 桌面端（`com.openai.codex`）划词捕获不动，同时为 DSH 桌面端补齐选区下方闭合 Shadow DOM 暂存胶囊、上下文捕获（`#source/dsh`）及原会话直达回跳（未就绪时回退复制会话 ID），设置页并列管理 Antigravity 与 DSH 插件 |
+| 位置（Places）落位 | 决定 | 2026-11-21 | 借鉴 ICOR「My Life」地图，片段按所属位置取回而不只按时间：启用 `project`、`topic`、`person` 三类位置（Key Element 与 Habit 暂不建），位置为 Memos `#rewind/place` 记录；`rewind-enricher` 只从已有位置中选择并直接写入首行标签（默认生效、事后在浮窗纠正，捕获瞬间不弹选择）；不在客户端造大纲编辑器，思考仍交接到宿主与写作项目 |
 
 ## 已记录的产品方向
 
@@ -195,3 +196,16 @@ MVP 闭环围绕四步主链路构建：
 1. **全面退役 Codex 接聊通道**：移除 `CodexConversationClient`、`CodexAppIntegration`、`codex-handoff/` 与相关菜单/测试夹具；界面统一简称 **DSH**（设置页副标题注明 DeepSeek Harness）；首次默认目标保持 Antigravity，旧配置 `conversation-host.json` 中的 `"codex"` 在启动时自动平滑迁移为 `"dsh"`。
 2. **DSH 空白会话预填与草稿框主次**：通过零依赖 DSH Desktop 插件消费 `dsh-handoff/`，打开 DSH 当前或最近工作区（无可用工作区时回退默认工作区）的空白会话并以 `whenDraftExists: 'append'` 追加预填草稿而不自动发送；选中 DSH 时浮窗主按钮（`⌘Return`）为「填入 DSH 新会话」、次按钮保留「复制并唤醒 DSH」、勾选框显示为「填入后归档」并在确认预填成功后归档；Antigravity 维持原有主次不变。
 3. **DSH 桌面端划词暂存与原会话回跳**：保留既有 ChatGPT 桌面端（`com.openai.codex`）划词捕获不动，同时由 DSH 插件在聊天正文选区下方渲染闭合 Shadow DOM「暂存」胶囊并同步活跃会话脉络（`#source/dsh`、`dsh-session://<sessionId>`）；点击 `#source/dsh` 来源按钮经插件直接切回原会话并唤醒 DSH，未就绪时诚实回退复制会话 ID。设置页「插件与权限」并列管理 Antigravity 与 DSH 插件。
+
+## 2026-11-21 位置（Places）落位
+
+用户读 Paco Cantero〈Your Thoughts Are Objects, Not Notes〉后指出捕获缺少「关键要素、项目、主题、习惯」维度：
+
+> 我觉得我们目前的捕获缺少这个维度的设计：: Key Elements, Projects, Topics and Habits.
+
+经调研后用户确认（「确认，就这样」）：
+
+1. **三类位置**：启用 `project`、`topic`、`person`；Key Element 与 Habit 暂不建，等真实数据出现再加。
+2. **AI 落位默认生效**：`rewind-enricher` 从已有位置中选择 0 至 3 个直接写入首行标签，用户在浮窗事后纠正；捕获瞬间不弹任何选择。
+3. **本轮范围 P0–P2**：位置记录与 `coding-rewind place list/add`、`list`/`search` 的 `--place` 与 `--unplaced` 过滤、enricher 封闭词表落位、浮窗位置标签与 `⌘P` 落位选择器以及「热流 / 未落位 / 地图」视图；新建位置本轮只走 CLI。MCP 的 `list_places` 与交接写入写作项目留待「思考的地方」拍板后再做。
+4. **不造大纲编辑器**：原帖作者本人坚持「捕获与思考两个世界、两个工具」，与本项目既有非目标一致。

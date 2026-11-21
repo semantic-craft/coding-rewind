@@ -182,6 +182,25 @@ Agent 或终端执行 `update_snippet_metadata`（`coding-rewind update`）时�
 
 客户端从 `GET /api/memos?pageSize=100` 开始，沿 `nextPageToken` 读完所有页后按记录编号合并；任一页失败都不发布部分结果。桌面浮窗默认筛选含 `#rewind/`、不含 `#rewind/synthesized` 且 `createTime` 位于最近 72 小时内的条目按时间倒序渲染；`coding-rewind` CLI 与 `coding-rewind mcp` 在保持同一 72 小时活跃默认值的同时，支持显式查询全量历史窗口（`window: "all"`）与 `#rewind/synthesized` 归档片段；当片段已完成成文消费或需要调整状态时，可通过 `PATCH /api/memos/<serverId>?updateMask=content`（`archive_snippet`、`update_snippet_metadata`、`coding-rewind archive`/`update` 或 HUD 归档操作）将状态标签翻转为 `#rewind/synthesized` 退出热流池（或取消归档恢复至 `#rewind/ready` / `#rewind/pending`），全程保留 100% 原文不变；确认永久移除时，仅限用户在桌面浮窗（底部行内确认或按住 `Option` 跳过确认）或终端 `coding-rewind delete <id>` 触发 `DELETE /api/memos/<serverId>`（MCP 绝不暴露物理删除），同时清理本机 `hot_cache.json`、`outbox.jsonl` 与对应本地状态（已同步卡片在未连通 Memos 时拒绝离线删除）。
 
+### 5. 位置（Places）记录与落位标签
+
+位置是用户的项目、主题与人物，类型固定为 `project`、`topic`、`person`，短名 `slug` 须满足 `^[a-z0-9]+(-[a-z0-9]+)*$` 且不超过 28 个字符。每个位置是一条 `PRIVATE` Memos 记录，`memoId` 由类型与短名确定性派生为 `pl-<p|t|u>-<slug>`（`p` 项目、`t` 主题、`u` 人物），`coding-rewind place add` 重复执行即更新，并保留引用头之后的自由正文：
+
+```markdown
+#rewind/place #project/<slug>
+
+> **Title:** <title>
+> **Aliases:** <alias1>, <alias2>
+> **Ref:** <Linear 工单、~/Writing 路径或 Notion URL，可省略>
+> **Status:** active | archived
+
+<位置页自由正文>
+```
+
+位置记录不含 `#rewind/pending|ready|synthesized`，客户端与 `rewind-enricher` 均不会把它当作片段处理。片段落位即在首行追加 `#project/<slug>`、`#topic/<slug>` 或 `#person/<slug>` 标签，经 `update_snippet_metadata` 的自定义标签增删维护，原文零篡改铁律不变。「未落位」不另设标签，由「状态为 `ready` 或 `synthesized` 且无任何位置标签」推导。
+
+`rewind-enricher` 在轮询扫描中顺带收集 `Status: active` 的位置作为词表（60 秒缓存），把词表附入提示词并要求输出 `places`（0 至 3 个 `kind/slug`）；只保留词表内已存在的位置（封闭词表，AI 不得发明新位置），去重后追加到首行。词表为空时提示词与输出与未引入位置前完全一致。客户端成功拉取位置列表后写入 `<dataDir>/places_cache.json` 供浮窗离线落位；新建或更新位置必须在线，不进入 `outbox.jsonl`。
+
 ## 凭据解析与环境隔离优先级
 
 所有运行时配置均遵循环境变量高于本地配置、拒绝硬编码与拒绝暗中回退的原则：
