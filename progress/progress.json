@@ -547,12 +547,18 @@
           "title": "全仓门禁与隔离 QA 应用实屏回执"
         },
         {
-          "evidence": [],
+          "evidence": [
+            {
+              "kind": "note",
+              "ref": "upgrade-2026-11-23",
+              "note": "Developer ID 签名核验、Helpers SHA-256 对齐与日常实例三栏窗口唤醒回执"
+            }
+          ],
           "id": "library-workspace-daily-install",
-          "next": "空闲时执行 ./scripts/build-app-bundle.sh /Applications 重启日常应用，按 ⌘0 验证真实 Memos 历史片段分拣与接聊。",
-          "status": "unverified",
-          "summary": "本机 /Applications/CodingRewind.app 日常运行实例尚未重启覆盖为含 PR #52 的新版签名包，真实远端 Memos 历史片段在三栏资料库中的交互点检待升级后执行。",
-          "title": "日常 /Applications/CodingRewind.app 升级与真实库点检"
+          "next": "",
+          "status": "done",
+          "summary": "旧版进程（PID 8064）平滑退出后，执行 ./scripts/build-app-bundle.sh /Applications 以 Developer ID Application（LQAVR62TK2）重签安装（CDHash 2edd97205fc9805157a07cf211ee585e9683c459，codesign --verify --deep --strict 通过）；重启（PID 56092）后 ~/Library/Application Support/CodingRewind/bin/ 下 coding-rewind（b64eca22…）与 coding-rewind-sidecar（a98153a8…）哈希与包内 Helpers 完全一致，config.json 与 conversation-host.json 字节指纹零变更，Dock 激活策略与 AppleEvent reopen 唤醒「Coding Rewind 资料库」（1280×800）核验通过。",
+          "title": "日常 /Applications/CodingRewind.app 签名升级与实机挂载核验"
         }
       ],
       "title": "三栏资料库工作台与三源采集加固（PR #52）"

@@ -15,8 +15,9 @@
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/LibraryWindowTests.swift">file Tests/CodingRewindAppTests/LibraryWindowTests.swift: 窗口挂载/卸载、跨范围常驻详情、快捷键与双语切换单测</a></li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCoreTests/LibraryProjectorTests.swift">file Tests/CodingRewindCoreTests/LibraryProjectorTests.swift: 四槽位检索、会话轴时序、封闭词表分拣与 &gt;72h 接聊单测</a></li>
 </ul><p>Next: </p></article>
-<article id="library-workspace-daily-install"><h3>日常 /Applications/CodingRewind.app 升级与真实库点检</h3><span class="badge">unverified</span><p>本机 /Applications/CodingRewind.app 日常运行实例尚未重启覆盖为含 PR #52 的新版签名包，真实远端 Memos 历史片段在三栏资料库中的交互点检待升级后执行。</p><ul>
-</ul><p>Next: 空闲时执行 ./scripts/build-app-bundle.sh /Applications 重启日常应用，按 ⌘0 验证真实 Memos 历史片段分拣与接聊。</p></article>
+<article id="library-workspace-daily-install"><h3>日常 /Applications/CodingRewind.app 签名升级与实机挂载核验</h3><span class="badge">done</span><p>旧版进程（PID 8064）平滑退出后，执行 ./scripts/build-app-bundle.sh /Applications 以 Developer ID Application（LQAVR62TK2）重签安装（CDHash 2edd97205fc9805157a07cf211ee585e9683c459，codesign --verify --deep --strict 通过）；重启（PID 56092）后 ~/Library/Application Support/CodingRewind/bin/ 下 coding-rewind（b64eca22…）与 coding-rewind-sidecar（a98153a8…）哈希与包内 Helpers 完全一致，config.json 与 conversation-host.json 字节指纹零变更，Dock 激活策略与 AppleEvent reopen 唤醒「Coding Rewind 资料库」（1280×800）核验通过。</p><ul>
+<li>note upgrade-2026-11-23: Developer ID 签名核验、Helpers SHA-256 对齐与日常实例三栏窗口唤醒回执</li>
+</ul><p>Next: </p></article>
 </section>
 <section id="places-life-map"><h2>位置（Places）落位：项目 / 主题 / 人物（PR #51）</h2>
 <article id="places-impl-and-checks"><h3>位置模型、CLI、enricher 封闭词表与 HUD 三视图实现</h3><span class="badge">done</span><p>PR #51 squash 合入 main（3ea47dd）：Core 新增 PlaceKind/PlaceSlug/PlaceRef/PlaceRecord 与 #rewind/place 记录线级格式（memoId pl-&lt;p|t|u&gt;-&lt;slug&gt;），片段落位为首行 #&lt;kind&gt;/&lt;slug&gt; 标签，未落位由状态推导；CLI 新增 place list/add 与 list/search 的 --place/--unplaced；enricher 以 active 位置为封闭词表追加 0–3 个位置标签，空词表时提示词与输出逐字节不变；HUD 新增位置标签、⌘P 落位选择器与「热流 72h / 未落位 / 地图」。合并后 main 上 ./scripts/check 七道门禁全绿（Swift Core 141 / CLI 16 / App 100，enricher 19）。</p><ul>
