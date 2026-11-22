@@ -550,8 +550,8 @@
           "evidence": [
             {
               "kind": "note",
-              "ref": "upgrade-2026-11-23",
-              "note": "Developer ID 签名核验、Helpers SHA-256 对齐与日常实例三栏窗口唤醒回执"
+              "note": "Developer ID 签名核验、Helpers SHA-256 对齐与日常实例三栏窗口唤醒回执",
+              "ref": "upgrade-2026-11-23"
             }
           ],
           "id": "library-workspace-daily-install",
@@ -2607,6 +2607,25 @@
           "status": "done",
           "summary": "PR #18 已经独立复核并合并至 main。源码、全仓门禁、原生界面验收和日常安装均已完成；当前事实记录随进度页一并更新。",
           "title": "源码交付"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "卡片依次展示标题、提问、等宽预览与次要信息。",
+              "ref": "Sources/CodingRewindApp/Library/LibraryBentoGridView.swift"
+            },
+            {
+              "kind": "file",
+              "note": "速览的标题、片段预览与来源使用一致的阅读层级。",
+              "ref": "Sources/CodingRewindApp/QuickPeekHUDViews.swift"
+            }
+          ],
+          "id": "library-code-reading",
+          "next": "",
+          "status": "done",
+          "summary": "资料库采用紧凑侧栏、双列片段卡与右侧脉络检视。使用四条本地示例片段检查了打包后的资料库窗口。",
+          "title": "面向编程片段的资料库与速览"
         }
       ],
       "title": "浮窗与设置风格统一"
