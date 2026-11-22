@@ -682,7 +682,7 @@ public enum LibraryProjector {
 
             let directSubstringMatch = needles.contains(where: { haystack.contains($0) })
             let fuzzyTokenMatch = keywordTokens.contains { token in
-                if let score = place.fuzzyScore(token), score <= 1 {
+                if let score = place.fuzzyScore(token), score <= .substring {
                     return true
                 }
                 return false

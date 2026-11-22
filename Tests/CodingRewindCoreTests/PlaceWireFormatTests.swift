@@ -107,6 +107,11 @@ struct PlaceWireFormatTests {
         #expect(PlaceRecord.fuzzyMatches("身体", in: all).map(\.ref.tag) == ["project/paper-02"])
         #expect(PlaceRecord.fuzzyMatches("alv", in: all).map(\.ref.tag) == ["person/ada"])
         #expect(PlaceRecord.fuzzyMatches("qqq", in: all).isEmpty)
+        #expect(body.fuzzyScore("bod") == .prefix)
+        #expect(paper.fuzzyScore("bod") == .substring)
+        #expect(ada.fuzzyScore("alv") == .subsequence)
+        #expect(ada.fuzzyScore("qqq") == nil)
+        #expect(PlaceMatchRank.prefix < .substring && PlaceMatchRank.substring < .subsequence)
     }
 
     @Test("unplaced is derived from ready or synthesized status with no place tags")

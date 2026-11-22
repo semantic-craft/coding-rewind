@@ -102,6 +102,16 @@ public struct PlaceRef: Hashable, Comparable, Codable, Sendable {
     }
 }
 
+public enum PlaceMatchRank: Int, Comparable, Equatable, Hashable, Sendable {
+    case prefix = 0
+    case substring = 1
+    case subsequence = 2
+
+    public static func < (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
 public struct PlaceRecord: Codable, Equatable, Sendable {
     public let ref: PlaceRef
     public var title: String
@@ -124,13 +134,12 @@ public struct PlaceRecord: Codable, Equatable, Sendable {
             || ref.slug.rawValue.contains(lowered)
     }
 
-    /// Lower is better: 0 prefix, 1 substring, 2 subsequence; nil when nothing matches.
-    public func fuzzyScore(_ query: String) -> Int? {
+    public func fuzzyScore(_ query: String) -> PlaceMatchRank? {
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return 0 }
+        guard !needle.isEmpty else { return .prefix }
         let candidates = ([title, ref.tag] + aliases).map { $0.lowercased() }
-        if candidates.contains(where: { $0.hasPrefix(needle) }) { return 0 }
-        if candidates.contains(where: { $0.contains(needle) }) { return 1 }
+        if candidates.contains(where: { $0.hasPrefix(needle) }) { return .prefix }
+        if candidates.contains(where: { $0.contains(needle) }) { return .substring }
         let isSubsequence: (String) -> Bool = { candidate in
             var remaining = Substring(needle)
             for character in candidate where character == remaining.first {
@@ -139,7 +148,7 @@ public struct PlaceRecord: Codable, Equatable, Sendable {
             }
             return false
         }
-        return candidates.contains(where: isSubsequence) ? 2 : nil
+        return candidates.contains(where: isSubsequence) ? .subsequence : nil
     }
 
     public static func fuzzyMatches(_ query: String, in places: [PlaceRecord]) -> [PlaceRecord] {

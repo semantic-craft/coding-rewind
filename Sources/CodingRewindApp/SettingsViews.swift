@@ -334,8 +334,9 @@ public struct SettingsRootView: View {
                     help: AppStrings.menuBarIconHelp(in: lang)
                 ) {
                     Button(AppStrings.openMenuBarSettingsButton(in: lang)) {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension") {
-                            NSWorkspace.shared.open(url)
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.ControlCenter-Settings.extension"),
+                           !SystemURLOpener.open(url) {
+                            NSSound.beep()
                         }
                     }
                     .rewindButtonRole(.secondary)

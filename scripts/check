@@ -137,6 +137,9 @@ if errors:
     sys.exit(1)
 PY
 
+python3 -B "${REPO_ROOT}/scripts/lint_invariants.py"
+python3 -B -m unittest discover -s scripts -p 'test_lint_*.py'
+
 COMMENT_RATCHET="${COMMENT_RATCHET_CHECK:-${HOME:-}/Projects/agent-home/tools/comment-ratchet/check_comments.py}"
 if [[ -f "${COMMENT_RATCHET}" ]]; then
   python3 -B "${COMMENT_RATCHET}" check "${REPO_ROOT}"
