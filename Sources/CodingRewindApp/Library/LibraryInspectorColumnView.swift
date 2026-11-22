@@ -47,7 +47,7 @@ struct LibraryInspectorColumnView: View {
                             }
                             Text(item.verbatimMarkdown)
                                 .font(item.isCodeDominant ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
-                                .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(10).librarySurface(borderOpacity: 0.08)
+                                .lineSpacing(3).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(10).librarySurface(borderOpacity: 0.08)
                         }
                         LibraryInspectorProvenanceSection(item: item, detailState: detailState, detail: resolvedDetail, isTurnsExpanded: $isTurnsExpanded, language: language, onCopySessionID: onCopySessionID)
                         LibraryInspectorNotesSection(itemID: item.id, notes: resolvedDetail?.notes ?? [], isLocked: isLocked, draftNoteText: $draftNoteText, language: language, onIntent: onIntent)
@@ -63,7 +63,7 @@ struct LibraryInspectorColumnView: View {
                             Button(AppStrings.libraryDeleteButton(in: language), role: .destructive) { onIntent(.requestDelete([item.id], immediate: false)) }
                                 .rewindButtonRole(.secondary).disabled(isLocked)
                         }
-                    }.padding(14)
+                    }.padding(18)
                 }
             } else {
                 VStack(spacing: 8) {
@@ -89,7 +89,8 @@ private struct LibraryInspectorHeaderSection: View {
     let onIntent: @MainActor (LibraryUserIntent) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
             HStack(spacing: 6) {
                 LibraryClipSourceBadge(source: item.source, platform: item.sourcePlatform, language: language)
                 Text(item.sourceTitle).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
@@ -178,7 +179,7 @@ private struct LibraryInspectorProvenanceSection: View {
     private func inspectorBox(title: String, body: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(.secondary)
-            Text(body).font(.system(size: 11.5)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8).librarySurface(cornerRadius: 7, fillOpacity: 0.04)
+            Text(body).font(.system(size: 11.5)).lineSpacing(3).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8).librarySurface(cornerRadius: 7, fillOpacity: 0.04)
         }
     }
 }

@@ -36,8 +36,7 @@ struct LibraryClipSourceBadge: View {
                 .font(.system(size: 10.5, weight: .medium)).lineLimit(1)
         }
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 7).padding(.vertical, 2.5)
-        .background(Capsule().fill(Color.primary.opacity(0.06)))
+
     }
 }
 
@@ -52,7 +51,7 @@ struct LibraryBentoGridView: View {
     let language: AppLanguage
     let onIntent: @MainActor (LibraryUserIntent) -> Void
 
-    private let columns = [GridItem(.adaptive(minimum: 310, maximum: 540), spacing: 14)]
+    private let columns = [GridItem(.adaptive(minimum: 278, maximum: 540), spacing: 14)]
 
     var body: some View {
         if projection.visibleItems.isEmpty {
@@ -171,6 +170,25 @@ private struct LibraryBentoCardView: View {
                 .rewindButtonRole(.toolbar).focusEffectDisabled().disabled(isLocked)
                 .accessibilityIdentifier("library.card.check.\(item.id)")
 
+                Text(item.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if let eyebrow = item.precedingPromptEyebrow, !eyebrow.isEmpty {
+                Label(eyebrow, systemImage: "text.bubble")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+            }
+            if item.isCodeDominant {
+                Text(previewText).font(.system(size: 12, design: .monospaced)).lineSpacing(2).lineLimit(6)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8).librarySurface()
+            } else {
+                Text(previewText).font(.system(size: 12)).lineLimit(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider()
+            HStack(spacing: 6) {
                 LibraryClipSourceBadge(source: item.source, platform: item.sourcePlatform, language: language)
                 if let slot = item.hitSlot {
                     Text(AppStrings.libraryHitSlotBadge(slot, in: language))
@@ -184,18 +202,6 @@ private struct LibraryBentoCardView: View {
                 Spacer(minLength: 4)
                 Text(item.createdAt, format: .dateTime.month().day().hour().minute())
                     .font(.system(size: 10.5)).foregroundStyle(.secondary)
-            }
-
-            Text(item.title).font(.system(size: 13.5, weight: .semibold)).lineLimit(2)
-            if let eyebrow = item.precedingPromptEyebrow, !eyebrow.isEmpty {
-                Text("> \(eyebrow)").font(.system(size: 11.5)).foregroundStyle(.secondary).lineLimit(1)
-            }
-            if item.isCodeDominant {
-                Text(previewText).font(.system(size: 11.5, design: .monospaced)).lineLimit(6)
-                    .frame(maxWidth: .infinity, alignment: .leading).padding(8).librarySurface()
-            } else {
-                Text(previewText).font(.system(size: 12)).lineLimit(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack(spacing: 6) {
@@ -226,9 +232,9 @@ private struct LibraryBentoCardView: View {
                 .rewindButtonRole(.toolbar).focusEffectDisabled().font(.system(size: 11)).foregroundStyle(.secondary).disabled(isLocked)
             }
         }
-        .padding(12)
+        .padding(15)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 11).fill(isChecked ? Color.accentColor.opacity(0.08) : Color(nsColor: .controlBackgroundColor)))
+        .background(RoundedRectangle(cornerRadius: 11).fill(isChecked ? Color.accentColor.opacity(0.08) : Color(nsColor: .textBackgroundColor)))
         .overlay {
             RoundedRectangle(cornerRadius: 11)
                 .strokeBorder(isFocused ? Color.accentColor.opacity(0.65) : Color.primary.opacity(0.09), lineWidth: isFocused ? 1.5 : 1)

@@ -44,7 +44,7 @@ struct LibrarySessionTimelineView: View {
                         }
                         .padding(10)
                     }
-                    .frame(width: 260)
+                    .frame(minWidth: 175, idealWidth: 215, maxWidth: 245)
                     Divider()
                     if let bundle = activeBundle {
                         LibrarySessionRailView(
@@ -89,9 +89,9 @@ private struct LibrarySessionRowView: View {
                 }
             }
             .padding(9)
-            .background(RoundedRectangle(cornerRadius: 8).fill(isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.03)))
+            .background(RoundedRectangle(cornerRadius: 8).fill(isActive ? Color.primary.opacity(0.08) : Color.clear))
             .overlay {
-                if isActive { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor.opacity(0.45), lineWidth: 1) }
+                if isActive { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.12), lineWidth: 1) }
             }
             .contentShape(Rectangle())
         }

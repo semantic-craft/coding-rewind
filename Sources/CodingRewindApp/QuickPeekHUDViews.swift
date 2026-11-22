@@ -486,7 +486,8 @@ public struct QuickPeekHUDRootView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "clock.arrow.circlepath").foregroundStyle(.blue)
-                Text("Coding Rewind").font(.system(size: 13, weight: .bold))
+                Label("Coding Rewind", systemImage: "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
                 Button {
                     onCommand(.captureSelection)
@@ -1028,7 +1029,7 @@ private struct HUDCardRowView: View {
                 }
             }
             if let title = card.title {
-                Text(title).font(.system(size: 12, weight: .semibold))
+                Text(title).font(.system(size: 14, weight: .semibold))
             }
             HUDPlaceChipStrip(
                 snippetID: card.id,
@@ -1040,9 +1041,11 @@ private struct HUDCardRowView: View {
             if let ctx = card.contextSummary {
                 Text(ctx).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(2)
             }
-            Text(card.verbatimText).font(.system(size: 11.5)).lineLimit(3).textSelection(.enabled)
+            Text(card.verbatimText)
+                .font(card.verbatimText.contains("```") ? .system(size: 12, design: .monospaced) : .system(size: 12))
+                .lineSpacing(2).lineLimit(3).textSelection(.enabled)
         }
-        .padding(8)
+        .padding(11)
         .background(RoundedRectangle(cornerRadius: 8).fill(backgroundColor))
         .overlay {
             if isPendingDelete {

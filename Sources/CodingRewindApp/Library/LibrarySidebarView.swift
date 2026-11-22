@@ -16,7 +16,7 @@ struct LibrarySidebarView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 22) {
                 sidebarSection(title: AppStrings.librarySidebarSectionViews(in: language)) {
                     ForEach(Self.smartViews, id: \.self) { scope in
                         LibrarySidebarRow(
@@ -77,10 +77,10 @@ struct LibrarySidebarView: View {
                 }
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 12)
+            .padding(.vertical, 18)
         }
         .frame(minWidth: 200, idealWidth: 220, maxWidth: 260, maxHeight: .infinity)
-        .background(.ultraThinMaterial)
+        .background(Color(nsColor: .windowBackgroundColor))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("library.sidebar")
     }
@@ -89,7 +89,7 @@ struct LibrarySidebarView: View {
         title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -153,25 +153,27 @@ private struct LibrarySidebarRow: View {
             HStack(spacing: 7) {
                 Image(systemName: systemImage)
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isSelected ? Color.primary : Color.secondary)
                     .frame(width: 16)
                 Text(title)
                     .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                Text("\(count)")
-                    .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(badgeForeground)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1.5)
-                    .background(Capsule().fill(badgeBackground))
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(badgeForeground)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(badgeBackground))
+                }
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.vertical, 7)
             .background(
                 RoundedRectangle(cornerRadius: 7)
-                    .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+                    .fill(isSelected ? Color.primary.opacity(0.085) : Color.clear)
             )
             .contentShape(Rectangle())
         }

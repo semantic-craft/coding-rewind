@@ -111,6 +111,7 @@ struct LibrarySplitRootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 bottomBarOverlay(checkedIDs: checkedIDs)
             }
+            .background(Color(nsColor: .textBackgroundColor))
             if let draft = coordinator.conversationDraft {
                 Color.black.opacity(0.24)
                     .ignoresSafeArea()
@@ -191,7 +192,7 @@ private struct LibraryTopBarView: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 6) {
-                Text(scopeTitle).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                Text(scopeTitle).font(.system(size: 18, weight: .semibold)).lineLimit(1)
                 Text("\(itemCount)")
                     .font(.system(size: 11, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -214,19 +215,21 @@ private struct LibraryTopBarView: View {
                 }
             }
             .padding(.horizontal, 9).padding(.vertical, 5)
-            .frame(minWidth: 220, maxWidth: 340)
+            .frame(minWidth: 110, maxWidth: 320)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
             HStack(spacing: 2) {
                 ForEach(LibraryLayoutMode.allCases, id: \.self) { mode in
                     let selected = layoutMode == mode
                     Button { onSelectLayout(mode) } label: {
-                        Text(AppStrings.libraryLayoutTitle(mode, in: language))
+                        Image(systemName: mode == .bentoCards ? "rectangle.grid.2x2" : "list.bullet.indent")
                             .font(.system(size: 11.5, weight: selected ? .semibold : .regular))
                             .foregroundStyle(selected ? .primary : .secondary)
-                            .padding(.horizontal, 9).padding(.vertical, 4)
+                            .frame(width: 28, height: 24)
                             .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color(nsColor: .controlBackgroundColor) : Color.clear))
                     }
                     .rewindButtonRole(.toolbar).focusEffectDisabled()
+                    .accessibilityLabel(AppStrings.libraryLayoutTitle(mode, in: language))
+                    .help(AppStrings.libraryLayoutTitle(mode, in: language))
                     .accessibilityAddTraits(selected ? .isSelected : [])
                     .accessibilityIdentifier("library.layout.\(mode.rawValue)")
                 }
