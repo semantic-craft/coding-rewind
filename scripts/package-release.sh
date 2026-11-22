@@ -169,7 +169,7 @@ if [[ "${SHOULD_NOTARIZE}" == "1" ]]; then
     BUILD_ARGS+=(--release)
 fi
 
-SKIP_DEVELOPER_CREDENTIALS=1 DIST_DIR="${STAGE_DIR}" "${REPO_ROOT}/scripts/build-app-bundle.sh" "${BUILD_ARGS[@]}"
+SKIP_DEVELOPER_CREDENTIALS=1 DIST_DIR="${STAGE_DIR}" "${REPO_ROOT}/scripts/build-app-bundle.sh" ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}
 
 STAGED_APP="${STAGE_DIR}/CodingRewind.app"
 if [[ ! -d "${STAGED_APP}" ]]; then
