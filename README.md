@@ -36,8 +36,16 @@
 
 ## 无选区时暂存
 
-- **桌面**，从菜单栏选「快速暂存…」，或在 Coding Rewind 中按 `⌘N`。输入想法，或粘贴代码、终端日志或网页链接，再点「保存片段」。
-- **Chrome**，在网页空白处右键选「保存此网页链接到 Coding Rewind」，即可保存 URL 与页面标题。想保留原文及网页脉络时，用现有的划词暂存。
+- **桌面。** 从菜单栏打开「快速暂存…」，或在 Coding Rewind 中按 `⌘N`。可直接输入想法、粘贴代码或链接。用「选择文件…」保存本机文件，用「粘贴截图」保存剪贴板里的 PNG 或 TIFF。单个原件最大 8 MiB。图片 OCR、PDF 的文字层和 UTF-8 文件文本可用于检索。在资料库或速览的「脉络」中点「存储原件…」还原原始文件。
+- **Chrome。** 在网页空白处右键，可保存页面链接，也可保存网页正文。正文保留可见的段落和代码，较长内容会截断并提示。保存 AI 对话仍用划词暂存。
+- **Git。** 在仓库里将想保存的文本传入 CLI。下面的命令验证提交中的文件及行号，生成固定在该提交上的 GitHub 或 GitLab 链接。远端打开链接需要提交已经推送。
+
+```sh
+git show HEAD:Sources/Worker.swift | sed -n '42,57p' |
+  coding-rewind create --stdin --git-file Sources/Worker.swift --git-lines 42-57
+```
+
+`--git-file` 相对于仓库根目录。传入 `--git-root` 可指定另一个检出目录。传入 `--git-commit` 可替换默认的 HEAD，参数须为完整提交 ID。
 
 ## 在 Antigravity 接聊
 
