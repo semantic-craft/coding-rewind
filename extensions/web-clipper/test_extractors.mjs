@@ -22,6 +22,7 @@ import {
   formatRecentTurns,
   extractSessionOpening,
   extractPageLead,
+  extractPageReadingClip,
   buildTextFragmentUrl,
   extractClipContext
 } from "./extractors.mjs";
@@ -1382,6 +1383,7 @@ function createContentScriptHarness({
   const fakeDocument = {
     title: parsedDoc.title,
     location: parsedDoc.location,
+    implementation: parsedDoc.implementation,
     hidden: false,
     activeElement: null,
     documentElement,
@@ -3291,19 +3293,20 @@ test("testMemosConnection, saveClipWithOutbox, and background context menu local
   await new Promise((r) => setImmediate(r));
   assert.deepEqual(createdMenus.map(({ contexts, title }) => [contexts, title]), [
     [["selection"], "Save selection to Coding Rewind"],
-    [["page"], "Save page link to Coding Rewind"]
+    [["page"], "Save page link to Coding Rewind"],
+    [["page"], "Save page text to Coding Rewind"]
   ]);
 
   currentLang = "zh-CN";
   storageChangedListener({ uiLanguage: { oldValue: "auto", newValue: "zh-CN" } }, "local");
-  assert.deepEqual(updatedMenus.slice(-2).map(({ patch }) => patch.title), [
-    "保存所选文本到 Coding Rewind", "保存此网页链接到 Coding Rewind"
+  assert.deepEqual(updatedMenus.slice(-3).map(({ patch }) => patch.title), [
+    "保存所选文本到 Coding Rewind", "保存此网页链接到 Coding Rewind", "保存此网页正文到 Coding Rewind"
   ]);
 
   currentLang = "en";
   storageChangedListener({ uiLanguage: { oldValue: "zh-CN", newValue: "en" } }, "local");
-  assert.deepEqual(updatedMenus.slice(-2).map(({ patch }) => patch.title), [
-    "Save selection to Coding Rewind", "Save page link to Coding Rewind"
+  assert.deepEqual(updatedMenus.slice(-3).map(({ patch }) => patch.title), [
+    "Save selection to Coding Rewind", "Save page link to Coding Rewind", "Save page text to Coding Rewind"
   ]);
 });
 
@@ -4566,6 +4569,125 @@ test("page-link context menu queues a private bookmark from the tab without read
   assert.match(bookmark.memoBody.content, /\[Retry notes\]\(https:\/\/example\.com\/notes#retry\)/);
   assert.ok(bookmark.memoBody.content.endsWith("\n\nhttps://example.com/notes#retry"));
   assert.ok(!bookmark.memoBody.content.includes("#rewind/has-ctx"));
+});
+
+test("page reading preserves prose and code while excluding controls and hidden descendants", () => {
+  const pageUrl = "https://example.com/guides/retry";
+  const doc = parseHtmlDocument(`
+    <aside>PRIVATE AD</aside>
+    <main hidden>PRIVATE DUPLICATE</main>
+    <main><article>
+      <h1>Retries</h1><p>Use <code>retry()</code> and read <a href="../budget">budget</a>.</p>
+      <pre><code class="language-swift">let n = 3
+
+    retry(n)<span hidden>PRIVATE CODE</span></code></pre>
+      <table><thead><tr><th>State</th></tr></thead>
+        <tbody><tr><td>Ready<span data-private>PRIVATE CELL</span></td></tr></tbody></table>
+      <form><textarea>PRIVATE FORM</textarea><input type="password" value="PRIVATE PASSWORD"></form>
+      <div contenteditable>PRIVATE EDITOR</div><div class="monaco-editor">PRIVATE IDE</div>
+      <div role=" textbox ">PRIVATE TEXTBOX</div>
+      <div id="styled">PRIVATE CSS</div><div aria-hidden="true">PRIVATE ARIA</div>
+      <details><summary>More</summary>PRIVATE CLOSED DISCLOSURE</details>
+      <img src="https://example.com/private.png" alt="PRIVATE IMAGE">
+      <nav>PRIVATE NAV</nav><footer>PRIVATE FOOTER</footer>
+    </article></main>
+  `, { url: pageUrl });
+  doc.title = "Retry notes";
+  doc.querySelector("#styled").ownerDocument = {
+    defaultView: { getComputedStyle: () => ({ display: "none" }) }
+  };
+  const { clip, truncated } = extractPageReadingClip(doc, pageUrl);
+  assert.equal(truncated, false);
+  assert.equal(clip.sourceUrl, pageUrl);
+  assert.equal(clip.sessionTitle, "Retry notes");
+  assert.match(clip.selectedMarkdown, /# Retries/);
+  assert.match(clip.selectedMarkdown, /Use `retry\(\)` and read \[budget\]\(https:\/\/example\.com\/budget\)/);
+  assert.ok(clip.selectedMarkdown.includes("```swift\nlet n = 3\n\n    retry(n)\n```"));
+  assert.match(clip.selectedMarkdown, /Ready/);
+  assert.doesNotMatch(clip.selectedMarkdown, /PRIVATE/);
+});
+
+test("page reading bounds UTF-8 size, closes fences, and declines recognized chat hosts", () => {
+  const url = "https://example.com/long";
+  const doc = parseHtmlDocument(`<main><pre><code>${"表🙂\n".repeat(3200)}</code></pre></main>`);
+  const result = extractPageReadingClip(doc, url);
+  assert.equal(result.truncated, true);
+  assert.ok(Buffer.byteLength(result.clip.selectedMarkdown) <= 7 * 1024);
+  assert.doesNotMatch(result.clip.selectedMarkdown, /\uFFFD/);
+  assert.match(result.clip.selectedMarkdown, /…\n```$/);
+  for (const forbidden of [
+    "https://chatgpt.com./c/fake", "https://chat.openai.com/c/fake",
+    "https://claude.ai/chat/fake", "https://gemini.google.com/app/fake",
+    "file:///fixture.md", "https://user:password@example.com"
+  ]) {
+    assert.equal(extractPageReadingClip(doc, forbidden), null);
+  }
+});
+
+test("page reading menu queues private Markdown and rejects excluded, stale, and editable locations", async (t) => {
+  const { chrome, self } = globalThis;
+  t.after(() => Object.assign(globalThis, { chrome, self }));
+  const pageUrl = "https://example.com/retry";
+  const harness = createContentScriptHarness({
+    url: pageUrl,
+    html: "<main><h1>Retry logic</h1><p>Keep the <code>counter</code>.</p><input id='editor'></main>"
+  });
+  const ignoredEvent = { addListener() {} };
+  let click;
+  let resolveToast;
+  let excludedDomains;
+  const writes = [];
+  globalThis.chrome = {
+    runtime: { onInstalled: ignoredEvent, onStartup: ignoredEvent, onMessage: ignoredEvent },
+    commands: { onCommand: ignoredEvent },
+    contextMenus: { onClicked: { addListener(listener) { click = listener; } } },
+    tabs: {
+      async sendMessage(id, message, options) {
+        assert.equal(id, 14);
+        if (message.type === "REWIND_SHOW_TOAST") {
+          resolveToast(message);
+          return;
+        }
+        assert.deepEqual(options, { frameId: 0 });
+        return harness.sendRuntimeMessage(message);
+      }
+    },
+    storage: {
+      local: {
+        async get() { return { outbox: [], excludedDomains, uiLanguage: "en" }; },
+        async set({ outbox }) { writes.push(outbox); }
+      }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+  await import("./background.js?page-reading-menu");
+  const capture = (info = {}, tab = {}) => new Promise((resolve) => {
+    resolveToast = resolve;
+    click({ menuItemId: "save-page-reading-to-coding-rewind", pageUrl, ...info }, { id: 14, ...tab });
+  });
+
+  for (const info of [
+    { editable: true }, { frameId: 2 }, { pageUrl: "https://example.com/after-navigation" },
+    { pageUrl: "https://chatgpt.com/c/fixture" }
+  ]) {
+    assert.equal((await capture(info)).status, "error");
+  }
+  assert.equal((await capture({}, { incognito: true })).status, "error");
+  excludedDomains = ["example.com"];
+  assert.equal((await capture()).status, "error");
+  excludedDomains = [];
+  harness.setActiveElement(harness.parsedDoc.querySelector("#editor"));
+  assert.equal((await capture()).status, "error");
+  assert.equal(writes.length, 0);
+
+  harness.setActiveElement(null);
+  assert.equal((await capture()).status, "unconfigured");
+  const [record] = writes[0];
+  assert.equal(writes.length, 1);
+  assert.equal(record.memoBody.visibility, "PRIVATE");
+  assert.match(record.memoBody.content, /^#rewind\/pending #source\/web\n/);
+  assert.ok(record.memoBody.content.endsWith("# Retry logic\n\nKeep the `counter`."));
+  assert.equal(record.commentBody, null);
 });
 
 test("security: background context menu blocks fallbackSelectionText when content script reports blocked password input, and wire payloads reject remote file:// hosts", async () => {

@@ -12,9 +12,18 @@
 <li>note desktop-quick-capture-qa: 隔离应用包从实际菜单保存代码和链接。磁盘回读确认了缩进、空行、重启后的队列及网页回链。</li>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 后台菜单回归验证私密书签、URL 过滤和未配置时入队。</a></li>
 </ul><p>Next: Chrome 交付扩展的实际右键操作待验收。</p></article>
-<article id="general-inspiration-attachment-and-origin"><h3>源码回跳、网页留底与原始附件</h3><span class="badge">planned</span><p>保留源代码仓库、提交和行号，随后验证整页正文以及图片、日志和文件的私有附件契约。</p><ul>
-<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 通用灵感采集的验证顺序</a></li>
-</ul><p>Next: 用真实编辑器样本验证定位，使用固定 Memos 版本验证附件离线与回收。</p></article>
+<article id="general-inspiration-git-source"><h3>Git 文件与行号回跳</h3><span class="badge">done</span><p>CLI 在选定的 Git 提交内验证文件路径和行范围，保存含完整提交 ID 的回跳链接。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCLITests/GitSourceCLITests.swift">file Tests/CodingRewindCLITests/GitSourceCLITests.swift: 真实 Git 与 CLI 保存回归验证固定提交、行区间和无效输入。</a></li>
+</ul><p>Next: 从已推送的实际项目核对托管平台的链接打开行为。</p></article>
+<article id="general-inspiration-page-reading"><h3>网页正文留底</h3><span class="badge">done</span><p>Chrome 可显式采集当前普通网页的可见阅读正文和出处。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 测试正文门控和后台保存。在隔离 Chrome 中回读了实际正文、离线队列与服务端记录。</a></li>
+</ul><p>Next: 实际 Chrome 原生右键点击待验收。</p></article>
+<article id="general-inspiration-original"><h3>文件和截图原件</h3><span class="badge">unverified</span><p>快速暂存支持显式选择文件和粘贴截图。私有附件保留原件，提取文字可供检索。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/ClipOriginal.swift">file Sources/CodingRewindCore/ClipOriginal.swift: 独立保存文件名与原件字节。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift">file Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift: 覆盖上传后中断、重试确认和并发删除。</a></li>
+<li>note memos-original-contract: 固定版 Memos 实测了私有附件、相同 ID 的重试、原件读回和随片段删除。</li>
+<li>note original-offline-sync-export: 正式采集代码在隔离数据目录保存文本及 OCR 样本。进程重启后连到固定版 Memos，确认两个私有附件与导出字节一致。</li>
+</ul><p>Next: 核对隔离桌面版实际选择、粘贴及另存原件。</p></article>
 </section>
 <section id="library-workspace-three-sources"><h2>三栏资料库工作台与三源采集加固（PR #52）</h2>
 <article id="library-workspace-impl-and-merge"><h3>Core 纯函数投影、SwiftUI 三栏工作台与三源采集加固合入 main</h3><span class="badge">done</span><p>PR #52 合入 main（eccc5a7）：Core 新增 LibraryModels、LibraryProjector 与 AppCoordinator+Library，统一归并热卡与 &gt;72h SnippetRecord，支持四槽位命中归因、会话时间轴分组键不变量、封闭词表位置推荐与离线刷新 ID 重映射；App 新增 Sources/CodingRewindApp/Library/ 三栏窗口（⌘0 与 Dock 重开、⌥1 卡片墙 / ⌥2 会话时间轴、未落位分拣横幅、常驻脉络详情栏及隐藏/最小化离屏卸载），并加固 Antigravity 逐行容错、Markdown 定锚与 ChatGPT 桌面端双包名及 ?view=codex 过滤。</p><ul>

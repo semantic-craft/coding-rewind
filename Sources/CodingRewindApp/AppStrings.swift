@@ -4,6 +4,10 @@ import CodingRewindCore
 import Foundation
 
 enum AppStrings {
+    static func exportOriginal(in language: AppLanguage) -> String {
+        language == .zhHans ? "存储原件…" : "Save Original…"
+    }
+
     static func languagePreferenceTitle(_ preference: AppLanguagePreference, in language: AppLanguage) -> String {
         switch preference {
         case .system:

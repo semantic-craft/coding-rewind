@@ -2,15 +2,19 @@
 // Adapted from MIT-licensed background dispatch patterns in mem0ai/mem0-chrome-extension.
 
 import "./i18n.js";
-import { buildFallbackClip } from "./extractors.mjs";
-import { flushOutbox, saveClipWithOutbox } from "./memos_payload.mjs";
+import { buildFallbackClip, isPageReadingURL } from "./extractors.mjs";
+import { buildMemosWirePayloads, flushOutbox, saveClipWithOutbox } from "./memos_payload.mjs";
 
 const SELECTION_MENU_ID = "save-to-coding-rewind";
 const PAGE_LINK_MENU_ID = "save-page-link-to-coding-rewind";
+const PAGE_READING_MENU_ID = "save-page-reading-to-coding-rewind";
+const WEB_PAGE_PATTERNS = ["http://*/*", "https://*/*"];
 const CONTEXT_MENUS = [
   { id: SELECTION_MENU_ID, label: "contextMenuSaveSelection", contexts: ["selection"] },
   { id: PAGE_LINK_MENU_ID, label: "contextMenuSavePageLink", contexts: ["page"],
-    documentUrlPatterns: ["http://*/*", "https://*/*"] }
+    documentUrlPatterns: WEB_PAGE_PATTERNS },
+  { id: PAGE_READING_MENU_ID, label: "contextMenuSavePageReading", contexts: ["page"],
+    documentUrlPatterns: WEB_PAGE_PATTERNS }
 ];
 const OUTBOX_ALARM_NAME = "rewind-outbox-flush";
 const i18n = globalThis.CodingRewindI18n;
@@ -96,21 +100,16 @@ function setupMenusAndAlarms() {
   });
 }
 
-async function ensureContentScriptAndExtract(tabId) {
+async function sendCaptureRequest(tabId, message, options) {
   try {
-    const resp = await chrome.tabs.sendMessage(tabId, { type: "REWIND_EXTRACT_SELECTION" });
-    if (resp?.blocked === true) return { clip: null, blocked: true };
-    if (resp && resp.clip) return { clip: resp.clip, blocked: false };
+    return await chrome.tabs.sendMessage(tabId, message, options);
   } catch {
     await chrome.scripting.executeScript({
       target: { tabId },
       files: ["i18n.js", "content.js"]
     });
-    const retryResp = await chrome.tabs.sendMessage(tabId, { type: "REWIND_EXTRACT_SELECTION" });
-    if (retryResp?.blocked === true) return { clip: null, blocked: true };
-    if (retryResp && retryResp.clip) return { clip: retryResp.clip, blocked: false };
+    return chrome.tabs.sendMessage(tabId, message, options);
   }
-  return { clip: null, blocked: false };
 }
 
 export async function injectContentScriptIntoOpenTabs({
@@ -193,9 +192,9 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
   let clip = null;
   let blocked = false;
   try {
-    const extracted = await ensureContentScriptAndExtract(tab.id);
-    clip = extracted?.clip || null;
+    const extracted = await sendCaptureRequest(tab.id, { type: "REWIND_EXTRACT_SELECTION" });
     blocked = extracted?.blocked === true;
+    clip = blocked ? null : extracted?.clip || null;
   } catch {
     clip = null;
   }
@@ -231,6 +230,43 @@ async function handlePageLinkCapture(pageUrl, tab) {
   });
   const result = await processClipSave(clip);
   await notifyTabToast(tab.id, result);
+}
+
+async function handlePageReadingCapture(info, tab) {
+  if (!tab?.id) return;
+  const feedback = (key) => notifyTabToast(tab.id, {
+    status: "error",
+    toast: i18n.t(resolveExtensionLocale(), key)
+  });
+  const pageUrl = info.pageUrl;
+  if (tab.incognito || info.editable || (info.frameId ?? 0) !== 0 || !isPageReadingURL(pageUrl)) {
+    await feedback("toastPageReadingUnavailable");
+    return;
+  }
+  try {
+    const { excludedDomains } = await chrome.storage.local.get(["excludedDomains"]);
+    const result = await sendCaptureRequest(tab.id, {
+      type: "REWIND_EXTRACT_PAGE_READING",
+      pageUrl,
+      excludedDomains
+    }, { frameId: 0 });
+    if (result?.clip?.sourceUrl !== pageUrl || !result.clip.selectedMarkdown) {
+      await feedback("toastPageReadingUnavailable");
+      return;
+    }
+    const { memoBody } = buildMemosWirePayloads(result.clip);
+    if (new TextEncoder().encode(memoBody.content).byteLength > 8192) {
+      await feedback("toastPageReadingTooLarge");
+      return;
+    }
+    const saved = await processClipSave(result.clip);
+    if (result.truncated && saved.status !== "error") {
+      saved.toast += i18n.t(resolveExtensionLocale(), "toastPageReadingTruncated");
+    }
+    await notifyTabToast(tab.id, saved);
+  } catch {
+    await feedback("toastSaveRetryError");
+  }
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime) {
@@ -272,6 +308,8 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       void handleTabSelectionCapture(tab, info.selectionText || "");
     } else if (info.menuItemId === PAGE_LINK_MENU_ID) {
       void handlePageLinkCapture(info.pageUrl, tab);
+    } else if (info.menuItemId === PAGE_READING_MENU_ID) {
+      void handlePageReadingCapture(info, tab);
     }
   });
 

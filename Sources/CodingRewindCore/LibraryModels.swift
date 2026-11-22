@@ -98,6 +98,7 @@ public struct LibraryClipItem: Identifiable, Equatable, Sendable {
     public let hitSlot: SearchHitSlot?
     public let status: SnippetStatus
     public let isQueuedOffline: Bool
+    public let hasOriginal: Bool
     public let createdAt: Date
 
     public init(
@@ -122,7 +123,8 @@ public struct LibraryClipItem: Identifiable, Equatable, Sendable {
         hitSlot: SearchHitSlot?,
         status: SnippetStatus,
         isQueuedOffline: Bool,
-        createdAt: Date
+        createdAt: Date,
+        hasOriginal: Bool = false
     ) {
         self.id = id
         self.source = source
@@ -145,6 +147,7 @@ public struct LibraryClipItem: Identifiable, Equatable, Sendable {
         self.hitSlot = hitSlot
         self.status = status
         self.isQueuedOffline = isQueuedOffline
+        self.hasOriginal = hasOriginal
         self.createdAt = createdAt
     }
 }
@@ -234,5 +237,6 @@ public enum LibraryUserIntent: Equatable, Sendable {
     case requestDelete([String], immediate: Bool)
     case appendNote(clipID: String, text: String)
     case triggerSourceAction(LibraryClipItem)
+    case exportOriginal(clipID: String)
     case stageAndOpenHandoff(clipIDs: [String])
 }

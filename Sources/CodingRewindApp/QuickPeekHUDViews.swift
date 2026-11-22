@@ -629,6 +629,9 @@ public struct QuickPeekHUDRootView: View {
                         language: lang,
                         onCopyText: { coordinator.copyClipText(inspectedCard.verbatimText) },
                         onSourceAction: { coordinator.performSourceAction(for: inspectedCard) },
+                        onExportOriginal: {
+                            Task { await coordinator.exportOriginal(clipID: inspectedCard.id) }
+                        },
                         onWakeAntigravity: { coordinator.wakeAntigravity() },
                         onWakeDSH: { coordinator.wakeDSH() },
                         onCopySessionID: { coordinator.copySessionID($0) },

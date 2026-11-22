@@ -30,6 +30,7 @@ public enum LibraryProjector {
         var sourceTitle: String
         var sourceURL: String?
         var verbatimMarkdown: String
+        var hasOriginal: Bool
         var createdAt: Date
         var isQueuedOffline: Bool
         var isInHotCards: Bool
@@ -268,7 +269,8 @@ public enum LibraryProjector {
             sourceTitle: record.sourceTitle,
             sourceURL: record.sourceURL,
             verbatimText: record.verbatimText,
-            createdAt: record.createdAt
+            createdAt: record.createdAt,
+            hasOriginal: record.hasOriginal
         )
         return RewindCard(
             id: record.id,
@@ -299,10 +301,12 @@ public enum LibraryProjector {
         sourceTitle: String,
         sourceURL: String?,
         verbatimText: String,
-        createdAt: Date
+        createdAt: Date,
+        hasOriginal: Bool
     ) -> String {
         let safePlatform = MemosWireFormat.sanitizePlatformToken(sourcePlatform, fallback: "macos")
         var tagTokens = ["#rewind/\(status.rawValue)", "#source/\(safePlatform)"]
+        if hasOriginal { tagTokens.append(MemosWireFormat.originalTag) }
         var seenTags = Set(tagTokens.map { $0.lowercased() })
         for ref in places {
             let token = "#\(ref.tag)"
@@ -396,6 +400,7 @@ public enum LibraryProjector {
                     sourceTitle: card.sourceTitle,
                     sourceURL: card.sourceURL,
                     verbatimMarkdown: card.verbatimText,
+                    hasOriginal: MemosWireFormat.hasOriginal(in: card.rawContent),
                     createdAt: card.createdAt,
                     isQueuedOffline: card.isOfflinePending,
                     isInHotCards: true,
@@ -429,6 +434,7 @@ public enum LibraryProjector {
             sourceTitle: record.sourceTitle,
             sourceURL: record.sourceURL,
             verbatimMarkdown: record.verbatimText,
+            hasOriginal: record.hasOriginal,
             createdAt: record.createdAt,
             isQueuedOffline: record.dataOrigin == .offlinePending,
             isInHotCards: false,
@@ -511,7 +517,8 @@ public enum LibraryProjector {
             hitSlot: nil,
             status: entry.status,
             isQueuedOffline: entry.isQueuedOffline,
-            createdAt: entry.createdAt
+            createdAt: entry.createdAt,
+            hasOriginal: entry.hasOriginal
         )
     }
 
@@ -727,7 +734,8 @@ public enum LibraryProjector {
             hitSlot: hitSlot ?? item.hitSlot,
             status: item.status,
             isQueuedOffline: item.isQueuedOffline,
-            createdAt: item.createdAt
+            createdAt: item.createdAt,
+            hasOriginal: item.hasOriginal
         )
     }
 

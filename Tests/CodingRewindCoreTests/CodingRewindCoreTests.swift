@@ -170,6 +170,64 @@ private actor GatedCapturer: SelectionCapturing {
     func finish() { release?.resume(); release = nil }
 }
 
+private actor OriginalMemosFixture {
+    let clipID: String
+    let attachmentID: String
+    let original: ClipOriginal
+    let content: String
+    var memoCreated = false
+    var attachmentWrites = 0
+    var refusedFirstRead = false
+
+    init(clipID: String, original: ClipOriginal, content: String) {
+        self.clipID = clipID
+        attachmentID = ClipOriginal.attachmentID(for: clipID)
+        self.original = original
+        self.content = content
+    }
+
+    func respond(to request: URLRequest, body: Data) -> (Int, Data) {
+        let path = request.url?.path
+        let method = request.httpMethod
+        if method == "POST", path == "/api/memos" {
+            guard !memoCreated else { return (409, Data()) }
+            memoCreated = true
+            return memo()
+        }
+        if method == "GET", path == "/api/memos/\(clipID)", memoCreated { return memo() }
+        if method == "POST", path == "/api/attachments" {
+            guard request.url?.query == "attachmentId=\(attachmentID)",
+                  let fields = try? JSONSerialization.jsonObject(with: body) as? [String: String],
+                  fields["memo"] == "memos/\(clipID)",
+                  fields["filename"] == original.storedFilename,
+                  fields["content"].flatMap({ Data(base64Encoded: $0) }) == original.envelope else {
+                return (400, Data())
+            }
+            attachmentWrites += 1
+            return (200, Data())
+        }
+        if method == "GET", path == "/api/attachments/\(attachmentID)", attachmentWrites > 0 {
+            if !refusedFirstRead {
+                refusedFirstRead = true
+                return (503, Data())
+            }
+            let metadata = [
+                "name": "attachments/\(attachmentID)", "memo": "memos/\(clipID)",
+                "filename": original.storedFilename, "type": "application/octet-stream", "size": String(original.envelope.count)
+            ]
+            return (200, (try? JSONEncoder().encode(metadata)) ?? Data())
+        }
+        if method == "GET", path == "/file/attachments/\(attachmentID)", attachmentWrites > 0 {
+            return (200, original.envelope)
+        }
+        return (404, Data())
+    }
+
+    private func memo() -> (Int, Data) {
+        (200, (try? JSONEncoder().encode(MemoWireDTO(name: "memos/\(clipID)", content: content, visibility: "PRIVATE"))) ?? Data())
+    }
+}
+
 @Suite("CodingRewindCore Memos Wire, Outbox & Plugin Suite")
 struct CodingRewindCoreTests {
     @Test("Environment-managed connection fields never overwrite local settings")
@@ -445,6 +503,79 @@ struct CodingRewindCoreTests {
         #expect(card.sourceURL == link)
         #expect(linkEntry.memoContent.hasSuffix("\n\n" + link))
         #expect(linkEntry.commentContent == nil)
+    }
+
+    @Test("Original retry reads exact bytes without uploading again")
+    func originalSurvivesInterruptedDelivery() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let queueURL = dir.appendingPathComponent("outbox.jsonl")
+        let outbox = OfflineOutbox(fileURL: queueURL)
+        let original = try ClipOriginal(filename: ".example.png", data: Data([0xff, 0xd8, 0, 0xff, 0xd9]))
+        let now = Date(timeIntervalSince1970: Date().timeIntervalSince1970.rounded(.down))
+        let clipID = "rw-original-test"
+        let content = try MemosWireFormat.formatRawMemoContent(
+            verbatimText: "## Extracted text\n\nretry worker", sourcePlatform: "macos",
+            sourceTitle: original.filename, sourceURL: nil, capturedAt: now, hasContext: false, hasOriginal: true
+        )
+        try outbox.enqueue(OutboxEntry(clientClipId: clipID, memoContent: content, commentContent: nil, createdAt: now, original: original))
+        let suiteID = UUID().uuidString.lowercased()
+        defer { MockMemosURLProtocol.unregister(suiteID: suiteID) }
+        let fixture = OriginalMemosFixture(clipID: clipID, original: original, content: content)
+        MockMemosURLProtocol.register(suiteID: suiteID) { request, body in
+            await fixture.respond(to: request, body: body)
+        }
+        let client = MemosClient(session: makeMockSession())
+        let baseURL = try #require(URL(string: "https://\(suiteID).mock.memos.local"))
+
+        let first = try await outbox.flush(using: client, baseURL: baseURL, token: "fixture-token")
+        #expect(first.flushed.isEmpty)
+        #expect(first.remaining.first?.originalUploadAttempted == true)
+        #expect(first.remaining.first?.original == original)
+        let restarted = OfflineOutbox(fileURL: queueURL)
+        let second = try await restarted.flush(using: client, baseURL: baseURL, token: "fixture-token")
+        #expect(second.flushed.map(\.clientClipId) == [clipID])
+        #expect(second.remaining.isEmpty)
+        #expect(await fixture.attachmentWrites == 1)
+        #expect(try await client.downloadOriginal(clipID: clipID, baseURL: baseURL, token: "fixture-token") == original)
+
+        let updated = MemosWireFormat.updatingSnippetMetadata(rawContent: content, title: "New", archived: true)
+        let record = try #require(MemosWireFormat.parseSnippetRecord(id: clipID, rawContent: updated, createdAt: now, dataOrigin: .remote))
+        #expect(record.hasOriginal)
+        #expect(record.verbatimText == "## Extracted text\n\nretry worker")
+    }
+
+    @Test("Delete and replay cannot overlap for a pending original")
+    func originalLeaseBlocksConcurrentDeletion() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(
+            dataDirectoryURL: dir.appendingPathComponent("Data"),
+            antigravityConfigDirectoryURL: dir.appendingPathComponent("Config")
+        )
+        let queue = OfflineOutbox(fileURL: paths.outboxFileURL)
+        let clipID = "rw-original-race"
+        let original = try ClipOriginal(filename: "evidence.log", data: Data([0, 1, 2]))
+        try queue.enqueue(OutboxEntry(clientClipId: clipID, memoContent: "queued original", commentContent: nil, original: original))
+        let repository = SnippetRepository(paths: paths, environment: [StoragePaths.qaEnvironmentKey: "1"])
+        do {
+            let lease = try queue.beginOriginalOperation(clipID: clipID)
+            defer { withExtendedLifetime(lease) {} }
+            await #expect(throws: RewindError.originalBusy) {
+                try await repository.deleteSnippet(id: clipID)
+            }
+            #expect(queue.loadEntries().first?.original == original)
+        }
+        let snapshot = try #require(queue.loadEntries().first)
+        #expect(try await repository.deleteSnippet(id: clipID).deleted)
+        let metadataEdit = OutboxEntry(
+            clientClipId: clipID, memoContent: "updated title", commentContent: nil,
+            createdAt: snapshot.createdAt, original: original
+        )
+        #expect(throws: RewindError.snippetNotFound(clipID)) {
+            try queue.replaceEntry(snapshot, with: metadataEdit)
+        }
+        #expect(queue.loadEntries().isEmpty)
     }
 
     @Test("Overlapping capture requests create one offline clip")

@@ -11,6 +11,7 @@ struct HUDCardInspectorView: View {
     let language: AppLanguage
     let onCopyText: () -> Void
     let onSourceAction: () -> Void
+    let onExportOriginal: () -> Void
     let onWakeAntigravity: () -> Void
     let onWakeDSH: () -> Void
     let onCopySessionID: (String) -> Void
@@ -79,6 +80,12 @@ struct HUDCardInspectorView: View {
                 .font(.system(size: 10.5))
                 .accessibilityIdentifier("hud.inspector.copyText")
                 .help(AppStrings.inspectorCopyTextHelp(in: language))
+
+                if MemosWireFormat.hasOriginal(in: card.rawContent) {
+                    Button(AppStrings.exportOriginal(in: language), action: onExportOriginal)
+                        .rewindButtonRole(.toolbar)
+                        .accessibilityIdentifier("hud.inspector.exportOriginal")
+                }
 
                 if let locator = card.sourceLocator {
                     Button(AppStrings.sourceActionButton(for: locator, in: language)) {

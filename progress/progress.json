@@ -534,18 +534,61 @@
           "next": "Chrome 交付扩展的实际右键操作待验收。"
         },
         {
-          "id": "general-inspiration-attachment-and-origin",
-          "title": "源码回跳、网页留底与原始附件",
-          "status": "planned",
-          "summary": "保留源代码仓库、提交和行号，随后验证整页正文以及图片、日志和文件的私有附件契约。",
+          "id": "general-inspiration-git-source",
+          "title": "Git 文件与行号回跳",
+          "status": "done",
+          "summary": "CLI 在选定的 Git 提交内验证文件路径和行范围，保存含完整提交 ID 的回跳链接。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "docs/architecture.md",
-              "note": "通用灵感采集的验证顺序"
+              "ref": "Tests/CodingRewindCLITests/GitSourceCLITests.swift",
+              "note": "真实 Git 与 CLI 保存回归验证固定提交、行区间和无效输入。"
             }
           ],
-          "next": "用真实编辑器样本验证定位，使用固定 Memos 版本验证附件离线与回收。"
+          "next": "从已推送的实际项目核对托管平台的链接打开行为。"
+        },
+        {
+          "id": "general-inspiration-page-reading",
+          "title": "网页正文留底",
+          "status": "done",
+          "summary": "Chrome 可显式采集当前普通网页的可见阅读正文和出处。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/test_extractors.mjs",
+              "note": "测试正文门控和后台保存。在隔离 Chrome 中回读了实际正文、离线队列与服务端记录。"
+            }
+          ],
+          "next": "实际 Chrome 原生右键点击待验收。"
+        },
+        {
+          "id": "general-inspiration-original",
+          "title": "文件和截图原件",
+          "status": "unverified",
+          "summary": "快速暂存支持显式选择文件和粘贴截图。私有附件保留原件，提取文字可供检索。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindCore/ClipOriginal.swift",
+              "note": "独立保存文件名与原件字节。"
+            },
+            {
+              "kind": "file",
+              "ref": "Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift",
+              "note": "覆盖上传后中断、重试确认和并发删除。"
+            },
+            {
+              "kind": "note",
+              "ref": "memos-original-contract",
+              "note": "固定版 Memos 实测了私有附件、相同 ID 的重试、原件读回和随片段删除。"
+            },
+            {
+              "kind": "note",
+              "ref": "original-offline-sync-export",
+              "note": "正式采集代码在隔离数据目录保存文本及 OCR 样本。进程重启后连到固定版 Memos，确认两个私有附件与导出字节一致。"
+            }
+          ],
+          "next": "核对隔离桌面版实际选择、粘贴及另存原件。"
         }
       ]
     },

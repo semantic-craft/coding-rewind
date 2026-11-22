@@ -7,19 +7,22 @@ public struct MemoWireDTO: Codable, Equatable, Sendable {
     public let content: String
     public let createTime: String?
     public let updateTime: String?
+    public let visibility: String?
 
     enum CodingKeys: String, CodingKey {
         case name
         case content
         case createTime
         case updateTime
+        case visibility
     }
 
-    public init(name: String, content: String, createTime: String? = nil, updateTime: String? = nil) {
+    public init(name: String, content: String, createTime: String? = nil, updateTime: String? = nil, visibility: String? = nil) {
         self.name = name
         self.content = content
         self.createTime = createTime
         self.updateTime = updateTime
+        self.visibility = visibility
     }
 
     public init(from decoder: Decoder) throws {
@@ -28,7 +31,23 @@ public struct MemoWireDTO: Codable, Equatable, Sendable {
         self.content = try container.decodeIfPresent(String.self, forKey: .content) ?? ""
         self.createTime = try container.decodeIfPresent(String.self, forKey: .createTime)
         self.updateTime = try container.decodeIfPresent(String.self, forKey: .updateTime)
+        self.visibility = try container.decodeIfPresent(String.self, forKey: .visibility)
     }
+}
+
+private struct OriginalUploadDTO: Encodable {
+    let filename: String
+    let type = "application/octet-stream"
+    let content: Data
+    let memo: String
+}
+
+private struct OriginalMetadataDTO: Decodable {
+    let name: String
+    let type: String
+    let filename: String
+    let memo: String
+    let size: String
 }
 
 private struct ListMemosResponseDTO: Codable {
@@ -98,10 +117,17 @@ private final class MemosRedirectGuardDelegate: NSObject, URLSessionTaskDelegate
                 && originalURL.host?.lowercased() == nextURL.host?.lowercased()
                 && originalURL.port == nextURL.port
             if !sameOrigin {
+                let method = task.originalRequest?.httpMethod ?? ""
+                guard ["GET", "HEAD"].contains(method),
+                      !originalURL.path.contains("/attachments/") else {
+                    completionHandler(nil)
+                    return
+                }
                 forwarded.setValue(nil, forHTTPHeaderField: "Authorization")
             }
         } else {
-            forwarded.setValue(nil, forHTTPHeaderField: "Authorization")
+            completionHandler(nil)
+            return
         }
         completionHandler(forwarded)
     }
@@ -120,7 +146,8 @@ public struct MemosClient: Sendable {
         contextComment: String?,
         baseURL: URL,
         token: String,
-        fallbackCreatedAt: Date = Date()
+        fallbackCreatedAt: Date = Date(),
+        original: ClipOriginal? = nil
     ) async throws -> RewindCard {
         guard MemosWireFormat.isValidMemoID(clientClipId) else {
             throw RewindError.invalidClipID(clientClipId)
@@ -139,12 +166,14 @@ public struct MemosClient: Sendable {
         let serverId: String
         let createdDate: Date
         let storedContent: String
+        let visibility: String?
 
         if (200..<300).contains(status) {
             let dto = try JSONDecoder().decode(MemoWireDTO.self, from: data)
             serverId = Self.parseServerMemoID(from: dto.name) ?? (dto.name.isEmpty ? clientClipId : dto.name)
             createdDate = dto.createTime.flatMap(MemosWireFormat.parseISO8601) ?? fallbackCreatedAt
             storedContent = dto.content.isEmpty ? content : dto.content
+            visibility = dto.visibility
         } else if status == 409 {
             let existing = await resolveExistingMemo(
                 clientClipId: clientClipId,
@@ -154,6 +183,7 @@ public struct MemosClient: Sendable {
             serverId = existing?.serverId ?? clientClipId
             createdDate = existing?.createTime ?? fallbackCreatedAt
             storedContent = existing?.content ?? content
+            visibility = existing?.visibility
         } else {
             throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
         }
@@ -173,6 +203,21 @@ public struct MemosClient: Sendable {
             }
         }
 
+        if let original {
+            guard serverId == clientClipId, visibility == "PRIVATE",
+                  MemosWireFormat.hasOriginal(in: storedContent),
+                  let expected = MemosWireFormat.parseSnippetRecord(
+                    id: clientClipId, rawContent: content, createdAt: createdDate, dataOrigin: .remote
+                  ),
+                  let stored = MemosWireFormat.parseSnippetRecord(
+                    id: serverId, rawContent: storedContent, createdAt: createdDate, dataOrigin: .remote
+                  ),
+                  stored.verbatimText.utf8.elementsEqual(expected.verbatimText.utf8) else {
+                throw RewindError.invalidServerResponse
+            }
+            try await uploadOriginal(original, clipID: serverId, baseURL: baseURL, token: token)
+        }
+
         if let parsed = MemosWireFormat.parseMemo(
             id: serverId,
             rawContent: storedContent,
@@ -190,6 +235,57 @@ public struct MemosClient: Sendable {
             verbatimText: storedContent,
             createdAt: createdDate
         )
+    }
+
+    private func uploadOriginal(_ original: ClipOriginal, clipID: String, baseURL: URL, token: String) async throws {
+        do {
+            guard try await downloadOriginal(clipID: clipID, baseURL: baseURL, token: token) == original else {
+                throw RewindError.invalidServerResponse
+            }
+            return
+        } catch RewindError.httpError(statusCode: 404, body: _) {
+        }
+
+        let id = ClipOriginal.attachmentID(for: clipID)
+        let url = try endpointURL(
+            baseURL: baseURL,
+            path: "/api/attachments",
+            queryItems: [URLQueryItem(name: "attachmentId", value: id)]
+        )
+        let body = try JSONEncoder().encode(OriginalUploadDTO(
+            filename: original.storedFilename,
+            content: original.envelope,
+            memo: "memos/\(clipID)"
+        ))
+        let (data, status) = try await performCheckedRequest(url: url, method: "POST", token: token, body: body)
+        guard (200..<300).contains(status) || status == 409 || (500..<600).contains(status) else {
+            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+        }
+        guard try await downloadOriginal(clipID: clipID, baseURL: baseURL, token: token) == original else {
+            throw RewindError.invalidServerResponse
+        }
+    }
+
+    public func downloadOriginal(clipID: String, baseURL: URL, token: String) async throws -> ClipOriginal {
+        let normalized = try MemosWireFormat.normalizeSnippetID(clipID)
+        let id = ClipOriginal.attachmentID(for: normalized)
+        let metadataURL = try endpointURL(baseURL: baseURL, path: "/api/attachments/\(id)", queryItems: [])
+        let (data, status) = try await performCheckedRequest(url: metadataURL, method: "GET", token: token, body: nil)
+        guard (200..<300).contains(status) else {
+            throw RewindError.httpError(statusCode: status, body: String(decoding: data, as: UTF8.self))
+        }
+        let metadata = try JSONDecoder().decode(OriginalMetadataDTO.self, from: data)
+        guard metadata.name == "attachments/\(id)", metadata.memo == "memos/\(normalized)",
+              metadata.type == "application/octet-stream",
+              let size = Int(metadata.size), (1...(ClipOriginal.maximumBytes + 64)).contains(size) else {
+            throw RewindError.invalidServerResponse
+        }
+        let fileURL = try endpointURL(baseURL: baseURL, path: "/file/attachments/\(id)", queryItems: [])
+        let (bytes, fileStatus) = try await performCheckedRequest(url: fileURL, method: "GET", token: token, body: nil)
+        guard (200..<300).contains(fileStatus), bytes.count == size else {
+            throw RewindError.invalidServerResponse
+        }
+        return try ClipOriginal.decodeEnvelope(filename: metadata.filename, data: bytes)
     }
 
     /// Returns nil when a memo with `memoID` already exists.
@@ -519,7 +615,7 @@ public struct MemosClient: Sendable {
         clientClipId: String,
         baseURL: URL,
         token: String
-    ) async -> (serverId: String, createTime: Date?, content: String?)? {
+    ) async -> (serverId: String, createTime: Date?, content: String?, visibility: String?)? {
         guard let getURL = try? endpointURL(
             baseURL: baseURL,
             path: "/api/memos/\(clientClipId)",
@@ -534,7 +630,8 @@ public struct MemosClient: Sendable {
         return (
             serverId: serverId,
             createTime: dto.createTime.flatMap(MemosWireFormat.parseISO8601),
-            content: dto.content.isEmpty ? nil : dto.content
+            content: dto.content.isEmpty ? nil : dto.content,
+            visibility: dto.visibility
         )
     }
 

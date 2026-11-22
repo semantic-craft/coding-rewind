@@ -382,6 +382,9 @@ class MiniElement extends MiniNode {
 export function parseHtmlDocument(html, { url = "" } = {}) {
   const doc = new MiniNode(DOCUMENT_NODE, "#document");
   doc.location = { href: url };
+  doc.implementation = {
+    createHTMLDocument: () => ({ importNode: (node, deep) => node.cloneNode(deep) })
+  };
   const root = new MiniElement("body");
   doc.body = root;
   doc.appendChild(root);

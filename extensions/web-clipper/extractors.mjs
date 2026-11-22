@@ -2021,6 +2021,105 @@ export function buildFallbackClip({ selectedMarkdown, sourceUrl = "", title = ""
   };
 }
 
+const PAGE_READING_SKIP_TAGS = new Set([
+  ...SKIP_TAGS, "aside", "footer", "dialog", "menu", "fieldset", "label", "input", "template",
+  "output", "iframe", "frame", "object", "embed", "audio", "video", "canvas", "img"
+]);
+const PAGE_READING_SKIP_ROLES = new Set([
+  "navigation", "complementary", "contentinfo", "banner", "dialog", "alertdialog",
+  "form", "search", "textbox", "combobox"
+]);
+const PAGE_READING_EDITOR_CLASS = /(?:^|\s)(?:monaco-editor|ace_editor|CodeMirror|cm-editor|xterm)(?:\s|$)/;
+const MAX_PAGE_READING_BYTES = 7 * 1024;
+
+export function isPageReadingURL(raw) {
+  if (typeof raw !== "string" || !raw) return false;
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return false;
+    url.hostname = url.hostname.replace(/\.+$/, "");
+    return detectPlatform(url.href) === "web";
+  } catch {
+    return false;
+  }
+}
+
+function pageReadingExcluded(element) {
+  const tag = getTagName(element);
+  const roles = (getAttr(element, "role") || "").trim().toLowerCase().split(/\s+/);
+  if (
+    PAGE_READING_SKIP_TAGS.has(tag) || roles.some((role) => PAGE_READING_SKIP_ROLES.has(role)) ||
+    isExcludedOverlayOrHidden(element) ||
+    getAttr(element, "inert") !== null || getAttr(element, "data-private") !== null ||
+    getAttr(element, "contenteditable") !== null || element.isContentEditable ||
+    PAGE_READING_EDITOR_CLASS.test(getClassString(element)) ||
+    (tag === "details" && getAttr(element, "open") === null)
+  ) {
+    return true;
+  }
+  const style = element.ownerDocument?.defaultView?.getComputedStyle(element);
+  const textSecurity = style?.getPropertyValue?.("-webkit-text-security");
+  return style?.display === "none" || style?.visibility === "hidden" ||
+    style?.visibility === "collapse" || style?.opacity === "0" ||
+    style?.contentVisibility === "hidden" || Boolean(textSecurity && textSecurity !== "none");
+}
+
+function clonePageReadingNode(node, detachedDoc, lineBreakModes) {
+  if (node.nodeType === TEXT_NODE) {
+    const copy = detachedDoc.importNode(node, false);
+    lineBreakModes.set(copy, preservesRenderedLineBreaks(node));
+    return copy;
+  }
+  if (node.nodeType !== ELEMENT_NODE || pageReadingExcluded(node)) return null;
+  const copy = detachedDoc.importNode(node, false);
+  for (const child of Array.from(node.childNodes || [])) {
+    const content = clonePageReadingNode(child, detachedDoc, lineBreakModes);
+    if (content) copy.appendChild(content);
+  }
+  return copy;
+}
+
+function boundedPageReadingMarkdown(markdown) {
+  const encoder = new TextEncoder();
+  if (encoder.encode(markdown).byteLength <= MAX_PAGE_READING_BYTES) return markdown;
+  let selectedMarkdown = "";
+  let low = 2;
+  let high = MAX_PAGE_READING_BYTES;
+  while (low <= high) {
+    const guess = Math.floor((low + high) / 2);
+    const candidate = truncateAndCloseFence(markdown, guess);
+    if (encoder.encode(candidate).byteLength <= MAX_PAGE_READING_BYTES) {
+      selectedMarkdown = candidate;
+      low = guess + 1;
+    } else {
+      high = guess - 1;
+    }
+  }
+  return selectedMarkdown;
+}
+
+export function extractPageReadingClip(doc, sourceUrl) {
+  if (!isPageReadingURL(sourceUrl)) return null;
+  const candidates = [
+    ...doc.querySelectorAll("main, [role='main']"),
+    ...doc.querySelectorAll("article"),
+    doc.body
+  ];
+  const root = candidates.find((node) => node && !findAncestorElement(node, pageReadingExcluded));
+  if (!root) return null;
+
+  const lineBreakModes = new WeakMap();
+  const detachedDoc = doc.implementation.createHTMLDocument("");
+  const copy = clonePageReadingNode(root, detachedDoc, lineBreakModes);
+  const markdown = htmlToMarkdown(copy, { baseUrl: sourceUrl, lineBreakModes });
+  if (!markdown) return null;
+  const selectedMarkdown = boundedPageReadingMarkdown(markdown);
+  return {
+    clip: buildFallbackClip({ selectedMarkdown, sourceUrl, title: doc.title || new URL(sourceUrl).hostname }),
+    truncated: selectedMarkdown !== markdown
+  };
+}
+
 export function extractClipContext({
   doc,
   selectionRange = null,

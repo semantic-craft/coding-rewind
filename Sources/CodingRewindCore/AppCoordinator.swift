@@ -340,6 +340,8 @@ public final class AppCoordinator {
     public var dshPluginStatusText: String = ""
 
     public var onOpenURL: (@MainActor (URL) -> Bool)?
+    @ObservationIgnored private var isExportingOriginal = false
+    public var onExportOriginal: (@MainActor (ClipOriginal) async throws -> Void)?
     public var onCopyText: (@MainActor (String) -> Void) = { _ in }
     public var onWakeHost: (@MainActor (ConversationHost) -> Void)?
     public var onActivateHostApp: (@MainActor (ConversationHost) -> Bool)?
@@ -699,12 +701,21 @@ public final class AppCoordinator {
         }
     }
 
-    public func captureQuickClip(_ text: String) async -> SelectionCaptureOutcome {
+    public func captureQuickClip(_ text: String, original: ClipOriginal? = nil) async -> SelectionCaptureOutcome {
         guard !isCapturingSelection else { return .ignoredBusy }
         isCapturingSelection = true
         defer {
             localCardsRevision += 1
             isCapturingSelection = false
+        }
+
+        if let original {
+            return await ingestClip(
+                verbatimText: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? original.filename : text,
+                platform: "macos", sourceTitle: original.filename, sourceURL: nil,
+                context: nil, capturedAt: Date(), original: original
+            )
         }
 
         let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -723,6 +734,27 @@ public final class AppCoordinator {
             context: nil,
             capturedAt: Date()
         )
+    }
+
+    public func exportOriginal(clipID: String) async {
+        guard !isExportingOriginal, let onExportOriginal else { return }
+        isExportingOriginal = true
+        defer { isExportingOriginal = false }
+        do {
+            let original: ClipOriginal
+            if let local = outbox.loadEntries().first(where: { $0.clientClipId == clipID })?.original {
+                original = local
+            } else {
+                guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
+                      let token = KeychainTokenStore.resolveToken(environment: environment) else {
+                    throw RewindError.missingCredentials
+                }
+                original = try await memosClient.downloadOriginal(clipID: clipID, baseURL: baseURL, token: token)
+            }
+            try await onExportOriginal(original)
+        } catch {
+            setErrorBanner(error)
+        }
     }
 
     public func captureExternalDSHRequest(_ request: DSHCaptureBridgeRequest) async -> DSHCaptureBridgeReceipt {
@@ -813,13 +845,16 @@ public final class AppCoordinator {
         sourceTitle: String,
         sourceURL: String?,
         context: CaptureContext?,
-        capturedAt: Date
+        capturedAt: Date,
+        original: ClipOriginal? = nil
     ) async -> SelectionCaptureOutcome {
         var provisionalCardID: String?
         let previousFocusedCardID = focusedCardID
         do {
             let hasContext = (context?.isEmpty == false)
             let clientClipId = MemosWireFormat.makeClientClipID(now: capturedAt)
+            let originalLease = try original.map { _ in try outbox.beginOriginalOperation(clipID: clientClipId) }
+            defer { withExtendedLifetime(originalLease) {} }
             deletedClipIDs.remove(clientClipId)
             archivedClipIDs.remove(clientClipId)
             let rawContent = try MemosWireFormat.formatRawMemoContent(
@@ -828,15 +863,18 @@ public final class AppCoordinator {
                 sourceTitle: sourceTitle,
                 sourceURL: sourceURL,
                 capturedAt: capturedAt,
-                hasContext: hasContext
+                hasContext: hasContext,
+                hasOriginal: original != nil
             )
             let commentContent = hasContext ? context?.formattedCommentMarkdown() : nil
             let entry = OutboxEntry(
                 clientClipId: clientClipId,
                 memoContent: rawContent,
                 commentContent: commentContent,
-                createdAt: capturedAt
+                createdAt: capturedAt,
+                original: original
             )
+            if original != nil { try outbox.enqueue(entry) }
             inFlightCaptureEntries[clientClipId] = entry
             defer { inFlightCaptureEntries.removeValue(forKey: clientClipId) }
 
@@ -858,13 +896,14 @@ public final class AppCoordinator {
 
             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
-                try outbox.enqueue(entry)
+                if original == nil { try outbox.enqueue(entry) }
                 setBanner(.savedOfflineNeedsConfig, isError: false)
                 return .queuedOffline(cardID: clientClipId)
             }
 
             do {
-                if let flushed = (try? await outbox.flush(using: memosClient, baseURL: baseURL, token: token))?.flushed,
+                if original == nil,
+                   let flushed = (try? await outbox.flush(using: memosClient, baseURL: baseURL, token: token))?.flushed,
                    !flushed.isEmpty {
                     let liveFlushed = await reconcileFlushedOutboxItems(flushed, baseURL: baseURL, token: token)
                     applyFlushedOutboxItems(liveFlushed)
@@ -877,14 +916,22 @@ public final class AppCoordinator {
                 }
                 let deletedBeforeCreate = deletedClipIDs
                 let archivedBeforeCreate = archivedClipIDs
-                let saved = try await memosClient.createClip(
-                    clientClipId: clientClipId,
-                    content: rawContent,
-                    contextComment: commentContent,
-                    baseURL: baseURL,
-                    token: token,
-                    fallbackCreatedAt: capturedAt
+                let sending: OutboxEntry
+                if original != nil {
+                    guard let queued = outbox.loadEntries().first(where: { $0.clientClipId == clientClipId }) else {
+                        let error = RewindError.snippetNotFound(clientClipId)
+                        setErrorBanner(error)
+                        return .failed(error)
+                    }
+                    sending = queued
+                } else {
+                    sending = entry
+                }
+                let delivered = try await outbox.deliver(
+                    sending, using: memosClient, baseURL: baseURL, token: token, originalLease: originalLease
                 )
+                let saved = delivered.card
+                if original != nil { try outbox.removeEntry(matching: delivered.entry) }
                 let deletedDuringCreate = deletedClipIDs.contains(clientClipId)
                     || (!deletedBeforeCreate.contains(saved.id) && deletedClipIDs.contains(saved.id))
                 if deletedDuringCreate {
@@ -932,7 +979,7 @@ public final class AppCoordinator {
                 if archivedClipIDs.contains(clientClipId) {
                     return .saved(cardID: clientClipId, sourceTitle: sourceTitle)
                 }
-                try outbox.enqueue(entry)
+                if original == nil { try outbox.enqueue(entry) }
                 setBanner(.savedOfflineTemporaryFailure, isError: false)
                 return .queuedOffline(cardID: clientClipId)
             }
@@ -1573,17 +1620,22 @@ public final class AppCoordinator {
         var lastError: (any Error)?
 
         for card in targets {
-            let isPending = card.isOfflinePending || outbox.loadEntries().contains { $0.clientClipId == card.id }
             do {
+                let lease = try outbox.beginOriginalOperation(clipID: card.id)
+                defer { withExtendedLifetime(lease) {} }
+                let pendingEntry = outbox.loadEntries().first { $0.clientClipId == card.id }
+                let isPending = card.isOfflinePending || pendingEntry != nil
+                let requiresRemoteDelete = pendingEntry?.originalUploadAttempted == true
                 try Task.checkCancellation()
                 if isPending {
                     if let baseURL, let token {
                         do {
                             _ = try await memosClient.deleteMemo(id: card.id, baseURL: baseURL, token: token)
-                        } catch RewindError.networkFailure {
+                        } catch let error as RewindError {
+                            guard case .networkFailure = error, !requiresRemoteDelete else { throw error }
                             try Task.checkCancellation()
                         }
-                    } else if isQAMode && baseURL != nil {
+                    } else if requiresRemoteDelete || (isQAMode && baseURL != nil) {
                         throw RewindError.missingCredentials
                     }
                 } else {
@@ -1650,14 +1702,9 @@ public final class AppCoordinator {
             do {
                 let cardToArchive: RewindCard
                 if let entry = outbox.loadEntries().first(where: { $0.clientClipId == card.id }) ?? inFlightCaptureEntries[card.id] {
-                    cardToArchive = try await memosClient.createClip(
-                        clientClipId: entry.clientClipId,
-                        content: entry.memoContent,
-                        contextComment: entry.commentContent,
-                        baseURL: baseURL,
-                        token: token,
-                        fallbackCreatedAt: entry.createdAt
-                    )
+                    cardToArchive = try await outbox.deliver(
+                        entry, using: memosClient, baseURL: baseURL, token: token
+                    ).card
                 } else if card.isOfflinePending {
                     cardToArchive = try await memosClient.createClip(
                         clientClipId: card.id,

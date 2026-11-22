@@ -964,6 +964,18 @@
     return clip;
   }
 
+  async function extractCurrentPageReading({ pageUrl, excludedDomains }) {
+    const blockedDomains = Array.isArray(excludedDomains) ? excludedDomains : DEFAULT_EXCLUDED_DOMAINS;
+    const mayReadPage = () => (
+      !isDisposed && pageUrl === location.href &&
+      !isHostExcluded(getCurrentHostname(), blockedDomains) &&
+      !isDisallowedSelectionNode(document.activeElement)
+    );
+    if (!mayReadPage()) return null;
+    const { extractPageReadingClip } = await loadExtractors();
+    return mayReadPage() ? extractPageReadingClip(document, pageUrl) : null;
+  }
+
   async function captureAndSendCurrentSelection({ morphPill = false, enforcePillTargetGate = false } = {}) {
     if (isDisposed || inFlightSaveId !== 0) return;
     const now = Date.now();
@@ -1291,6 +1303,12 @@
       extractCurrentSelectionResult()
         .then(({ clip, blocked }) => sendResponse(blocked ? { clip: null, blocked: true } : { clip }))
         .catch(() => sendResponse({ clip: null }));
+      return true;
+    }
+    if (msg.type === "REWIND_EXTRACT_PAGE_READING") {
+      extractCurrentPageReading(msg)
+        .then(sendResponse)
+        .catch(() => sendResponse(null));
       return true;
     }
     if (msg.type === "REWIND_SHOW_TOAST") {
