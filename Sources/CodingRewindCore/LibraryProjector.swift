@@ -95,6 +95,7 @@ public enum LibraryProjector {
         searchText: String = "",
         focusedClipID: String? = nil,
         triagedInSessionCount: Int = 0,
+        archivedClipIDs: Set<String> = [],
         now: Date = Date()
     ) -> LibraryWorkspaceProjection {
         let onlyActivePlaces = activePlaces.filter { !$0.archived }.sorted { $0.ref < $1.ref }
@@ -103,7 +104,8 @@ public enum LibraryProjector {
         let mergedEntries = mergeEntries(
             hotCards: hotCards,
             libraryRecords: libraryRecords,
-            placeRecords: placeRecords
+            placeRecords: placeRecords,
+            archivedClipIDs: archivedClipIDs
         )
 
         var baseItems: [LibraryClipItem] = []
@@ -285,38 +287,6 @@ public enum LibraryProjector {
         )
     }
 
-    package static func synthesizeRewindCard(from item: LibraryClipItem) -> RewindCard {
-        let rawContent = buildSynthesizedRawContent(
-            status: item.status,
-            sourcePlatform: item.sourcePlatform,
-            places: item.places,
-            customTags: item.customTags,
-            title: item.title,
-            sessionTopic: item.sessionTopic,
-            contextSummary: item.contextSummary,
-            keywords: item.keywords,
-            sourceTitle: item.sourceTitle,
-            sourceURL: item.sourceURL,
-            verbatimText: item.verbatimMarkdown,
-            createdAt: item.createdAt
-        )
-        return RewindCard(
-            id: item.id,
-            rawContent: rawContent,
-            status: item.status == .pending ? .pending : .ready,
-            sourcePlatform: item.sourcePlatform,
-            title: item.title,
-            sessionTopic: item.sessionTopic,
-            contextSummary: item.contextSummary,
-            keywords: item.keywords,
-            sourceTitle: item.sourceTitle,
-            sourceURL: item.sourceURL,
-            verbatimText: item.verbatimMarkdown,
-            createdAt: item.createdAt,
-            isOfflinePending: item.isQueuedOffline
-        )
-    }
-
     private static func buildSynthesizedRawContent(
         status: SnippetStatus,
         sourcePlatform: String,
@@ -375,7 +345,8 @@ public enum LibraryProjector {
     private static func mergeEntries(
         hotCards: [RewindCard],
         libraryRecords: [SnippetRecord],
-        placeRecords: [SnippetRecord]
+        placeRecords: [SnippetRecord],
+        archivedClipIDs: Set<String>
     ) -> [RawClipEntry] {
         var entriesByID: [String: RawClipEntry] = [:]
 
@@ -397,27 +368,18 @@ public enum LibraryProjector {
             if var existing = entriesByID[card.id] {
                 existing.isInHotCards = true
                 existing.isQueuedOffline = card.isOfflinePending
-                if existing.status != .synthesized {
-                    existing.status = (card.status == .ready || existing.status == .ready) ? .ready : .pending
-                }
-                if card.isOfflinePending {
-                    existing.title = card.title ?? existing.title
-                    existing.sessionTopic = card.sessionTopic ?? existing.sessionTopic
-                    existing.contextSummary = card.contextSummary ?? existing.contextSummary
-                    if !card.keywords.isEmpty { existing.keywords = card.keywords }
-                    existing.places = card.places
-                    if !cardCustomTags.isEmpty { existing.customTags = cardCustomTags }
+                if existing.status == .synthesized && archivedClipIDs.contains(card.id) {
+                    existing.status = .synthesized
                 } else {
-                    existing.title = existing.title ?? card.title
-                    existing.sessionTopic = existing.sessionTopic ?? card.sessionTopic
-                    existing.contextSummary = existing.contextSummary ?? card.contextSummary
-                    if existing.keywords.isEmpty { existing.keywords = card.keywords }
-                    if existing.places.isEmpty && !card.places.isEmpty {
-                        existing.places = card.places
-                    }
-                    if existing.customTags.isEmpty && !cardCustomTags.isEmpty {
-                        existing.customTags = cardCustomTags
-                    }
+                    existing.status = card.status == .ready ? .ready : .pending
+                }
+                existing.title = card.title ?? existing.title
+                existing.sessionTopic = card.sessionTopic ?? existing.sessionTopic
+                existing.contextSummary = card.contextSummary ?? existing.contextSummary
+                if !card.keywords.isEmpty { existing.keywords = card.keywords }
+                existing.places = card.places
+                if card.isOfflinePending || !cardCustomTags.isEmpty || card.rawContent.hasPrefix("#rewind/") {
+                    existing.customTags = cardCustomTags
                 }
                 entriesByID[card.id] = existing
             } else {
@@ -560,26 +522,35 @@ public enum LibraryProjector {
         locator: SourceLocator?,
         context: CaptureContext?
     ) -> SessionGroupKey {
-        if let sid = context?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
-            return SessionGroupKey(rawValue: "sid:\(sid)", isSyntheticFallback: false)
-        }
         if let locator {
             switch locator {
             case .antigravitySession(let id):
-                return SessionGroupKey(rawValue: "ag:\(id)", isSyntheticFallback: false)
+                let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if !trimmed.isEmpty {
+                    return SessionGroupKey(rawValue: "sid:\(trimmed)", isSyntheticFallback: false)
+                }
             case .dshSession(let id):
-                return SessionGroupKey(rawValue: "dsh:\(id)", isSyntheticFallback: false)
+                let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if !trimmed.isEmpty {
+                    return SessionGroupKey(rawValue: "sid:\(trimmed)", isSyntheticFallback: false)
+                }
             case .web(let url, let extractedSessionID):
+                if let sid = extractedSessionID?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
+                    return SessionGroupKey(rawValue: "sid:\(sid.lowercased())", isSyntheticFallback: false)
+                }
                 let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
                 let host = (components?.host ?? url.host ?? "").lowercased()
                 var path = components?.path ?? url.path
                 while path.count > 1 && path.hasSuffix("/") {
                     path.removeLast()
                 }
-                if path.contains("/app/") || path.contains("/c/") || extractedSessionID != nil {
+                if path.contains("/app/") || path.contains("/c/") {
                     return SessionGroupKey(rawValue: "web:\(host)\(path)", isSyntheticFallback: false)
                 }
             }
+        }
+        if let sid = context?.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines), !sid.isEmpty {
+            return SessionGroupKey(rawValue: "sid:\(sid.lowercased())", isSyntheticFallback: false)
         }
         let dayBucket = utcDayBucket(createdAt)
         return SessionGroupKey(

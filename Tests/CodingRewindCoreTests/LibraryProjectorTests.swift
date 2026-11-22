@@ -416,14 +416,38 @@ struct LibraryProjectorTests {
 
         #expect(projection.sessionBundles.count == 3)
         #expect(projection.sessionBundles.map(\.key.rawValue) == [
-            "web:chatgpt.com/c/abc-uuid",
+            "sid:abc-uuid",
             "sid:gem-sid-9",
-            "ag:ag-42"
+            "sid:ag-42"
         ])
         #expect(projection.sessionBundles[0].clips.map(\.id) == ["chat-1", "chat-2"])
         #expect(projection.sessionBundles[1].sessionOpening == "How does Swift 6 Sendable work?")
         #expect(projection.sessionBundles[2].clips.map(\.id) == ["ag-1", "ag-2"])
         #expect(projection.sessionBundles.allSatisfy { !$0.key.isSyntheticFallback })
+
+        let preDetailBundleKeys = projection.sessionBundles.map(\.key)
+        let afterDetailLoad = LibraryProjector.project(
+            hotCards: [],
+            libraryRecords: [chat1, chat2, ag1, ag2, ctxClip],
+            activePlaces: [],
+            cachedDetails: [
+                "chat-1": CardDetail(
+                    context: CaptureContext(sessionTitle: "ChatGPT", sessionID: "abc-uuid", prompt: "Prompt 1"),
+                    notes: [],
+                    isCompleteFromServer: true
+                ),
+                "ag-1": CardDetail(
+                    context: CaptureContext(sessionTitle: "AG", sessionID: "AG-42", prompt: "Prompt AG"),
+                    notes: [],
+                    isCompleteFromServer: true
+                ),
+                "ctx-1": details["ctx-1"]!
+            ],
+            now: base
+        )
+        #expect(afterDetailLoad.sessionBundles.map(\.key) == preDetailBundleKeys)
+        #expect(afterDetailLoad.sessionBundles[0].clips.map(\.id) == ["chat-1", "chat-2"])
+        #expect(afterDetailLoad.sessionBundles[2].clips.map(\.id) == ["ag-1", "ag-2"])
     }
 
     @Test("Closed-vocabulary place suggestions, triage intent advancing focus, and relatedPlaceItems")

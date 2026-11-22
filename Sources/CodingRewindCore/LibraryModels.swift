@@ -56,7 +56,6 @@ public struct SuggestedPlaceCandidate: Equatable, Hashable, Sendable {
     public enum MatchReason: Equatable, Hashable, Sendable {
         case keywordAlias
         case sameSessionInherited
-        case semanticNeighbor(scorePercent: Int)
     }
 
     public let place: PlaceRecord

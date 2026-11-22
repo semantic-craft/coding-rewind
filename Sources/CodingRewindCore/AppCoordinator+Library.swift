@@ -14,7 +14,8 @@ extension AppCoordinator {
             scope: libraryScope,
             searchText: librarySearchText,
             focusedClipID: libraryFocusedClipID,
-            triagedInSessionCount: triagedInSessionCount
+            triagedInSessionCount: triagedInSessionCount,
+            archivedClipIDs: archivedClipIDs
         )
     }
 
@@ -29,8 +30,11 @@ extension AppCoordinator {
 
     public func ensureLibraryInspectedDetailLoaded() {
         guard let item = libraryProjection.inspectedItem else { return }
-        if cardDetailStates[item.id] == nil || cardDetailStates[item.id] == .idle {
+        switch cardDetailStates[item.id] {
+        case .none, .idle, .failed:
             reloadCardDetail(id: item.id)
+        case .loading, .loaded:
+            break
         }
     }
 
@@ -41,6 +45,9 @@ extension AppCoordinator {
             pendingDeleteConfirmation = nil
             if case .place(let ref) = scope {
                 await loadPlaceRecords(ref)
+            } else if case .place = hudSection {
+            } else {
+                placeRecords = []
             }
             libraryFocusedClipID = libraryProjection.visibleItems.first?.id
             ensureLibraryInspectedDetailLoaded()
@@ -120,9 +127,7 @@ extension AppCoordinator {
             await appendLibraryNote(clipID: clipID, text: text)
 
         case .triggerSourceAction(let item):
-            let card = resolvableCardsForHandoff().first(where: { $0.id == item.id })
-                ?? LibraryProjector.synthesizeRewindCard(from: item)
-            _ = await openSource(for: card)
+            _ = await openSource(locator: item.sourceLocator)
 
         case .stageAndOpenHandoff(let clipIDs):
             guard !clipIDs.isEmpty else { return }
@@ -218,8 +223,18 @@ extension AppCoordinator {
                 author: nil,
                 now: Date()
             )
+            if updated.id != clipID {
+                remapCardDetailState(from: clipID, to: updated.id)
+                if checkedCardIDs.remove(clipID) != nil {
+                    checkedCardIDs.insert(updated.id)
+                }
+                if focusedCardID == clipID {
+                    focusedCardID = updated.id
+                }
+            }
             updateStoredSnippetRecord(updated, matchingID: clipID)
-            let existingDetail = cachedCardDetails[clipID]
+            let targetID = updated.id
+            let existingDetail = cachedCardDetails[targetID]
             let mergedContext = existingDetail?.context ?? updated.conversationContext
             let mergedNotes = LocalNotesStore.sortAndDeduplicate((existingDetail?.notes ?? []) + updated.notes)
             let isComplete = existingDetail?.isCompleteFromServer ?? (updated.dataOrigin == .remote)
@@ -228,8 +243,8 @@ extension AppCoordinator {
                 notes: mergedNotes,
                 isCompleteFromServer: isComplete
             )
-            cachedCardDetails[clipID] = detail
-            cardDetailStates[clipID] = .loaded(detail)
+            cachedCardDetails[targetID] = detail
+            cardDetailStates[targetID] = .loaded(detail)
             if isErrorBanner {
                 bannerMessage = nil
                 isErrorBanner = false
@@ -237,6 +252,41 @@ extension AppCoordinator {
         } catch {
             setErrorBanner(error)
         }
+    }
+
+    func removeObsoleteLocalRecordID(_ oldID: String, replacedBy newID: String) {
+        guard oldID != newID else { return }
+        libraryRecords = libraryRecords?.filter { $0.id != oldID }
+        placeRecords.removeAll { $0.id == oldID }
+    }
+
+    func markSnippetRecordsArchived(ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        let update: ([SnippetRecord]) -> [SnippetRecord] = { records in
+            records.map { record in
+                guard ids.contains(record.id), record.status != .synthesized else { return record }
+                return SnippetRecord(
+                    id: record.id,
+                    status: .synthesized,
+                    sourcePlatform: record.sourcePlatform,
+                    title: record.title,
+                    sessionTopic: record.sessionTopic,
+                    contextSummary: record.contextSummary,
+                    keywords: record.keywords,
+                    sourceTitle: record.sourceTitle,
+                    sourceURL: record.sourceURL,
+                    verbatimText: record.verbatimText,
+                    createdAt: record.createdAt,
+                    dataOrigin: record.dataOrigin,
+                    conversationContext: record.conversationContext,
+                    tags: record.tags,
+                    notes: record.notes
+                )
+            }
+        }
+        libraryRecords = libraryRecords.map(update)
+        placeRecords = update(placeRecords)
+        reconcileLibraryFocusAfterVisibilityChange()
     }
 
     private func updateStoredSnippetRecord(_ updated: SnippetRecord, matchingID originalID: String) {

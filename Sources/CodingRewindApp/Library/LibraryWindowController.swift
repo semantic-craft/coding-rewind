@@ -52,6 +52,7 @@ public final class LibraryWindowController: NSWindowController, NSWindowDelegate
     private let focusModel = LibraryWindowFocusModel()
     private let onCommand: @MainActor (AppCommand) -> Void
     private var hostingView: NSHostingView<LibrarySplitRootView>?
+    nonisolated(unsafe) private var notificationObservers: [any NSObjectProtocol] = []
     public private(set) var isContentMounted: Bool = false
 
     public init(
@@ -97,6 +98,52 @@ public final class LibraryWindowController: NSWindowController, NSWindowDelegate
         }
         window.onCancelEscape = { [weak self] in
             self?.handleEscapeKey() ?? false
+        }
+
+        let center = NotificationCenter.default
+        notificationObservers = [
+            center.addObserver(
+                forName: NSApplication.didHideNotification,
+                object: NSApplication.shared,
+                queue: nil
+            ) { [weak self] _ in
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        self?.unmountContentIfNeeded()
+                    }
+                } else {
+                    Task { @MainActor [weak self] in
+                        self?.unmountContentIfNeeded()
+                    }
+                }
+            },
+            center.addObserver(
+                forName: NSApplication.didUnhideNotification,
+                object: NSApplication.shared,
+                queue: nil
+            ) { [weak self] _ in
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated {
+                        guard let self,
+                              self.window?.isVisible == true,
+                              self.window?.isMiniaturized == false else { return }
+                        self.mountContentIfNeeded()
+                    }
+                } else {
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              self.window?.isVisible == true,
+                              self.window?.isMiniaturized == false else { return }
+                        self.mountContentIfNeeded()
+                    }
+                }
+            }
+        ]
+    }
+
+    deinit {
+        for observer in notificationObservers {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -163,6 +210,16 @@ public final class LibraryWindowController: NSWindowController, NSWindowDelegate
 
     public func windowWillClose(_ notification: Notification) {
         unmountContentIfNeeded()
+    }
+
+    public func windowDidMiniaturize(_ notification: Notification) {
+        unmountContentIfNeeded()
+    }
+
+    public func windowDidDeminiaturize(_ notification: Notification) {
+        if window?.isVisible == true {
+            mountContentIfNeeded()
+        }
     }
 
     private static func findDraftTextView(in view: NSView) -> DraftPromptTextView? {

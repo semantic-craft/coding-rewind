@@ -729,5 +729,31 @@ extension AppShortcutsTests {
             #expect(!harness.hudPanel.isVisible)
             #expect(window.isVisible)
         }
+
+        @Test("Miniaturize and NSApplication hide unmount SwiftUI content, while deminiaturize and unhide remount")
+        func miniaturizeAndHideUnmountContent() async throws {
+            let seeded = try makeSeededServer()
+            let harness = try makeHarness(server: seeded.server, language: .en)
+            defer { harness.tearDown() }
+
+            await harness.coordinator.refreshLibraryWorkspace()
+            harness.controller.presentAndFocus()
+            try await settleLibraryLoop()
+            let window = try #require(harness.controller.window)
+            #expect(window.isVisible)
+            #expect(harness.controller.isContentMounted)
+
+            harness.controller.windowDidMiniaturize(Notification(name: NSWindow.didMiniaturizeNotification, object: window))
+            #expect(!harness.controller.isContentMounted)
+
+            harness.controller.windowDidDeminiaturize(Notification(name: NSWindow.didDeminiaturizeNotification, object: window))
+            #expect(harness.controller.isContentMounted)
+
+            NotificationCenter.default.post(name: NSApplication.didHideNotification, object: NSApplication.shared)
+            #expect(!harness.controller.isContentMounted)
+
+            NotificationCenter.default.post(name: NSApplication.didUnhideNotification, object: NSApplication.shared)
+            #expect(harness.controller.isContentMounted)
+        }
     }
 }

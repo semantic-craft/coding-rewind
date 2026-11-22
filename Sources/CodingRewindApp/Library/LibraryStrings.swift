@@ -117,8 +117,6 @@ extension AppStrings {
         case (.sameSessionInherited, .en): return "Same Session"
         case (.keywordAlias, .zhHans): return "词表匹配"
         case (.keywordAlias, .en): return "Keyword Match"
-        case (.semanticNeighbor(let pct), .zhHans): return "语义相近 \(pct)%"
-        case (.semanticNeighbor(let pct), .en): return "Similar \(pct)%"
         }
     }
 

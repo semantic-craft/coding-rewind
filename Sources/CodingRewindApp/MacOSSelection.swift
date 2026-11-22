@@ -119,7 +119,13 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         if let nativeObservation {
             switch nativeObservation.host {
             case .chatGPT:
-                backlink = documentURL.flatMap { NativeChatBacklink.conversationURL($0, host: .chatGPT) }
+                if let direct = documentURL.flatMap({ NativeChatBacklink.conversationURL($0, host: .chatGPT) }) {
+                    backlink = direct
+                } else {
+                    backlink = await NativeChatBacklink.capture(
+                        host: .chatGPT, application: appElement, window: nativeObservation.window
+                    )
+                }
             case .gemini:
                 backlink = await NativeChatBacklink.capture(
                     host: nativeObservation.host, application: appElement, window: nativeObservation.window

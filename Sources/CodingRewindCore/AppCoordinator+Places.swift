@@ -89,6 +89,10 @@ extension AppCoordinator {
         }
         if case .place(let ref) = hudSection {
             await loadPlaceRecords(ref)
+        } else if case .place(let ref) = libraryScope {
+            await loadPlaceRecords(ref)
+        } else {
+            placeRecords = []
         }
     }
 
@@ -177,6 +181,15 @@ extension AppCoordinator {
             return
         }
         libraryRevision += 1
+        if updated.id != snippetID {
+            remapCardDetailState(from: snippetID, to: updated.id)
+            if checkedCardIDs.remove(snippetID) != nil {
+                checkedCardIDs.insert(updated.id)
+            }
+            if focusedCardID == snippetID {
+                focusedCardID = updated.id
+            }
+        }
         let replaceIn: ([SnippetRecord]) -> [SnippetRecord] = { records in
             records.map { $0.id == snippetID || $0.id == updated.id ? updated : $0 }
         }

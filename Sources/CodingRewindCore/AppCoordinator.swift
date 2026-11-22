@@ -886,6 +886,7 @@ public final class AppCoordinator {
                 let idRemap = (saved.id == clientClipId) ? [:] : [clientClipId: saved.id]
                 if saved.id != clientClipId {
                     try? LocalNotesStore(fileURL: paths.localNotesFileURL).remapCardID(from: clientClipId, to: saved.id)
+                    removeObsoleteLocalRecordID(clientClipId, replacedBy: saved.id)
                 }
                 remapCardDetailState(from: clientClipId, to: saved.id)
                 reconcilePendingDeleteConfirmation(idRemapping: idRemap)
@@ -1081,6 +1082,7 @@ public final class AppCoordinator {
             flushedTargetIDs.insert(item.card.id)
             if item.clientClipId != item.card.id {
                 try? localNotesStore.remapCardID(from: item.clientClipId, to: item.card.id)
+                removeObsoleteLocalRecordID(item.clientClipId, replacedBy: item.card.id)
             }
             if checkedCardIDs.remove(item.clientClipId) != nil {
                 checkedCardIDs.insert(item.card.id)
@@ -1386,6 +1388,7 @@ public final class AppCoordinator {
                                     try store.recordArchivedCard(card.id, requestId: current.requestId)
                                     checkedCardIDs.remove(card.id)
                                     updateLocalCards { $0.removeAll { $0.id == card.id } }
+                                    markSnippetRecordsArchived(ids: [card.id])
                                 } catch { failed = true }
                             }
                             try hotCache.saveCards(cards)
@@ -1647,6 +1650,7 @@ public final class AppCoordinator {
                 var removedIDs: Set<String> = [card.id]
                 if cardToArchive.id != card.id {
                     _ = try? hotCache.removeCard(id: cardToArchive.id)
+                    removeObsoleteLocalRecordID(card.id, replacedBy: cardToArchive.id)
                     removedIDs.insert(cardToArchive.id)
                 }
                 removeCardsFromCoordinatorState(removedIDs)
@@ -1810,7 +1814,12 @@ public final class AppCoordinator {
 
     @discardableResult
     public func openSource(for card: RewindCard) async -> Bool {
-        guard let locator = card.sourceLocator else { return false }
+        await openSource(locator: card.sourceLocator)
+    }
+
+    @discardableResult
+    public func openSource(locator: SourceLocator?) async -> Bool {
+        guard let locator else { return false }
         switch locator {
         case .web(let url, _):
             return openURL(url)
@@ -2081,9 +2090,14 @@ public final class AppCoordinator {
         activeDetailTaskGeneration &+= 1
         activeDetailTask?.cancel()
         activeDetailTask = nil
+        for (id, state) in cardDetailStates {
+            if case .loading(let partial) = state {
+                cardDetailStates[id] = partial.map { .loaded($0) } ?? .idle
+            }
+        }
     }
 
-    private func remapCardDetailState(from oldID: String, to newID: String) {
+    func remapCardDetailState(from oldID: String, to newID: String) {
         guard oldID != newID else { return }
         if let cached = cachedCardDetails.removeValue(forKey: oldID) {
             cachedCardDetails[newID] = cached
@@ -2093,6 +2107,9 @@ public final class AppCoordinator {
         }
         if inspectedCardID == oldID {
             inspectedCardID = newID
+        }
+        if libraryFocusedClipID == oldID {
+            libraryFocusedClipID = newID
         }
     }
 
