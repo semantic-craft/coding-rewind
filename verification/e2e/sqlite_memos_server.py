@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import secrets
 import signal
+import socketserver
 import sqlite3
 import sys
 import threading
@@ -392,6 +393,12 @@ def _make_handler(store: SQLiteMemosStore, token: str):
 class _ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
 
 class SQLiteMemosServer:
