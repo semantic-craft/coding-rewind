@@ -1157,6 +1157,7 @@ extension AppShortcutsTests {
             "Coding Rewind · 1 条片段",
             "Memos 已配置（memos.example.com）",
             "显示片段浮窗",
+            "打开资料库",
             "保存所选文本",
             "最近片段",
             "立即同步",
@@ -1194,6 +1195,7 @@ extension AppShortcutsTests {
             "Coding Rewind · 0 条片段",
             "仅保存在本机（未配置 Memos）",
             "显示片段浮窗",
+            "打开资料库",
             "保存所选文本",
             "设置…",
             "退出 Coding Rewind"
@@ -1352,7 +1354,7 @@ extension AppShortcutsTests {
         ])
         let windowSubmenu = try #require(zhMenu.items[3].submenu)
         #expect(windowSubmenu.items.filter { !$0.isSeparatorItem }.map(\.title) == [
-            "关闭窗口", "前置片段浮窗"
+            "关闭窗口", "打开资料库", "前置片段浮窗"
         ])
 
         settings.navigationModel.selectedPage = .general

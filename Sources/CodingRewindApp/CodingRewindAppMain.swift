@@ -15,6 +15,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
 
     public var coordinator: AppCoordinator?
     public var hudPanel: QuickPeekHUDPanel?
+    public var libraryWindowController: LibraryWindowController?
     public var statusItemController: StatusItemController?
     public var settingsWindowController: SettingsWindowController?
     public var selectionPopupController: SelectionPopupController?
@@ -267,6 +268,13 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             )
             self.hudPanel = panel
 
+            let libraryWindow = LibraryWindowController(
+                coordinator: coord,
+                language: initialLanguage,
+                onCommand: dispatchCommand
+            )
+            self.libraryWindowController = libraryWindow
+
             let settings = SettingsWindowController(
                 coordinator: coord,
                 appearance: appearance,
@@ -355,6 +363,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 }
                 self.selectionPopupController?.language = lang
                 self.settingsWindowController?.updateLanguage(lang)
+                self.libraryWindowController?.updateLanguage(lang)
             }
 
             observeCoordinatorChanges()
@@ -371,6 +380,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
+        libraryWindowController?.unmountContentIfNeeded()
+        libraryWindowController?.close()
         dshCaptureWatcher?.stop()
         dshCaptureWatcher = nil
         updater?.stop()
@@ -379,7 +390,11 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        perform(.presentHUDAndFocus)
+        if libraryWindowController != nil {
+            perform(.openLibraryWindow)
+        } else {
+            perform(.presentHUDAndFocus)
+        }
         return true
     }
 
@@ -394,19 +409,28 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .presentHUDAndFocus:
             hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
             refreshHotStreamInBackground()
+        case .openLibraryWindow:
+            libraryWindowController?.presentAndFocus()
+            if let coord = coordinator {
+                Task { @MainActor [weak self, weak coord] in
+                    await coord?.refreshLibraryWorkspace()
+                    self?.statusItemController?.refreshIcon()
+                }
+            }
         case .captureSelectionHotkey:
             triggerCapture(preferInPlacePopup: true)
         case .captureSelection:
             triggerCapture(preferInPlacePopup: false)
         case .launchConversation:
             guard let coord = coordinator, !coord.isLaunchingConversation else { return }
+            let isLibraryVisible = libraryWindowController?.window?.isVisible == true
 
             if coord.hasActiveHandoffConversation {
                 Task { @MainActor [weak self] in
                     let outcome = await coord.launchChecked()
                     guard let self else { return }
                     self.statusItemController?.refreshIcon()
-                    if outcome == nil || coord.isErrorBanner {
+                    if (outcome == nil || coord.isErrorBanner) && self.libraryWindowController?.window?.isVisible != true {
                         self.presentHUDNonActivating()
                     }
                 }
@@ -414,43 +438,59 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             }
 
             if coord.conversationDraft != nil {
-                hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
-                hudPanel?.focusDraftEditorIfPresent()
+                if isLibraryVisible {
+                    libraryWindowController?.presentAndFocus()
+                    libraryWindowController?.focusDraftEditorIfPresent()
+                } else {
+                    hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+                    hudPanel?.focusDraftEditorIfPresent()
+                }
                 statusItemController?.refreshIcon()
                 return
             }
 
             if coord.openConversationDraft() {
-                hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
-                hudPanel?.focusDraftEditorIfPresent()
+                if isLibraryVisible {
+                    libraryWindowController?.presentAndFocus()
+                    libraryWindowController?.focusDraftEditorIfPresent()
+                } else {
+                    hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+                    hudPanel?.focusDraftEditorIfPresent()
+                }
                 statusItemController?.refreshIcon()
             } else {
                 statusItemController?.refreshIcon()
-                if coord.cards.isEmpty {
-                    hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
-                } else {
-                    presentHUDNonActivating()
+                if !isLibraryVisible {
+                    if coord.cards.isEmpty {
+                        hudPanel?.presentAndFocus(anchorFrame: statusItemController?.anchorFrame)
+                    } else {
+                        presentHUDNonActivating()
+                    }
                 }
             }
         case .copyDraftAndWakeHost:
             guard let coord = coordinator, !coord.isLaunchingConversation else { return }
             hudPanel?.commitDraftEditorIfPresent()
+            libraryWindowController?.commitDraftEditorIfPresent()
             let woke = coord.copyConversationDraftAndWakeHost()
             statusItemController?.refreshIcon()
             if woke {
                 hudPanel?.orderOut(nil)
-            } else {
+            } else if libraryWindowController?.window?.isVisible != true {
                 presentHUDNonActivating()
             }
         case .sendConversationDraft:
             guard let coord = coordinator, !coord.isLaunchingConversation else { return }
             hudPanel?.commitDraftEditorIfPresent()
+            libraryWindowController?.commitDraftEditorIfPresent()
             Task { @MainActor [weak self] in
                 let outcome = await coord.sendConversationDraft()
                 guard let self else { return }
                 self.statusItemController?.refreshIcon()
                 if outcome == nil || coord.isErrorBanner {
-                    self.presentHUDNonActivating()
+                    if self.libraryWindowController?.window?.isVisible != true {
+                        self.presentHUDNonActivating()
+                    }
                 } else if case .succeeded(let reference) = outcome, reference.host == .dsh {
                     _ = coord.onActivateHostApp?(.dsh)
                 }
