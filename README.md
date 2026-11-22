@@ -34,6 +34,11 @@
 - **ChatGPT 与 Gemini App 剪藏**，在 ChatGPT 与 Gemini 桌面端选中对话文本后点击选区上方的“暂存”胶囊，或按 `⌃⌥⇧⌘S`（`Hyper+S`），自动保存来源、私有会话链接、会话首轮开场提问（窗口无前序折叠缺口时）、紧邻提问与截止选中消息的最多四个用户轮。通过当前窗口的辅助功能树和系统复制读取内容，不读取其他会话日志。回链使用应用自带的打开会话入口，完成后关闭本次打开的浏览器标签。Gemini 的回链读取目前支持默认浏览器为 Google Chrome。
 - **网页端薄剪藏扩展 `extensions/web-clipper/`**，Manifest V3 无依赖扩展，吸收 MIT 项目 `mem0ai/mem0-chrome-extension`、`revivalstack/ai-chat-exporter`、`pionxzh/chatgpt-exporter`、`obsidianmd/obsidian-clipper`、`crimx/ext-saladict`、`floating-ui/floating-ui`、`kepano/defuddle`、`mixmark-io/turndown` 与 `ChatGPTBox-dev/chatGPTBox` 经验，在任意 `http(s)` 网页及 ChatGPT、Claude、Gemini 页面支持选区就近的单动作“暂存”胶囊（含手势门控、可编辑区避让、生效范围与排除域名设置）、右键菜单及 `⌃⌥⇧⌘S`（`Hyper+S`）或 `Alt+Shift+S` 快捷键，按需提取去行号代码块与富文本 Markdown（聊天页附带会话 ID、首轮开场提问及前序 4 轮对话；普通网页提取标题、导语及开头数行正文 `Page Lead`，并生成 W3C `#:~:text=...` 精确回跳原句高亮链接）后后台直连 Memos API，胶囊内原位切换保存反馈或右上角展示 2.2 秒轻提示，不弹自定义协议确认框也不抢焦点。
 
+## 无选区时暂存
+
+- **桌面**，从菜单栏选「快速暂存…」，或在 Coding Rewind 中按 `⌘N`。输入想法，或粘贴代码、终端日志或网页链接，再点「保存片段」。
+- **Chrome**，在网页空白处右键选「保存此网页链接到 Coding Rewind」，即可保存 URL 与页面标题。想保留原文及网页脉络时，用现有的划词暂存。
+
 ## 在 Antigravity 接聊
 
 在“设置 → 插件与权限”中点击 Antigravity 分区的“安装或修复插件”。安装器将 `coding-rewind-sidecar` 与 `coding-rewind` 放入固定的 `~/Library/Application Support/CodingRewind/bin/` 目录，注册并启用 `coding-rewind/launcher`。Antigravity 管理该 sidecar 进程，并提供调用 `agentapi` 所需的运行环境。
