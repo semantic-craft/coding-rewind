@@ -5,6 +5,17 @@
 <h1>Coding Rewind 开发进度</h1>
 <p>Observed: 2026-11-22T16:39:59.368324Z</p>
 <p>Main: <code>main: eccc5a7af8e944ecc0b1e5041fead3ff39d3493d</code></p>
+<section id="general-inspiration-capture"><h2>无选区灵感采集</h2>
+<article id="general-inspiration-text-and-link"><h3>桌面输入、粘贴与浏览器书签</h3><span class="badge">done</span><p>桌面快速暂存接入原有片段与离线队列。Chrome 右键另有独立的网页链接入口。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/QuickCapturePanel.swift">file Sources/CodingRewindApp/QuickCapturePanel.swift: 原生多行暂存窗口</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/background.js">file extensions/web-clipper/background.js: 书签使用原有私密保存与离线队列</a></li>
+<li>note desktop-quick-capture-qa: 隔离应用包从实际菜单保存代码和链接。磁盘回读确认了缩进、空行、重启后的队列及网页回链。</li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 后台菜单回归验证私密书签、URL 过滤和未配置时入队。</a></li>
+</ul><p>Next: Chrome 交付扩展的实际右键操作待验收。</p></article>
+<article id="general-inspiration-attachment-and-origin"><h3>源码回跳、网页留底与原始附件</h3><span class="badge">planned</span><p>保留源代码仓库、提交和行号，随后验证整页正文以及图片、日志和文件的私有附件契约。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/docs/architecture.md">file docs/architecture.md: 通用灵感采集的验证顺序</a></li>
+</ul><p>Next: 用真实编辑器样本验证定位，使用固定 Memos 版本验证附件离线与回收。</p></article>
+</section>
 <section id="library-workspace-three-sources"><h2>三栏资料库工作台与三源采集加固（PR #52）</h2>
 <article id="library-workspace-impl-and-merge"><h3>Core 纯函数投影、SwiftUI 三栏工作台与三源采集加固合入 main</h3><span class="badge">done</span><p>PR #52 合入 main（eccc5a7）：Core 新增 LibraryModels、LibraryProjector 与 AppCoordinator+Library，统一归并热卡与 &gt;72h SnippetRecord，支持四槽位命中归因、会话时间轴分组键不变量、封闭词表位置推荐与离线刷新 ID 重映射；App 新增 Sources/CodingRewindApp/Library/ 三栏窗口（⌘0 与 Dock 重开、⌥1 卡片墙 / ⌥2 会话时间轴、未落位分拣横幅、常驻脉络详情栏及隐藏/最小化离屏卸载），并加固 Antigravity 逐行容错、Markdown 定锚与 ChatGPT 桌面端双包名及 ?view=codex 过滤。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/52">pull 52: 实现、单测、对抗终审修复与文档同步合入 main</a></li>

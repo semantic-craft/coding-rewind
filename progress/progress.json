@@ -501,6 +501,55 @@
   "schema_version": 1,
   "sections": [
     {
+      "id": "general-inspiration-capture",
+      "title": "无选区灵感采集",
+      "items": [
+        {
+          "id": "general-inspiration-text-and-link",
+          "title": "桌面输入、粘贴与浏览器书签",
+          "status": "done",
+          "summary": "桌面快速暂存接入原有片段与离线队列。Chrome 右键另有独立的网页链接入口。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "Sources/CodingRewindApp/QuickCapturePanel.swift",
+              "note": "原生多行暂存窗口"
+            },
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/background.js",
+              "note": "书签使用原有私密保存与离线队列"
+            },
+            {
+              "kind": "note",
+              "ref": "desktop-quick-capture-qa",
+              "note": "隔离应用包从实际菜单保存代码和链接。磁盘回读确认了缩进、空行、重启后的队列及网页回链。"
+            },
+            {
+              "kind": "file",
+              "ref": "extensions/web-clipper/test_extractors.mjs",
+              "note": "后台菜单回归验证私密书签、URL 过滤和未配置时入队。"
+            }
+          ],
+          "next": "Chrome 交付扩展的实际右键操作待验收。"
+        },
+        {
+          "id": "general-inspiration-attachment-and-origin",
+          "title": "源码回跳、网页留底与原始附件",
+          "status": "planned",
+          "summary": "保留源代码仓库、提交和行号，随后验证整页正文以及图片、日志和文件的私有附件契约。",
+          "evidence": [
+            {
+              "kind": "file",
+              "ref": "docs/architecture.md",
+              "note": "通用灵感采集的验证顺序"
+            }
+          ],
+          "next": "用真实编辑器样本验证定位，使用固定 Memos 版本验证附件离线与回收。"
+        }
+      ]
+    },
+    {
       "id": "library-workspace-three-sources",
       "items": [
         {
