@@ -377,7 +377,8 @@ public enum MemosWireFormat {
         sourceTitle: String,
         sourceURL: String?,
         capturedAt: Date,
-        hasContext: Bool
+        hasContext: Bool,
+        hasOriginal: Bool = false
     ) throws -> String {
         let cleanedBody = verbatimText.replacingOccurrences(of: "\0", with: "")
         guard !cleanedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -393,7 +394,14 @@ public enum MemosWireFormat {
             sourceURL: sourceURL,
             capturedAt: capturedAt
         )
-        return "\(tags)\n\n\(sourceLine)\n\n\(cleanedBody)"
+        let originalTag = hasOriginal ? " \(Self.originalTag)" : ""
+        return "\(tags)\(originalTag)\n\n\(sourceLine)\n\n\(cleanedBody)"
+    }
+
+    public static let originalTag = "#rewind/original"
+
+    public static func hasOriginal(in rawContent: String) -> Bool {
+        headerTokens(rawContent).contains(Substring(originalTag))
     }
 
     public static let contextCommentMarker = "<!-- rewind-context-v1 -->"
@@ -620,6 +628,9 @@ public enum MemosWireFormat {
         var outTagTokens: [String] = ["#rewind/\(newStatus.rawValue)"]
         if newStatus == .pending && hadHasCtx {
             outTagTokens.append("#rewind/has-ctx")
+        }
+        if tokens.contains(Substring(originalTag)) {
+            outTagTokens.append(originalTag)
         }
         outTagTokens.append("#source/\(sourcePlatform)")
         outTagTokens.append(contentsOf: mergedTags.map { "#\($0)" })
@@ -887,7 +898,8 @@ public enum MemosWireFormat {
             dataOrigin: dataOrigin,
             conversationContext: conversationContext,
             tags: customTags,
-            notes: notes
+            notes: notes,
+            hasOriginal: tags.contains(Substring(originalTag))
         )
     }
 

@@ -442,20 +442,46 @@ public struct OutboxEntry: Codable, Equatable, Sendable {
     public let memoContent: String
     public let commentContent: String?
     public let createdAt: Date
+    public let original: ClipOriginal?
+    public private(set) var originalUploadAttempted: Bool?
 
-    public init(clientClipId: String, memoContent: String, commentContent: String?, createdAt: Date = Date()) {
+    public init(
+        clientClipId: String, memoContent: String, commentContent: String?,
+        createdAt: Date = Date(), original: ClipOriginal? = nil
+    ) {
         self.clientClipId = clientClipId
         self.memoContent = memoContent
         self.commentContent = commentContent
         self.createdAt = createdAt
+        self.original = original
+    }
+
+    func markingOriginalUploadAttempt() -> Self {
+        var entry = self
+        entry.originalUploadAttempted = true
+        return entry
     }
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.clientClipId == rhs.clientClipId &&
         lhs.createdAt == rhs.createdAt &&
+        lhs.original == rhs.original &&
+        lhs.originalUploadAttempted == rhs.originalUploadAttempted &&
         lhs.memoContent.utf8.elementsEqual(rhs.memoContent.utf8) &&
         lhs.commentContent.map { Data($0.utf8) } == rhs.commentContent.map { Data($0.utf8) }
     }
+}
+
+final class OriginalOperationLease: Sendable {
+    private let fd: Int32
+    let clipID: String
+
+    init(fd: Int32, clipID: String) {
+        self.fd = fd
+        self.clipID = clipID
+    }
+
+    deinit { close(fd) }
 }
 
 public struct OfflineOutbox: Sendable {
@@ -482,9 +508,15 @@ public struct OfflineOutbox: Sendable {
         try withFileLock {
             var existing = loadEntries()
             if let idx = existing.firstIndex(where: { $0.clientClipId == entry.clientClipId }) {
-                existing[idx] = entry
+                let previous = existing[idx]
+                existing[idx] = previous.originalUploadAttempted == true && previous.original == entry.original
+                    ? entry.markingOriginalUploadAttempt()
+                    : entry
             } else {
                 existing.append(entry)
+            }
+            guard existing.reduce(0, { $0 + ($1.original?.data.count ?? 0) }) <= 64 * 1024 * 1024 else {
+                throw RewindError.ioError("Originals waiting to sync exceed 64 MiB.")
             }
             try writeEntries(existing)
         }
@@ -503,6 +535,83 @@ public struct OfflineOutbox: Sendable {
         }
     }
 
+    func replaceEntry(_ original: OutboxEntry, with updated: OutboxEntry) throws {
+        try withFileLock {
+            var entries = loadEntries()
+            guard let index = entries.firstIndex(where: {
+                $0 == original || (original.original != nil && $0 == original.markingOriginalUploadAttempt())
+            }) else {
+                throw RewindError.snippetNotFound(original.clientClipId)
+            }
+            entries[index] = entries[index].originalUploadAttempted == true
+                ? updated.markingOriginalUploadAttempt() : updated
+            try writeEntries(entries)
+        }
+    }
+
+    func removeEntry(matching entry: OutboxEntry) throws {
+        try withFileLock {
+            let current = loadEntries()
+            let remaining = current.filter { $0 != entry }
+            if remaining.count != current.count {
+                try writeEntries(remaining)
+            }
+        }
+    }
+
+    func beginOriginalOperation(clipID: String) throws -> OriginalOperationLease {
+        let directory = fileURL.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let bucket = ClipOriginal.attachmentID(for: clipID).suffix(2)
+        let lockURL = directory.appendingPathComponent("original-\(bucket).lock")
+        let fd = open(lockURL.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else { throw RewindError.ioError("open original operation lease errno=\(errno)") }
+        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
+            let error = errno
+            close(fd)
+            if error == EWOULDBLOCK { throw RewindError.originalBusy }
+            throw RewindError.ioError("flock original operation lease errno=\(error)")
+        }
+        return OriginalOperationLease(fd: fd, clipID: clipID)
+    }
+
+    func deliver(
+        _ entry: OutboxEntry, using client: MemosClient, baseURL: URL, token: String,
+        originalLease: OriginalOperationLease? = nil
+    ) async throws -> (entry: OutboxEntry, card: RewindCard) {
+        let lease = try entry.original.map { _ in
+            if let originalLease, originalLease.clipID == entry.clientClipId { return originalLease }
+            return try beginOriginalOperation(clipID: entry.clientClipId)
+        }
+        defer { withExtendedLifetime(lease) {} }
+        let sending = if entry.original != nil {
+            try withFileLock {
+                var current = loadEntries()
+                let marked = entry.markingOriginalUploadAttempt()
+                guard let index = current.firstIndex(where: { $0 == entry || $0 == marked }) else {
+                    throw RewindError.snippetNotFound(entry.clientClipId)
+                }
+                if current[index] != marked {
+                    current[index] = marked
+                    try writeEntries(current)
+                }
+                return marked
+            }
+        } else {
+            entry
+        }
+        let card = try await client.createClip(
+            clientClipId: sending.clientClipId,
+            content: sending.memoContent,
+            contextComment: sending.commentContent,
+            baseURL: baseURL,
+            token: token,
+            fallbackCreatedAt: sending.createdAt,
+            original: sending.original
+        )
+        return (sending, card)
+    }
+
     @discardableResult
     public func flush(
         using client: MemosClient,
@@ -517,16 +626,9 @@ public struct OfflineOutbox: Sendable {
 
         for entry in entries {
             do {
-                let saved = try await client.createClip(
-                    clientClipId: entry.clientClipId,
-                    content: entry.memoContent,
-                    contextComment: entry.commentContent,
-                    baseURL: baseURL,
-                    token: token,
-                    fallbackCreatedAt: entry.createdAt
-                )
-                flushed.append((clientClipId: entry.clientClipId, card: saved))
-                sentEntries[entry.clientClipId] = entry
+                let delivered = try await deliver(entry, using: client, baseURL: baseURL, token: token)
+                flushed.append((clientClipId: entry.clientClipId, card: delivered.card))
+                sentEntries[entry.clientClipId] = delivered.entry
             } catch {
                 continue
             }

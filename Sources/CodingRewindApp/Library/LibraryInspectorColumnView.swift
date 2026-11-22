@@ -104,6 +104,11 @@ private struct LibraryInspectorHeaderSection: View {
                 Spacer(minLength: 4)
                 Button(AppStrings.libraryChoosePlaceButton(in: language)) { onIntent(.openPlacePicker(clipID: item.id)) }.rewindButtonRole(.secondary)
             }
+            if item.hasOriginal {
+                Button(AppStrings.exportOriginal(in: language)) { onIntent(.exportOriginal(clipID: item.id)) }
+                    .rewindButtonRole(.secondary)
+                    .accessibilityIdentifier("library.inspector.exportOriginal")
+            }
             if let locator = item.sourceLocator {
                 HStack(spacing: 6) {
                     Button(AppStrings.sourceActionButton(for: locator, in: language)) { onIntent(.triggerSourceAction(item)) }

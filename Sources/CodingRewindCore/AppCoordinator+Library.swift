@@ -129,6 +129,9 @@ extension AppCoordinator {
         case .triggerSourceAction(let item):
             _ = await openSource(locator: item.sourceLocator)
 
+        case .exportOriginal(let clipID):
+            await exportOriginal(clipID: clipID)
+
         case .stageAndOpenHandoff(let clipIDs):
             guard !clipIDs.isEmpty else { return }
             checkedCardIDs = Set(clipIDs)

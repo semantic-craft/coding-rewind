@@ -197,6 +197,12 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             coord.onOpenURL = { url in
                 SystemURLOpener.open(url)
             }
+            coord.onExportOriginal = { original in
+                let panel = NSSavePanel()
+                panel.nameFieldStringValue = original.filename
+                guard await panel.begin() == .OK, let url = panel.url else { return }
+                try AtomicFile.writeData(original.data, to: url)
+            }
             coord.onCopyText = { text in
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(text, forType: .string)
@@ -559,9 +565,9 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         guard let coordinator else { return }
         selectionPopupController?.hideImmediately()
         if quickCapturePanel == nil {
-            quickCapturePanel = QuickCapturePanel(language: coordinator.language) { [weak self] text in
+            quickCapturePanel = QuickCapturePanel(language: coordinator.language) { [weak self] text, original in
                 guard let self, let coordinator = self.coordinator else { return .ignoredBusy }
-                let outcome = await coordinator.captureQuickClip(text)
+                let outcome = await coordinator.captureQuickClip(text, original: original)
                 self.statusItemController?.refreshIcon()
                 switch outcome {
                 case .saved, .queuedOffline:

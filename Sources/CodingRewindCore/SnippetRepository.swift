@@ -45,6 +45,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
     public let dataOrigin: SnippetDataOrigin
     public let conversationContext: CaptureContext?
     public let notes: [SnippetNote]
+    public let hasOriginal: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -63,6 +64,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         case dataOrigin
         case conversationContext
         case notes
+        case hasOriginal
     }
 
     public init(
@@ -80,7 +82,8 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         dataOrigin: SnippetDataOrigin,
         conversationContext: CaptureContext? = nil,
         tags: [String] = [],
-        notes: [SnippetNote] = []
+        notes: [SnippetNote] = [],
+        hasOriginal: Bool = false
     ) {
         self.id = id
         self.status = status
@@ -98,6 +101,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         self.dataOrigin = dataOrigin
         self.conversationContext = conversationContext
         self.notes = notes
+        self.hasOriginal = hasOriginal
     }
 
     public init(from decoder: Decoder) throws {
@@ -118,6 +122,7 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
         self.dataOrigin = try container.decode(SnippetDataOrigin.self, forKey: .dataOrigin)
         self.conversationContext = try container.decodeIfPresent(CaptureContext.self, forKey: .conversationContext)
         self.notes = try container.decodeIfPresent([SnippetNote].self, forKey: .notes) ?? []
+        self.hasOriginal = try container.decodeIfPresent(Bool.self, forKey: .hasOriginal) ?? false
     }
 
     public var isUnplaced: Bool {
@@ -147,7 +152,8 @@ public struct SnippetRecord: Identifiable, Codable, Equatable, Sendable {
             dataOrigin: dataOrigin,
             conversationContext: conversationContext,
             tags: tags,
-            notes: notes
+            notes: notes,
+            hasOriginal: hasOriginal
         )
     }
 }
@@ -681,15 +687,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
         var targetID = normalizedID
         if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
-            let saved = try await client.createClip(
-                clientClipId: pendingEntry.clientClipId,
-                content: pendingEntry.memoContent,
-                contextComment: pendingEntry.commentContent,
-                baseURL: baseURL,
-                token: token,
-                fallbackCreatedAt: pendingEntry.createdAt
-            )
-            _ = try? outbox.removeEntry(clientClipId: normalizedID)
+            let delivered = try await outbox.deliver(pendingEntry, using: client, baseURL: baseURL, token: token)
+            let saved = delivered.card
+            try? outbox.removeEntry(matching: delivered.entry)
             if saved.id != normalizedID {
                 try? localNotesStore.remapCardID(from: normalizedID, to: saved.id)
                 _ = try? hotCache.removeCard(id: normalizedID)
@@ -805,15 +805,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
         var targetID = normalizedID
         if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
-            let saved = try await client.createClip(
-                clientClipId: pendingEntry.clientClipId,
-                content: pendingEntry.memoContent,
-                contextComment: pendingEntry.commentContent,
-                baseURL: baseURL,
-                token: token,
-                fallbackCreatedAt: pendingEntry.createdAt
-            )
-            _ = try? outbox.removeEntry(clientClipId: normalizedID)
+            let delivered = try await outbox.deliver(pendingEntry, using: client, baseURL: baseURL, token: token)
+            let saved = delivered.card
+            try? outbox.removeEntry(matching: delivered.entry)
             if saved.id != normalizedID {
                 try? localNotesStore.remapCardID(from: normalizedID, to: saved.id)
                 _ = try? hotCache.removeCard(id: normalizedID)
@@ -875,15 +869,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
         var targetID = normalizedID
         if let pendingEntry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
-            let saved = try await client.createClip(
-                clientClipId: pendingEntry.clientClipId,
-                content: pendingEntry.memoContent,
-                contextComment: pendingEntry.commentContent,
-                baseURL: baseURL,
-                token: token,
-                fallbackCreatedAt: pendingEntry.createdAt
-            )
-            _ = try? outbox.removeEntry(clientClipId: normalizedID)
+            let delivered = try await outbox.deliver(pendingEntry, using: client, baseURL: baseURL, token: token)
+            let saved = delivered.card
+            try? outbox.removeEntry(matching: delivered.entry)
             if saved.id != normalizedID {
                 try? localNotesStore.remapCardID(from: normalizedID, to: saved.id)
                 _ = try? hotCache.removeCard(id: normalizedID)
@@ -934,10 +922,12 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
     public func deleteSnippet(id: String) async throws -> SnippetDeletionResult {
         let normalizedID = try MemosWireFormat.normalizeSnippetID(id)
-        let hadOutbox = outbox.loadEntries().contains { $0.clientClipId == normalizedID }
-
-        if hadOutbox {
+        let lease = try outbox.beginOriginalOperation(clipID: normalizedID)
+        defer { withExtendedLifetime(lease) {} }
+        if let entry = outbox.loadEntries().first(where: { $0.clientClipId == normalizedID }) {
+            let requiresRemoteDelete = entry.originalUploadAttempted == true
             guard let baseURL = paths.resolveMemosBaseURL(environment: environment) else {
+                if requiresRemoteDelete { throw RewindError.missingCredentials }
                 return try finalizePendingDeletion(id: normalizedID)
             }
 
@@ -948,7 +938,7 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             case .developerCredentialsFailed(let failure):
                 throw failure
             case .missing:
-                if isQAMode {
+                if requiresRemoteDelete || isQAMode {
                     throw RewindError.missingCredentials
                 }
                 return try finalizePendingDeletion(id: normalizedID)
@@ -960,7 +950,8 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                     id: normalizedID,
                     disposition: existedRemote ? .remoteAndLocal : .localPendingOnly
                 )
-            } catch RewindError.networkFailure {
+            } catch let error as RewindError {
+                guard case .networkFailure = error, !requiresRemoteDelete else { throw error }
                 return try finalizePendingDeletion(id: normalizedID)
             }
         }
@@ -1145,9 +1136,10 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                 clientClipId: existingEntry.clientClipId,
                 memoContent: updatedContent,
                 commentContent: existingEntry.commentContent,
-                createdAt: existingEntry.createdAt
+                createdAt: existingEntry.createdAt,
+                original: existingEntry.original
             )
-            try outbox.enqueue(updatedEntry)
+            try outbox.replaceEntry(existingEntry, with: updatedEntry)
             if let hotCard = MemosWireFormat.parseMemo(
                 id: existingEntry.clientClipId,
                 rawContent: updatedContent,
@@ -1179,6 +1171,9 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
                createdAt: card.createdAt,
                dataOrigin: card.isOfflinePending ? .offlinePending : .localCache
            ) != nil {
+            guard !MemosWireFormat.hasOriginal(in: card.rawContent) else {
+                throw RewindError.missingCredentials
+            }
             let updatedContent = MemosWireFormat.updatingSnippetMetadata(
                 rawContent: card.rawContent,
                 title: patch.title,

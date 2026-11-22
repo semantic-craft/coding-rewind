@@ -151,6 +151,10 @@ public enum L10n {
             switch error {
             case .emptySelection:
                 return "请先选中要保存的文本，再按快捷键。"
+            case .invalidOriginal:
+                return "请选择文件名有效且不超过 8 MiB 的普通文件。"
+            case .originalBusy:
+                return "原件正在同步或删除，请稍后再试。"
             case .accessibilityPermissionDenied:
                 return "请在系统设置的“辅助功能”中允许 Coding Rewind 读取所选文本。"
             case .noFrontmostApplication:
@@ -182,6 +186,10 @@ public enum L10n {
             switch error {
             case .emptySelection:
                 return "Select text to save before pressing the shortcut."
+            case .invalidOriginal:
+                return "Choose a regular file with a valid name and a size of at most 8 MiB."
+            case .originalBusy:
+                return "An original is syncing or being deleted. Try again shortly."
             case .accessibilityPermissionDenied:
                 return "Allow Coding Rewind in System Settings > Privacy & Security > Accessibility to read selected text."
             case .noFrontmostApplication:

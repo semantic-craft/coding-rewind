@@ -23,6 +23,8 @@ public struct SnippetNote: Identifiable, Codable, Equatable, Hashable, Sendable 
 
 public enum RewindError: Error, LocalizedError, Equatable, Sendable {
     case emptySelection
+    case invalidOriginal
+    case originalBusy
     case accessibilityPermissionDenied
     case noFrontmostApplication
     case invalidClipID(String)
