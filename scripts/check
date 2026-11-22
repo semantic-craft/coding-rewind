@@ -153,7 +153,7 @@ if [[ -f "${REPO_ROOT}/Package.swift" ]]; then
   swift test
   VENDOR_TEST_LOG="$(mktemp "${REPO_ROOT}/.build/vendor-tests.XXXXXX")"
   trap 'rm -f "${VENDOR_TEST_LOG}"' EXIT
-  swift test --package-path Vendor/KeyboardShortcuts 2>&1 | tee "${VENDOR_TEST_LOG}"
+  swift test --no-parallel --package-path Vendor/KeyboardShortcuts 2>&1 | tee "${VENDOR_TEST_LOG}"
   python3 - "${VENDOR_TEST_LOG}" <<'PYTEST'
 import pathlib
 import re
