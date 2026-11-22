@@ -1149,6 +1149,7 @@ struct KeyboardShortcutsTests {
 		})
 
 		eventsContinuation?.finish()
+		try? await Task.sleep(for: .milliseconds(40))
 		let emissionCountAfterFinish = emissionCount
 		try? await Task.sleep(for: .milliseconds(120))
 
@@ -1349,6 +1350,7 @@ struct KeyboardShortcutsTests {
 		})
 
 		KeyboardShortcuts.disable(name)
+		try? await Task.sleep(for: .milliseconds(40))
 
 		let emissionCountAfterDisable = emissionCount
 		try? await Task.sleep(for: .milliseconds(120))
@@ -1415,6 +1417,7 @@ struct KeyboardShortcutsTests {
 		})
 
 		KeyboardShortcuts.setShortcut(updatedShortcut, for: name)
+		try? await Task.sleep(for: .milliseconds(40))
 
 		let emissionCountAfterShortcutUpdate = emissionCount
 		try? await Task.sleep(for: .milliseconds(120))
