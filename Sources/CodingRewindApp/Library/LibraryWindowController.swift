@@ -181,11 +181,35 @@ public final class LibraryWindowController: NSWindowController, NSWindowDelegate
     }
 
     public func presentAndFocus() {
+        let wasMounted = isContentMounted
         mountContentIfNeeded()
         guard let window else { return }
         NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        if !(window.firstResponder is NSTextView) {
+        if !wasMounted {
+            window.layoutIfNeeded()
+            if !window.makeFirstResponder(nil) {
+                window.endEditing(for: nil)
+            }
+            let searchFocusToken = focusModel.searchFocusToken
+            DispatchQueue.main.async { [weak self, weak mountedHosting = hostingView] in
+                guard let self,
+                      let mountedHosting,
+                      self.isContentMounted,
+                      self.hostingView === mountedHosting,
+                      let window = self.window,
+                      window.isVisible,
+                      self.focusModel.searchFocusToken == searchFocusToken,
+                      self.coordinator.conversationDraft == nil,
+                      self.coordinator.placePicker == nil,
+                      self.isEditingTextInput else {
+                    return
+                }
+                if !window.makeFirstResponder(nil) {
+                    window.endEditing(for: nil)
+                }
+            }
+        } else if !(window.firstResponder is NSTextView) {
             window.makeFirstResponder(nil)
         }
     }
