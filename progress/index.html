@@ -3,8 +3,21 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-21T10:15:09.409830Z</p>
-<p>Main: <code>main: 3ea47dd5c45e6a836c0792b251aa48c111b29057</code></p>
+<p>Observed: 2026-11-22T16:39:59.368324Z</p>
+<p>Main: <code>main: eccc5a7af8e944ecc0b1e5041fead3ff39d3493d</code></p>
+<section id="library-workspace-three-sources"><h2>三栏资料库工作台与三源采集加固（PR #52）</h2>
+<article id="library-workspace-impl-and-merge"><h3>Core 纯函数投影、SwiftUI 三栏工作台与三源采集加固合入 main</h3><span class="badge">done</span><p>PR #52 合入 main（eccc5a7）：Core 新增 LibraryModels、LibraryProjector 与 AppCoordinator+Library，统一归并热卡与 &gt;72h SnippetRecord，支持四槽位命中归因、会话时间轴分组键不变量、封闭词表位置推荐与离线刷新 ID 重映射；App 新增 Sources/CodingRewindApp/Library/ 三栏窗口（⌘0 与 Dock 重开、⌥1 卡片墙 / ⌥2 会话时间轴、未落位分拣横幅、常驻脉络详情栏及隐藏/最小化离屏卸载），并加固 Antigravity 逐行容错、Markdown 定锚与 ChatGPT 桌面端双包名及 ?view=codex 过滤。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/pull/52">pull 52: 实现、单测、对抗终审修复与文档同步合入 main</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/LibraryProjector.swift">file Sources/CodingRewindCore/LibraryProjector.swift: 单向纯函数投影与会话分组不变量</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/Library/LibraryWindowController.swift">file Sources/CodingRewindApp/Library/LibraryWindowController.swift: 三栏窗口宿主、快捷键流与离屏卸载生命周期</a></li>
+</ul><p>Next: </p></article>
+<article id="library-workspace-qa-and-gates"><h3>全仓门禁与隔离 QA 应用实屏回执</h3><span class="badge">done</span><p>合并前 ./scripts/check 七道门禁全绿：check_comments.py 0 普通注释、check_swiftui_perf.py 0 告警，LibraryProjectorTests（5 项）与 LibraryWindowTests（6 项）及全量 Core/CLI/App/WebClipper（78）/DSH（11）单测通过。隔离 CodingRewindQA.app（CODING_REWIND_QA=1）经 AppleEvent reopen 唤醒实屏验证卡片墙、⌥2 会话时间轴与未落位分拣条，红黄绿激活态无残留蓝色焦点环，退出后完成进程、LaunchServices 与 QA 偏好域清理。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindAppTests/LibraryWindowTests.swift">file Tests/CodingRewindAppTests/LibraryWindowTests.swift: 窗口挂载/卸载、跨范围常驻详情、快捷键与双语切换单测</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCoreTests/LibraryProjectorTests.swift">file Tests/CodingRewindCoreTests/LibraryProjectorTests.swift: 四槽位检索、会话轴时序、封闭词表分拣与 &gt;72h 接聊单测</a></li>
+</ul><p>Next: </p></article>
+<article id="library-workspace-daily-install"><h3>日常 /Applications/CodingRewind.app 升级与真实库点检</h3><span class="badge">unverified</span><p>本机 /Applications/CodingRewind.app 日常运行实例尚未重启覆盖为含 PR #52 的新版签名包，真实远端 Memos 历史片段在三栏资料库中的交互点检待升级后执行。</p><ul>
+</ul><p>Next: 空闲时执行 ./scripts/build-app-bundle.sh /Applications 重启日常应用，按 ⌘0 验证真实 Memos 历史片段分拣与接聊。</p></article>
+</section>
 <section id="places-life-map"><h2>位置（Places）落位：项目 / 主题 / 人物（PR #51）</h2>
 <article id="places-impl-and-checks"><h3>位置模型、CLI、enricher 封闭词表与 HUD 三视图实现</h3><span class="badge">done</span><p>PR #51 squash 合入 main（3ea47dd）：Core 新增 PlaceKind/PlaceSlug/PlaceRef/PlaceRecord 与 #rewind/place 记录线级格式（memoId pl-&lt;p|t|u&gt;-&lt;slug&gt;），片段落位为首行 #&lt;kind&gt;/&lt;slug&gt; 标签，未落位由状态推导；CLI 新增 place list/add 与 list/search 的 --place/--unplaced；enricher 以 active 位置为封闭词表追加 0–3 个位置标签，空词表时提示词与输出逐字节不变；HUD 新增位置标签、⌘P 落位选择器与「热流 72h / 未落位 / 地图」。合并后 main 上 ./scripts/check 七道门禁全绿（Swift Core 141 / CLI 16 / App 100，enricher 19）。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/pull/51">pull 51: 实现与文档合入 main</a></li>
