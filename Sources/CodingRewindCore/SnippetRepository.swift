@@ -234,6 +234,15 @@ public struct SnippetNoteInput: Equatable, Sendable {
     }
 }
 
+public enum SnippetResultLimit: Equatable, Hashable, Sendable {
+    case bounded(Int)
+    case unbounded
+
+    public static func clamped(_ raw: Int) -> SnippetResultLimit {
+        .bounded(min(max(raw, 1), 500))
+    }
+}
+
 public struct SnippetQuery: Equatable, Sendable {
     public var windowHours: Double?
     public var status: SnippetStatusFilter
@@ -241,7 +250,7 @@ public struct SnippetQuery: Equatable, Sendable {
     public var searchText: String?
     public var place: PlaceRef?
     public var unplaced: Bool
-    public var limit: Int
+    public var resultLimit: SnippetResultLimit
 
     public init(
         windowHours: Double? = 72,
@@ -250,7 +259,7 @@ public struct SnippetQuery: Equatable, Sendable {
         searchText: String? = nil,
         place: PlaceRef? = nil,
         unplaced: Bool = false,
-        limit: Int = 50
+        resultLimit: SnippetResultLimit = .clamped(50)
     ) {
         self.windowHours = windowHours
         self.status = status
@@ -258,7 +267,32 @@ public struct SnippetQuery: Equatable, Sendable {
         self.searchText = searchText
         self.place = place
         self.unplaced = unplaced
-        self.limit = min(max(limit, 1), 500)
+        switch resultLimit {
+        case .bounded(let count):
+            self.resultLimit = .clamped(count)
+        case .unbounded:
+            self.resultLimit = .unbounded
+        }
+    }
+
+    public init(
+        windowHours: Double? = 72,
+        status: SnippetStatusFilter = .active,
+        sourcePlatform: String? = nil,
+        searchText: String? = nil,
+        place: PlaceRef? = nil,
+        unplaced: Bool = false,
+        limit: Int
+    ) {
+        self.init(
+            windowHours: windowHours,
+            status: status,
+            sourcePlatform: sourcePlatform,
+            searchText: searchText,
+            place: place,
+            unplaced: unplaced,
+            resultLimit: .clamped(limit)
+        )
     }
 }
 
@@ -1277,7 +1311,6 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
         let platformFilter = (trimmedPlatform?.isEmpty == false) ? trimmedPlatform : nil
         let trimmedSearch = query.searchText?.trimmingCharacters(in: .whitespacesAndNewlines)
         let needle = (trimmedSearch?.isEmpty == false) ? trimmedSearch!.lowercased() : nil
-        let clampedLimit = min(max(query.limit, 1), 500)
 
         let filtered = records.filter { record in
             if let cutoff, record.createdAt < cutoff {
@@ -1338,7 +1371,12 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
             }
             return lhs.id < rhs.id
         }
-        return Array(sorted.prefix(clampedLimit))
+        switch query.resultLimit {
+        case .bounded(let count):
+            return Array(sorted.prefix(min(max(count, 1), 500)))
+        case .unbounded:
+            return sorted
+        }
     }
 
     private static func describeFallbackReason(_ error: any Error) -> String {

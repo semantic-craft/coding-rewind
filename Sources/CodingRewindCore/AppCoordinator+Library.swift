@@ -155,14 +155,23 @@ extension AppCoordinator {
                 var lastError: (any Error)?
                 for id in recordOnlyIDs {
                     do {
+                        let targetID = canonicalSnippetID(for: id)
                         let updated = try await placeRepository().updateSnippetMetadata(
-                            id: id,
+                            id: targetID,
                             patch: SnippetMetadataPatch(archived: true),
                             now: Date()
                         )
+                        if updated.id != targetID {
+                            recordSnippetIDRemap(from: targetID, to: updated.id)
+                        }
+                        if updated.id != id {
+                            recordSnippetIDRemap(from: id, to: updated.id)
+                        }
                         archivedClipIDs.insert(id)
+                        archivedClipIDs.insert(targetID)
                         archivedClipIDs.insert(updated.id)
                         checkedCardIDs.remove(id)
+                        checkedCardIDs.remove(targetID)
                         checkedCardIDs.remove(updated.id)
                         updateStoredSnippetRecord(updated, matchingID: id)
                         succeeded += 1
@@ -192,12 +201,20 @@ extension AppCoordinator {
         var anySucceeded = false
         for id in ids {
             do {
+                let targetID = canonicalSnippetID(for: id)
                 let updated = try await placeRepository().updateSnippetMetadata(
-                    id: id,
+                    id: targetID,
                     patch: SnippetMetadataPatch(archived: false),
                     now: Date()
                 )
+                if updated.id != targetID {
+                    recordSnippetIDRemap(from: targetID, to: updated.id)
+                }
+                if updated.id != id {
+                    recordSnippetIDRemap(from: id, to: updated.id)
+                }
                 archivedClipIDs.remove(id)
+                archivedClipIDs.remove(targetID)
                 archivedClipIDs.remove(updated.id)
                 updateStoredSnippetRecord(updated, matchingID: id)
                 anySucceeded = true
@@ -217,13 +234,18 @@ extension AppCoordinator {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         do {
+            let resolvedClipID = canonicalSnippetID(for: clipID)
             let updated = try await placeRepository().appendSnippetNote(
-                id: clipID,
+                id: resolvedClipID,
                 content: trimmed,
                 author: nil,
                 now: Date()
             )
+            if updated.id != resolvedClipID {
+                recordSnippetIDRemap(from: resolvedClipID, to: updated.id)
+            }
             if updated.id != clipID {
+                recordSnippetIDRemap(from: clipID, to: updated.id)
                 remapCardDetailState(from: clipID, to: updated.id)
                 if checkedCardIDs.remove(clipID) != nil {
                     checkedCardIDs.insert(updated.id)
@@ -256,8 +278,11 @@ extension AppCoordinator {
 
     func removeObsoleteLocalRecordID(_ oldID: String, replacedBy newID: String) {
         guard oldID != newID else { return }
-        libraryRecords = libraryRecords?.filter { $0.id != oldID }
-        placeRecords.removeAll { $0.id == oldID }
+        recordSnippetIDRemap(from: oldID, to: newID)
+        mutateLibrarySnapshots { library, place in
+            library = library?.filter { $0.id != oldID }
+            place.removeAll { $0.id == oldID }
+        }
     }
 
     func markSnippetRecordsArchived(ids: Set<String>) {
@@ -284,18 +309,21 @@ extension AppCoordinator {
                 )
             }
         }
-        libraryRecords = libraryRecords.map(update)
-        placeRecords = update(placeRecords)
+        mutateLibrarySnapshots { library, place in
+            library = library.map(update)
+            place = update(place)
+        }
         reconcileLibraryFocusAfterVisibilityChange()
     }
 
     private func updateStoredSnippetRecord(_ updated: SnippetRecord, matchingID originalID: String) {
-        libraryRevision += 1
         let replaceIn: ([SnippetRecord]) -> [SnippetRecord] = { records in
             records.map { ($0.id == originalID || $0.id == updated.id) ? updated : $0 }
         }
-        libraryRecords = libraryRecords.map(replaceIn)
-        placeRecords = replaceIn(placeRecords)
+        mutateLibrarySnapshots { library, place in
+            library = library.map(replaceIn)
+            place = replaceIn(place)
+        }
     }
 
     private func reconcileLibraryFocusAfterVisibilityChange() {

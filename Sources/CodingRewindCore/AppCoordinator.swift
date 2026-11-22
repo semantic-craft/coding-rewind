@@ -297,6 +297,8 @@ public final class AppCoordinator {
     public internal(set) var placePicker: PlacePickerState?
     public var focusedRecordID: String?
     @ObservationIgnored var libraryRevision = 0
+    @ObservationIgnored var pendingPlacePatchTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored var remappedSnippetIDs: [String: String] = [:]
     public var libraryScope: LibraryScope = .all {
         didSet {
             if oldValue != libraryScope {
@@ -1081,6 +1083,7 @@ public final class AppCoordinator {
             remappedIDs[item.clientClipId] = item.card.id
             flushedTargetIDs.insert(item.card.id)
             if item.clientClipId != item.card.id {
+                recordSnippetIDRemap(from: item.clientClipId, to: item.card.id)
                 try? localNotesStore.remapCardID(from: item.clientClipId, to: item.card.id)
                 removeObsoleteLocalRecordID(item.clientClipId, replacedBy: item.card.id)
             }
@@ -1737,8 +1740,10 @@ public final class AppCoordinator {
                 return record
             }
         }
-        libraryRecords = libraryRecords.map(updateRecords)
-        placeRecords = updateRecords(placeRecords)
+        mutateLibrarySnapshots { library, place in
+            library = library.map(updateRecords)
+            place = updateRecords(place)
+        }
         updateLocalCards { $0.removeAll { removedIDs.contains($0.id) } }
         focusedCardID = nextFocusedCardID(afterRemoving: removedIDs, previousFilteredIDs: previousFilteredIDs)
         if let currentLibraryFocused = libraryFocusedClipID, removedIDs.contains(currentLibraryFocused) {
@@ -2362,6 +2367,28 @@ public final class AppCoordinator {
             }
         }
         return title.isEmpty ? nil : title
+    }
+
+    func mutateLibrarySnapshots(_ transform: (inout [SnippetRecord]?, inout [SnippetRecord]) -> Void) {
+        libraryRevision += 1
+        transform(&libraryRecords, &placeRecords)
+    }
+
+    func canonicalSnippetID(for snippetID: String) -> String {
+        var current = snippetID
+        var visited: Set<String> = [current]
+        while let next = remappedSnippetIDs[current], visited.insert(next).inserted {
+            current = next
+        }
+        return current
+    }
+
+    func recordSnippetIDRemap(from oldID: String, to newID: String) {
+        guard oldID != newID else { return }
+        remappedSnippetIDs[oldID] = newID
+        if let existingTail = pendingPlacePatchTasks[oldID], pendingPlacePatchTasks[newID] == nil {
+            pendingPlacePatchTasks[newID] = existingTail
+        }
     }
 
     func updateLocalCards(_ change: (inout [RewindCard]) -> Void) {

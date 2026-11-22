@@ -78,7 +78,7 @@ extension AppCoordinator {
         let repository = placeRepository()
         let revision = libraryRevision
         async let listedPlaces = try? repository.listPlaces(includeArchived: true)
-        async let listedRecords = try? repository.listSnippets(SnippetQuery(windowHours: nil, status: .all, limit: 500), now: Date())
+        async let listedRecords = try? repository.listSnippets(SnippetQuery(windowHours: nil, status: .all, resultLimit: .unbounded), now: Date())
         let (placeResult, recordResult) = await (listedPlaces, listedRecords)
         guard revision == libraryRevision else { return }
         if let placeResult {
@@ -98,7 +98,7 @@ extension AppCoordinator {
 
     func loadPlaceRecords(_ ref: PlaceRef) async {
         let revision = libraryRevision
-        let query = SnippetQuery(windowHours: nil, status: .all, place: ref, limit: 500)
+        let query = SnippetQuery(windowHours: nil, status: .all, place: ref, resultLimit: .unbounded)
         guard let result = try? await placeRepository().listSnippets(query, now: Date()),
               revision == libraryRevision,
               (hudSection == .place(ref) || libraryScope == .place(ref)) else {
@@ -173,32 +173,62 @@ extension AppCoordinator {
     }
 
     func applyPlacePatch(_ patch: SnippetMetadataPatch, to snippetID: String) async {
+        let initialKey = canonicalSnippetID(for: snippetID)
+        let priorTask = pendingPlacePatchTasks[initialKey]
+        let task = Task<Void, Never> { @MainActor [weak self] in
+            if let priorTask {
+                await priorTask.value
+            }
+            guard let self else { return }
+            let targetID = self.canonicalSnippetID(for: snippetID)
+            await self.executePlacePatch(patch, targetID: targetID, originalID: snippetID)
+        }
+        pendingPlacePatchTasks[initialKey] = task
+        await task.value
+        for (key, pending) in pendingPlacePatchTasks where pending == task {
+            pendingPlacePatchTasks.removeValue(forKey: key)
+        }
+    }
+
+    private func executePlacePatch(_ patch: SnippetMetadataPatch, targetID: String, originalID: String) async {
         let updated: SnippetRecord
         do {
-            updated = try await placeRepository().updateSnippetMetadata(id: snippetID, patch: patch, now: Date())
+            updated = try await placeRepository().updateSnippetMetadata(id: targetID, patch: patch, now: Date())
         } catch {
             setErrorBanner(error)
             return
         }
-        libraryRevision += 1
-        if updated.id != snippetID {
-            remapCardDetailState(from: snippetID, to: updated.id)
-            if checkedCardIDs.remove(snippetID) != nil {
+        if updated.id != targetID {
+            recordSnippetIDRemap(from: targetID, to: updated.id)
+        }
+        if updated.id != originalID {
+            recordSnippetIDRemap(from: originalID, to: updated.id)
+        }
+        let previousIDs = Set([originalID, targetID])
+        for oldID in previousIDs where oldID != updated.id {
+            remapCardDetailState(from: oldID, to: updated.id)
+            if checkedCardIDs.remove(oldID) != nil {
                 checkedCardIDs.insert(updated.id)
             }
-            if focusedCardID == snippetID {
+            if focusedCardID == oldID {
                 focusedCardID = updated.id
             }
+            if focusedRecordID == oldID {
+                focusedRecordID = updated.id
+            }
         }
+        let matchingIDs = previousIDs.union([updated.id])
         let replaceIn: ([SnippetRecord]) -> [SnippetRecord] = { records in
-            records.map { $0.id == snippetID || $0.id == updated.id ? updated : $0 }
+            records.map { matchingIDs.contains($0.id) ? updated : $0 }
         }
-        libraryRecords = libraryRecords.map(replaceIn)
-        placeRecords = replaceIn(placeRecords)
-        if cards.contains(where: { $0.id == snippetID }) {
+        mutateLibrarySnapshots { library, place in
+            library = library.map(replaceIn)
+            place = replaceIn(place)
+        }
+        if cards.contains(where: { matchingIDs.contains($0.id) }) {
             let refreshed = hotCache.loadCards().first { $0.id == updated.id }
             updateLocalCards { cards in
-                cards.removeAll { $0.id == snippetID || $0.id == updated.id }
+                cards.removeAll { matchingIDs.contains($0.id) }
                 if let refreshed {
                     cards = Self.mergeCards(cached: cards + [refreshed], pendingOutbox: [])
                 }

@@ -384,8 +384,9 @@ struct SnippetRepositoryTests {
             now: now
         )
         #expect(clampedLimited.snippets.count == 2)
-        #expect(SnippetQuery(limit: 0).limit == 1)
-        #expect(SnippetQuery(limit: 999).limit == 500)
+        #expect(SnippetQuery(limit: 0).resultLimit == .bounded(1))
+        #expect(SnippetQuery(limit: 999).resultLimit == .bounded(500))
+        #expect(SnippetQuery(resultLimit: .unbounded).resultLimit == .unbounded)
 
         #expect(!FileManager.default.fileExists(atPath: paths.hotCacheFileURL.path))
     }
