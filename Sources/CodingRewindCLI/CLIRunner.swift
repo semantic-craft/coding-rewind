@@ -115,7 +115,7 @@ public enum CLIRunner {
                 return 1
             }
 
-        case .create(let textSource, var input, let dataDir, let json):
+        case .create(let textSource, var input, let gitSource, let dataDir, let json):
             do {
                 try ensureCLIWriteAccessAllowed(
                     dataDirOverride: dataDir,
@@ -128,8 +128,13 @@ public enum CLIRunner {
             }
             let resolvedText: String
             do {
+                if let gitSource {
+                    let source = try gitSource.resolve()
+                    input.sourceTitle = source.title
+                    input.sourceURL = source.url.absoluteString
+                }
                 resolvedText = try resolveTextSource(textSource, inputFD: inputFD, fieldName: "snippet text")
-            } catch let error as CLIValidationError {
+            } catch let error where error is CLIValidationError || error is GitSourceRequest.ValidationError {
                 writeStderr("Error: \(describeError(error))\n")
                 return 64
             } catch {

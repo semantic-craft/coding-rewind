@@ -145,7 +145,7 @@ public enum CLICommand: Equatable, Sendable {
     case list(query: SnippetQuery, dataDir: String?, json: Bool)
     case search(query: SnippetQuery, dataDir: String?, json: Bool)
     case get(id: String, includeContext: Bool, dataDir: String?, json: Bool)
-    case create(textSource: CLITextSource, input: SnippetCreateInput, dataDir: String?, json: Bool)
+    case create(textSource: CLITextSource, input: SnippetCreateInput, gitSource: GitSourceRequest? = nil, dataDir: String?, json: Bool)
     case update(id: String, patch: SnippetMetadataPatch, dataDir: String?, json: Bool)
     case note(id: String, textSource: CLITextSource, author: String?, dataDir: String?, json: Bool)
     case archive(id: String, dataDir: String?, json: Bool)
@@ -166,6 +166,7 @@ public enum CLIParser {
           coding-rewind search <query> [--window <72h|all|Nh>] [--window-hours <N>] [--status <active|ready|pending|synthesized|all>] [--source <platform>] [--place <kind>/<slug> | --unplaced] [--limit <1..500>] [--json]
           coding-rewind get <id> [--no-context | --with-context] [--json]
           coding-rewind create (--text <markdown> | --stdin) [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--tag <tag>...] [--source <platform>] [--source-title <st>] [--source-url <u>] [--json]
+          coding-rewind create (--text <markdown> | --stdin) --git-file <repo-relative-path> [--git-lines <N|N-M>] [--git-root <directory>] [--git-commit <full-id>] [--json]
           coding-rewind update <id> [--title <t>] [--session <s>] [--context <c>] [--keywords <k1,k2>] [--add-tag <tag>...] [--remove-tag <tag>...] [--archive | --unarchive] [--json]
           coding-rewind note <id> (--text <markdown> | --stdin) [--author <name>] [--json]
           coding-rewind archive <id> [--json]
@@ -212,6 +213,10 @@ public enum CLIParser {
         "--tag",
         "--source-title",
         "--source-url",
+        "--git-file",
+        "--git-lines",
+        "--git-root",
+        "--git-commit",
         "--add-tag",
         "--remove-tag",
         "--author",
@@ -377,8 +382,8 @@ public enum CLIParser {
             guard parsed.positionals.isEmpty else {
                 throw CLIValidationError("Unexpected argument '\(parsed.positionals[0])' for 'create'.")
             }
-            let (textSource, createInput) = try parseCreateOptions(parsed.options)
-            return .create(textSource: textSource, input: createInput, dataDir: parsed.dataDir, json: parsed.json)
+            let (textSource, createInput, gitSource) = try parseCreateOptions(parsed.options)
+            return .create(textSource: textSource, input: createInput, gitSource: gitSource, dataDir: parsed.dataDir, json: parsed.json)
         case "update":
             guard let rawID = parsed.positionals.first else {
                 throw CLIValidationError("Missing required <id> argument for 'update'.")
@@ -424,7 +429,7 @@ public enum CLIParser {
 
     private static func parseCreateOptions(
         _ options: [(name: String, value: String?)]
-    ) throws -> (CLITextSource, SnippetCreateInput) {
+    ) throws -> (CLITextSource, SnippetCreateInput, GitSourceRequest?) {
         var inlineText: String?
         var sawStdin = false
         var title: String?
@@ -435,6 +440,7 @@ public enum CLIParser {
         var sourcePlatform = "agent"
         var sourceTitle: String?
         var sourceURL: String?
+        var gitOptions: [String: String] = [:]
 
         for option in options {
             switch option.name {
@@ -468,6 +474,11 @@ public enum CLIParser {
                 sourceTitle = try SnippetFilterParser.normalizeNonEmpty(option.value ?? "", fieldName: "--source-title")
             case "--source-url":
                 sourceURL = try SnippetFilterParser.normalizeNonEmpty(option.value ?? "", fieldName: "--source-url")
+            case "--git-file", "--git-lines", "--git-root", "--git-commit":
+                guard gitOptions[option.name] == nil else {
+                    throw CLIValidationError("Option '\(option.name)' may only be specified once.")
+                }
+                gitOptions[option.name] = option.value ?? ""
             default:
                 throw CLIValidationError("Unknown option '\(option.name)' for 'create'.")
             }
@@ -488,6 +499,21 @@ public enum CLIParser {
             throw CLIValidationError("Missing snippet text for 'create'. Pass '--text <markdown>' or '--stdin'.")
         }
 
+        let gitSource: GitSourceRequest?
+        if gitOptions.isEmpty {
+            gitSource = nil
+        } else {
+            guard let file = gitOptions["--git-file"] else {
+                throw CLIValidationError("Git source options require '--git-file'.")
+            }
+            guard sourceTitle == nil, sourceURL == nil else {
+                throw CLIValidationError("Use '--git-file' separately from '--source-title' and '--source-url'.")
+            }
+            gitSource = try GitSourceRequest(
+                file: file, root: gitOptions["--git-root"], commit: gitOptions["--git-commit"], lines: gitOptions["--git-lines"]
+            )
+        }
+
         let input = SnippetCreateInput(
             text: initialText,
             title: title,
@@ -499,7 +525,7 @@ public enum CLIParser {
             sourceTitle: sourceTitle,
             sourceURL: sourceURL
         )
-        return (textSource, input)
+        return (textSource, input, gitSource)
     }
 
     private static func parseUpdateOptions(
