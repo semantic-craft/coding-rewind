@@ -15,7 +15,7 @@ import tokenize
 
 sys.dont_write_bytecode = True
 
-SCAN_ROOTS = ("Sources", "Tests", "deploy", "extensions", "dsh-plugin", "scripts")
+SCAN_ROOTS = ("Sources", "Tests", "deploy", "extensions", "dsh-plugin", "scripts", "verification")
 SKIP_DIRS = frozenset({
     ".git",
     ".build",
