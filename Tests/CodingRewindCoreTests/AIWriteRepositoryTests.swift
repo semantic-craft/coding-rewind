@@ -4,7 +4,11 @@
 import Foundation
 import Testing
 
-private final class AIWriteRepoURLProtocol: URLProtocol, @unchecked Sendable {
+private struct AIWriteProtocolBox<T>: @unchecked Sendable {
+    let value: T
+}
+
+private final class AIWriteRepoURLProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var handlers: [String: @Sendable (URLRequest, Data) async -> (Int, Data)] = [:]
 
@@ -38,16 +42,19 @@ private final class AIWriteRepoURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
-        Task {
-            let (status, respData) = await handler(request, bodyData)
+        let req = request
+        let protoBox = AIWriteProtocolBox(value: self)
+        Task.detached {
+            let (status, respData) = await handler(req, bodyData)
+            let proto = protoBox.value
             if status < 0 {
-                client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+                proto.client?.urlProtocol(proto, didFailWithError: URLError(.cannotConnectToHost))
                 return
             }
             let http = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
-            client?.urlProtocol(self, didReceive: http, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: respData)
-            client?.urlProtocolDidFinishLoading(self)
+            proto.client?.urlProtocol(proto, didReceive: http, cacheStoragePolicy: .notAllowed)
+            proto.client?.urlProtocol(proto, didLoad: respData)
+            proto.client?.urlProtocolDidFinishLoading(proto)
         }
     }
 

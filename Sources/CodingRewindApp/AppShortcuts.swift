@@ -107,7 +107,7 @@ public final class AppShortcuts {
     }
 
     public func hint(for action: ShortcutAction) -> String {
-        let value = shortcut(for: action).map(String.init(describing:)) ?? ""
+        let value = shortcut(for: action)?.description ?? ""
         switch state(for: action) {
         case .active: return value
         case .paused: return AppStrings.shortcutPausedHint(value: value, in: language)

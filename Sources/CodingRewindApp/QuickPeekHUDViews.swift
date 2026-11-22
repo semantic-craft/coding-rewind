@@ -219,6 +219,15 @@ public final class QuickPeekHUDPanel: NSPanel {
                 }
                 return
             }
+            if !isEditingTextInput,
+               coordinator.conversationDraft == nil,
+               coordinator.placePicker == nil,
+               event.keyCode == 49,
+               !event.isARepeat,
+               modifiers.isEmpty {
+                coordinator.toggleFocusedCardCheck()
+                return
+            }
         }
         super.sendEvent(event)
     }
@@ -268,8 +277,35 @@ public final class QuickPeekHUDPanel: NSPanel {
         recalculateKeyViewLoop()
         if firstResponder === self,
            let keyView = frosted.nextValidKeyView,
-           !(keyView is NSTextField) {
+           !(keyView is NSTextField),
+           !(keyView is NSText) {
             _ = makeFirstResponder(keyView)
+        }
+        if coordinator.conversationDraft == nil,
+           coordinator.placePicker == nil,
+           isEditingTextInput {
+            resignTextInputIfNeeded()
+        }
+    }
+
+    private func resignAutoFocusedTextInputOnFreshMount() {
+        layoutIfNeeded()
+        if coordinator.conversationDraft == nil,
+           coordinator.placePicker == nil,
+           isEditingTextInput {
+            resignTextInputIfNeeded()
+        }
+        DispatchQueue.main.async { [weak self, weak mountedHosting = hostingView] in
+            guard let self,
+                  let mountedHosting,
+                  self.isVisible,
+                  self.hostingView === mountedHosting,
+                  self.coordinator.conversationDraft == nil,
+                  self.coordinator.placePicker == nil,
+                  self.isEditingTextInput else {
+                return
+            }
+            self.resignTextInputIfNeeded()
         }
     }
 
@@ -345,18 +381,26 @@ public final class QuickPeekHUDPanel: NSPanel {
     }
 
     public func presentNonActivating(anchorFrame: NSRect? = nil) {
+        let wasMounted = hostingView != nil
         if !isVisible {
             position(relativeTo: anchorFrame)
         }
         orderFrontRegardless()
+        if !wasMounted {
+            resignAutoFocusedTextInputOnFreshMount()
+        }
     }
 
     public func presentAndFocus(anchorFrame: NSRect? = nil) {
+        let wasMounted = hostingView != nil
         if !isVisible {
             position(relativeTo: anchorFrame)
         }
         NSApplication.shared.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
+        if !wasMounted {
+            resignAutoFocusedTextInputOnFreshMount()
+        }
     }
 
     public func focusDraftEditorIfPresent() {

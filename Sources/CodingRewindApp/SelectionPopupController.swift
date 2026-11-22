@@ -1665,7 +1665,7 @@ public final class SelectionPopupController {
                 self.anchorReleasePoint = sample.mouseUpPoint
             }
             let hint: String? = if self.shortcuts.state(for: .captureSelection) == .active {
-                self.shortcuts.shortcut(for: .captureSelection).map(String.init(describing:))
+                self.shortcuts.shortcut(for: .captureSelection)?.description
             } else {
                 nil
             }
