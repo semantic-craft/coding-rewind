@@ -194,7 +194,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 }
             )
             coord.onOpenURL = { url in
-                NSWorkspace.shared.open(url)
+                SystemURLOpener.open(url)
             }
             coord.onCopyText = { text in
                 NSPasteboard.general.clearContents()
@@ -207,7 +207,9 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                         NSWorkspace.shared.openApplication(at: appURL, configuration: NSWorkspace.OpenConfiguration())
                     }
                 case .dsh:
-                    DSHAppIntegration.wakeDSH()
+                    if !DSHAppIntegration.wakeDSH() {
+                        NSSound.beep()
+                    }
                 }
             }
             coord.onActivateHostApp = { [weak self] host in
@@ -515,15 +517,17 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .requestAccessibility:
             let trusted = AXSupport.isTrusted(prompt: true)
             if !trusted,
-               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
+               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
+               !SystemURLOpener.open(url) {
+                NSSound.beep()
             }
         case .resetAccessibility:
             _ = Self.resetAccessibilityApproval(bundleIdentifier: Bundle.main.bundleIdentifier)
             let trusted = AXSupport.isTrusted(prompt: true)
             if !trusted,
-               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
+               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"),
+               !SystemURLOpener.open(url) {
+                NSSound.beep()
             }
             settingsWindowController?.refreshPermissions()
             statusItemController?.refreshIcon()

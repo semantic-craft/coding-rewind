@@ -1,0 +1,21 @@
+{
+  "apiPath": "/api/memos",
+  "forbiddenLegacyApiPath": "/api/v1/memos",
+  "contextMarker": "<!-- rewind-context-v1 -->",
+  "noteMarker": "<!-- rewind-note-v1 -->",
+  "placeTag": "#rewind/place",
+  "maxPlaceSlugLength": 28,
+  "maxPlacesPerClip": 3,
+  "memoIdPattern": "^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$",
+  "statusTags": [
+    "#rewind/pending",
+    "#rewind/ready",
+    "#rewind/synthesized"
+  ],
+  "hasContextTag": "#rewind/has-ctx",
+  "placeKinds": [
+    "project",
+    "topic",
+    "person"
+  ]
+}

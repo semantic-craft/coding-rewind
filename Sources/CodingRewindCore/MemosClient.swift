@@ -261,7 +261,6 @@ public struct MemosClient: Sendable {
         }
     }
 
-    /// Probes the list endpoint with one record to confirm the URL, token and response shape.
     public func verifyConnection(baseURL: URL, token: String) async throws {
         let probeURL = try endpointURL(
             baseURL: baseURL,

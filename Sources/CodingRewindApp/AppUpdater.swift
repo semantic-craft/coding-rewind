@@ -71,7 +71,7 @@ public final class AppUpdater {
     private let nowProvider: @Sendable () -> Date
     private let relaunchExecutablePath: String
     private let waitProcessIDProvider: @Sendable () -> pid_t
-    private let onOpenURL: @MainActor (URL) -> Void
+    private let onOpenURL: @MainActor (URL) -> Bool
     private let onTerminate: @MainActor () -> Void
     private var backgroundTask: Task<Void, Never>?
     private var isCheckingOrInstalling = false
@@ -94,7 +94,7 @@ public final class AppUpdater {
         nowProvider: @escaping @Sendable () -> Date = { Date() },
         relaunchExecutablePath: String = "",
         waitProcessIDProvider: @escaping @Sendable () -> pid_t = { getpid() },
-        onOpenURL: @escaping @MainActor (URL) -> Void = { NSWorkspace.shared.open($0) },
+        onOpenURL: @escaping @MainActor (URL) -> Bool = { SystemURLOpener.open($0) },
         onTerminate: @escaping @MainActor () -> Void = { NSApplication.shared.terminate(nil) }
     ) {
         self.paths = paths
@@ -190,8 +190,13 @@ public final class AppUpdater {
         backgroundTask = nil
     }
 
-    public func openReleasePage(_ candidate: GitHubReleaseCandidate) {
-        onOpenURL(candidate.htmlURL)
+    @discardableResult
+    public func openReleasePage(_ candidate: GitHubReleaseCandidate) -> Bool {
+        let opened = onOpenURL(candidate.htmlURL)
+        if !opened {
+            NSSound.beep()
+        }
+        return opened
     }
 
     public func pruneStaleStagingDirectories() {

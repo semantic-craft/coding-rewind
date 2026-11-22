@@ -50,16 +50,17 @@ public enum DSHAppIntegration {
         )
     }
 
-    public static func wakeDSH() {
+    public static func wakeDSH() -> Bool {
         if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: AppBundleID.dsh) {
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
             NSWorkspace.shared.openApplication(at: appURL, configuration: config)
-            return
+            return true
         }
         if let url = URL(string: "dsh://open") {
-            _ = NSWorkspace.shared.open(url)
+            return SystemURLOpener.open(url)
         }
+        return false
     }
 
     @discardableResult
@@ -78,7 +79,7 @@ public enum DSHAppIntegration {
         }
         if let url = URL(string: "dsh://open") {
             orderOutHUD?()
-            return NSWorkspace.shared.open(url)
+            return SystemURLOpener.open(url)
         }
         return false
     }
