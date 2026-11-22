@@ -607,4 +607,72 @@ struct LibraryConcurrencyAndBoundsTests {
         #expect(coord.pendingPlacePatchTasks.isEmpty)
         #expect(coord.remappedSnippetIDs[localID] == serverID)
     }
+
+    @Test("refreshPlaceLibrary and loadPlaceRecords filter deletedClipIDs even when server still returns a locally deleted clip")
+    @MainActor
+    func placeLibraryAndPlaceRecordsFilterDeletedClipIDsWhenServerStillReturnsClip() async throws {
+        let dir = try makeTestDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let suiteID = UUID().uuidString.lowercased()
+        defer { ConcurrencyMockURLProtocol.unregister(suiteID: suiteID) }
+
+        let now = Date()
+        let nowISO = MemosWireFormat.formatISO8601UTC(now)
+        let alphaRef = try #require(PlaceRef(tag: "project/alpha"))
+        let alphaPlace = PlaceRecord(ref: alphaRef, title: "Alpha")
+        let keepContent = "#rewind/ready #source/chatgpt #project/alpha\n\n> **Title:** Keep Clip\n> **Source:** [Chat](https://chatgpt.com/c/keep) · \(nowISO)\n\nKeep body."
+        let deletedContent = "#rewind/ready #source/chatgpt #project/alpha\n\n> **Title:** Deleted Pending Clip\n> **Source:** [Chat](https://chatgpt.com/c/del-pending) · \(nowISO)\n\nDeleted body."
+
+        let store = MockMemoStore(memos: [
+            alphaRef.memoID: MemoWireDTO(
+                name: "memos/\(alphaRef.memoID)",
+                content: MemosWireFormat.formatPlaceMemo(alphaPlace),
+                createTime: nowISO
+            ),
+            "clip-keep": MemoWireDTO(name: "memos/clip-keep", content: keepContent, createTime: nowISO),
+            "clip-deleted": MemoWireDTO(name: "memos/clip-deleted", content: deletedContent, createTime: nowISO)
+        ])
+
+        ConcurrencyMockURLProtocol.register(suiteID: suiteID) { req, _ in
+            let path = req.url?.path ?? ""
+            let method = req.httpMethod ?? "GET"
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.withoutEscapingSlashes]
+            if method == "GET" && path == "/api/memos" {
+                let list = await store.allMemos()
+                return (200, (try? enc.encode(["memos": list])) ?? Data())
+            }
+            if method == "DELETE" && path == "/api/memos/clip-deleted" {
+                throw URLError(.networkConnectionLost)
+            }
+            return (404, Data())
+        }
+
+        let seedCoord = try makeCoordinator(dir: dir, suiteID: suiteID)
+        try seedCoord.outbox.enqueue(
+            OutboxEntry(
+                clientClipId: "clip-deleted",
+                memoContent: deletedContent,
+                commentContent: nil,
+                createdAt: now
+            )
+        )
+        let coord = try makeCoordinator(dir: dir, suiteID: suiteID)
+        #expect(coord.cards.contains(where: { $0.id == "clip-deleted" }))
+
+        await coord.requestDeleteCards(ids: ["clip-deleted"], bypassConfirmation: true)
+        #expect(coord.deletedClipIDs.contains("clip-deleted"))
+        #expect(!coord.cards.contains(where: { $0.id == "clip-deleted" }))
+
+        coord.hudSection = .place(alphaRef)
+        await coord.refreshPlaceLibrary()
+
+        #expect(coord.libraryRecords?.map(\.id) == ["clip-keep"])
+        #expect(coord.placeRecords.map(\.id) == ["clip-keep"])
+        #expect(coord.browseRecords.map(\.id) == ["clip-keep"])
+
+        await coord.loadPlaceRecords(alphaRef)
+        #expect(coord.placeRecords.map(\.id) == ["clip-keep"])
+        #expect(!coord.placeRecords.contains(where: { $0.id == "clip-deleted" }))
+    }
 }

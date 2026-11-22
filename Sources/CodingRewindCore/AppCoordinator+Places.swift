@@ -85,7 +85,7 @@ extension AppCoordinator {
             places = placeResult.places
         }
         if let recordResult {
-            libraryRecords = recordResult.snippets
+            libraryRecords = recordResult.snippets.filter { !deletedClipIDs.contains($0.id) }
         }
         if case .place(let ref) = hudSection {
             await loadPlaceRecords(ref)
@@ -104,7 +104,7 @@ extension AppCoordinator {
               (hudSection == .place(ref) || libraryScope == .place(ref)) else {
             return
         }
-        placeRecords = result.snippets
+        placeRecords = result.snippets.filter { !deletedClipIDs.contains($0.id) }
     }
 
     public var placeTargetID: String? {
