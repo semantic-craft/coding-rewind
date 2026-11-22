@@ -11,6 +11,7 @@ public enum AppCommand: Equatable, Sendable {
     case openLibraryWindow
     case captureSelection
     case captureSelectionHotkey
+    case quickCapture
     case launchConversation
     case copyDraftAndWakeHost
     case sendConversationDraft
@@ -111,6 +112,12 @@ public enum MainMenuBuilder {
         let captureItem = makeCommandMenuItem(title: ShortcutAction.captureSelection.title(in: language), command: .captureSelection, handler: onCommand)
         shortcuts.bindMenuItem(captureItem, to: .captureSelection)
         actionsMenu.addItem(captureItem)
+        actionsMenu.addItem(makeCommandMenuItem(
+            title: QuickCapturePanel.menuTitle(in: language),
+            command: .quickCapture,
+            keyEquivalent: "n",
+            handler: onCommand
+        ))
         actionsMenu.addItem(
             makeCommandMenuItem(
                 title: AppStrings.startChat(in: language),
@@ -449,6 +456,11 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
         menu.addItem(captureItem)
+        menu.addItem(makeCommandMenuItem(
+            title: QuickCapturePanel.menuTitle(in: lang),
+            command: .quickCapture,
+            handler: onCommand
+        ))
 
         if !snapshot.recentCards.isEmpty {
             let recentTitle = AppStrings.recentClips(in: lang)

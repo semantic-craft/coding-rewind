@@ -3289,15 +3289,22 @@ test("testMemosConnection, saveClipWithOutbox, and background context menu local
   await import("./background.js?live-i18n-menu");
   installedListener();
   await new Promise((r) => setImmediate(r));
-  assert.equal(createdMenus.at(-1)?.title, "Save selection to Coding Rewind");
+  assert.deepEqual(createdMenus.map(({ contexts, title }) => [contexts, title]), [
+    [["selection"], "Save selection to Coding Rewind"],
+    [["page"], "Save page link to Coding Rewind"]
+  ]);
 
   currentLang = "zh-CN";
   storageChangedListener({ uiLanguage: { oldValue: "auto", newValue: "zh-CN" } }, "local");
-  assert.equal(updatedMenus.at(-1)?.patch.title, "保存所选文本到 Coding Rewind");
+  assert.deepEqual(updatedMenus.slice(-2).map(({ patch }) => patch.title), [
+    "保存所选文本到 Coding Rewind", "保存此网页链接到 Coding Rewind"
+  ]);
 
   currentLang = "en";
   storageChangedListener({ uiLanguage: { oldValue: "zh-CN", newValue: "en" } }, "local");
-  assert.equal(updatedMenus.at(-1)?.patch.title, "Save selection to Coding Rewind");
+  assert.deepEqual(updatedMenus.slice(-2).map(({ patch }) => patch.title), [
+    "Save selection to Coding Rewind", "Save page link to Coding Rewind"
+  ]);
 });
 
 function createOptionsPageTestHarness({ persistedInit = {}, uiLanguage = "zh-CN", fetchImpl, tabsCreate, openImpl } = {}) {
@@ -4515,6 +4522,50 @@ test("security: content.js enforces closed Shadow DOM, event.isTrusted, pill TOC
   const textareaExtract = await harness.sendRuntimeMessage({ type: "REWIND_EXTRACT_SELECTION" });
   assert.equal(textareaExtract?.clip, null);
   assert.notEqual(textareaExtract?.blocked, true, "collapsed textarea selection must not set blocked=true so context-menu fallback still works");
+});
+
+test("page-link context menu queues a private bookmark from the tab without reading its contents", async (t) => {
+  const { chrome, self } = globalThis;
+  t.after(() => Object.assign(globalThis, { chrome, self }));
+  const ignoredEvent = { addListener() {} };
+  let click;
+  let resolveToast;
+  const toast = new Promise((resolve) => { resolveToast = resolve; });
+  const savedOutboxes = [];
+  const messages = [];
+  globalThis.chrome = {
+    runtime: { onInstalled: ignoredEvent, onStartup: ignoredEvent, onMessage: ignoredEvent },
+    commands: { onCommand: ignoredEvent },
+    contextMenus: { onClicked: { addListener(listener) { click = listener; } } },
+    tabs: {
+      async sendMessage(tabId, message) {
+        messages.push({ tabId, type: message.type });
+        if (message.type === "REWIND_SHOW_TOAST") resolveToast(message);
+      }
+    },
+    storage: {
+      local: {
+        async get() { return { outbox: [] }; },
+        async set({ outbox }) { savedOutboxes.push(outbox); }
+      }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+  await import("./background.js?page-link-menu");
+
+  const info = { menuItemId: "save-page-link-to-coding-rewind" };
+  click({ ...info, pageUrl: "file:///private/local.md" }, { id: 9 });
+  click({ ...info, pageUrl: "https://user:password@example.com/private" }, { id: 9 });
+  const pageUrl = "https://example.com/notes#retry";
+  click({ ...info, pageUrl }, { id: 12, url: pageUrl, title: "Retry notes" });
+  assert.equal((await toast).status, "unconfigured");
+  assert.deepEqual(messages, [{ tabId: 12, type: "REWIND_SHOW_TOAST" }]);
+  assert.equal(savedOutboxes.length, 1);
+  const [bookmark] = savedOutboxes[0];
+  assert.equal(bookmark.memoBody.visibility, "PRIVATE");
+  assert.match(bookmark.memoBody.content, /\[Retry notes\]\(https:\/\/example\.com\/notes#retry\)/);
+  assert.ok(bookmark.memoBody.content.endsWith("\n\nhttps://example.com/notes#retry"));
+  assert.ok(!bookmark.memoBody.content.includes("#rewind/has-ctx"));
 });
 
 test("security: background context menu blocks fallbackSelectionText when content script reports blocked password input, and wire payloads reject remote file:// hosts", async () => {

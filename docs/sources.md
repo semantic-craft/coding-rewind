@@ -131,3 +131,9 @@
 | `raycast/extensions` | [raycast/extensions](https://github.com/raycast/extensions)，`MIT License` | 单行模糊搜索列表加动作面板，对照浮窗 `⌘P` 落位选择器 |
 | `logseq/logseq`、`siyuan-note/siyuan`、`TriliumNext/Trilium` | `AGPL-3.0` | 仅对照块引用、页面属性与大纲交互概念，严禁复制代码 |
 | `anyproto/anytype-ts`、`toeverything/AFFiNE` | GitHub 许可识别为 `NOASSERTION` | 仅对照 Type / Relation 对象模型概念，严禁复制代码 |
+
+## Refto 本机安装包对照（2026-11-23）
+
+- 本机 `/Applications/Refto.app`（`0.1.0-beta.10`，arm64）与 `/Applications/CodingRewind.app`（`0.7.0 (10)`）。REA 检查主包和内嵌 Safari Web Extension 的 plist，以及 Refto 主程序的 Mach-O。Refto 版本与入口声明见 `ev_8d8fc7ff06a2b815b84431d105df42e54a4b1ed78c3c564e6aa9f90ef7a17b12`，Safari 扩展声明见 `ev_2b83a739be990a2ea5a25d4d1d37c00b3856d4a813c9803ca2c7542e6a529b2b`，已安装 Coding Rewind 版本见 `ev_f4d2344c255311567ace7307533154ddb405a51d18bcf74748bf7e31fd745f70`。
+- 运行中的 Refto 菜单确认了新建笔记、粘贴、导入文件、语音备忘和相似查找入口。扩展清单、后台脚本和二进制资源还显示书签、网页快照、截图及文件衍生文字的设计。后几项为静态证据，本次没有执行保存、索引、转写和离线回放，也未读取 Refto 的用户资料库。
+- Refto 的源代码许可未核实，本轮仅参照用户可观察的能力和随包声明。Coding Rewind 的实现沿用项目的 AppKit、Memos 与浏览器扩展存储路径。后续落点见 [通用灵感采集](architecture.md#通用灵感采集)。

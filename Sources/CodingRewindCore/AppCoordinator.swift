@@ -699,6 +699,32 @@ public final class AppCoordinator {
         }
     }
 
+    public func captureQuickClip(_ text: String) async -> SelectionCaptureOutcome {
+        guard !isCapturingSelection else { return .ignoredBusy }
+        isCapturingSelection = true
+        defer {
+            localCardsRevision += 1
+            isCapturingSelection = false
+        }
+
+        let candidate = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let link = URLComponents(string: candidate).flatMap { components -> URL? in
+            guard candidate.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+                  let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+                  let host = components.host, !host.isEmpty,
+                  components.user == nil, components.password == nil else { return nil }
+            return components.url
+        }
+        return await ingestClip(
+            verbatimText: text,
+            platform: link == nil ? "macos" : "web",
+            sourceTitle: link?.host ?? "Coding Rewind",
+            sourceURL: link?.absoluteString,
+            context: nil,
+            capturedAt: Date()
+        )
+    }
+
     public func captureExternalDSHRequest(_ request: DSHCaptureBridgeRequest) async -> DSHCaptureBridgeReceipt {
         let nowMs: () -> Int64 = { Int64((Date().timeIntervalSince1970 * 1000.0).rounded()) }
         let cleanedText = request.text.replacingOccurrences(of: "\0", with: "")

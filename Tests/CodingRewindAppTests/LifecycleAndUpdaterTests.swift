@@ -1159,6 +1159,7 @@ extension AppShortcutsTests {
             "显示片段浮窗",
             "打开资料库",
             "保存所选文本",
+            "快速暂存…",
             "最近片段",
             "立即同步",
             "查看全部历史（Memos）↗",
@@ -1197,6 +1198,7 @@ extension AppShortcutsTests {
             "显示片段浮窗",
             "打开资料库",
             "保存所选文本",
+            "快速暂存…",
             "设置…",
             "退出 Coding Rewind"
         ])
@@ -1338,6 +1340,7 @@ extension AppShortcutsTests {
         #expect(actionsTitles == [
             "显示或隐藏片段浮窗",
             "保存所选文本",
+            "快速暂存…",
             "开始对话",
             "立即同步",
             "查看全部历史（Memos）"
@@ -1379,6 +1382,7 @@ extension AppShortcutsTests {
         #expect(enActionsTitles == [
             "Show or Hide Clips HUD",
             "Save Selection",
+            "Quick Capture…",
             "Start Chat",
             "Sync Now",
             "View All History (Memos)"

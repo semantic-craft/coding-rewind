@@ -5,7 +5,13 @@ import "./i18n.js";
 import { buildFallbackClip } from "./extractors.mjs";
 import { flushOutbox, saveClipWithOutbox } from "./memos_payload.mjs";
 
-const CONTEXT_MENU_ID = "save-to-coding-rewind";
+const SELECTION_MENU_ID = "save-to-coding-rewind";
+const PAGE_LINK_MENU_ID = "save-page-link-to-coding-rewind";
+const CONTEXT_MENUS = [
+  { id: SELECTION_MENU_ID, label: "contextMenuSaveSelection", contexts: ["selection"] },
+  { id: PAGE_LINK_MENU_ID, label: "contextMenuSavePageLink", contexts: ["page"],
+    documentUrlPatterns: ["http://*/*", "https://*/*"] }
+];
 const OUTBOX_ALARM_NAME = "rewind-outbox-flush";
 const i18n = globalThis.CodingRewindI18n;
 
@@ -76,16 +82,11 @@ function setupMenusAndAlarms() {
       chrome.contextMenus.removeAll(() => {
         void chrome.runtime?.lastError;
         const locale = resolveExtensionLocale(cachedUiLanguage);
-        chrome.contextMenus?.create?.(
-          {
-            id: CONTEXT_MENU_ID,
-            title: i18n.t(locale, "contextMenuSaveSelection"),
-            contexts: ["selection"]
-          },
-          () => {
+        for (const { label, ...menu } of CONTEXT_MENUS) {
+          chrome.contextMenus?.create?.({ ...menu, title: i18n.t(locale, label) }, () => {
             void chrome.runtime?.lastError;
-          }
-        );
+          });
+        }
         resolve();
       });
     });
@@ -214,6 +215,24 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
   await notifyTabToast(tab.id, result);
 }
 
+async function handlePageLinkCapture(pageUrl, tab) {
+  if (!tab?.id || !pageUrl) return;
+  let url;
+  try {
+    url = new URL(pageUrl);
+  } catch {
+    return;
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return;
+  const clip = buildFallbackClip({
+    selectedMarkdown: pageUrl,
+    sourceUrl: pageUrl,
+    title: (tab.url === pageUrl && tab.title) || url.hostname
+  });
+  const result = await processClipSave(clip);
+  await notifyTabToast(tab.id, result);
+}
+
 if (typeof chrome !== "undefined" && chrome.runtime) {
   chrome.runtime.onInstalled.addListener(() => {
     void setupMenusAndAlarms();
@@ -232,13 +251,11 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
         typeof changes.uiLanguage.newValue === "string" ? changes.uiLanguage.newValue : "auto";
       const applyMenuTitleUpdate = () => {
         const locale = resolveExtensionLocale(cachedUiLanguage);
-        chrome.contextMenus?.update?.(
-          CONTEXT_MENU_ID,
-          { title: i18n.t(locale, "contextMenuSaveSelection") },
-          () => {
+        for (const { id, label } of CONTEXT_MENUS) {
+          chrome.contextMenus?.update?.(id, { title: i18n.t(locale, label) }, () => {
             void chrome.runtime?.lastError;
-          }
-        );
+          });
+        }
       };
       if (menuSetupInFlight > 0) {
         void enqueueMenuSetup(async () => {
@@ -251,8 +268,10 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
   });
 
   chrome.contextMenus.onClicked.addListener((info, tab) => {
-    if (info.menuItemId === CONTEXT_MENU_ID) {
+    if (info.menuItemId === SELECTION_MENU_ID) {
       void handleTabSelectionCapture(tab, info.selectionText || "");
+    } else if (info.menuItemId === PAGE_LINK_MENU_ID) {
+      void handlePageLinkCapture(info.pageUrl, tab);
     }
   });
 

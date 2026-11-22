@@ -27,6 +27,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
     public var dshCaptureWatcher: DSHCaptureBridgeWatcher?
     public private(set) var lastExternalApplication: NSRunningApplication?
 
+    private var quickCapturePanel: QuickCapturePanel?
     private var workspaceObserver: NSObjectProtocol?
     private var isInstallingDSHPlugin = false
 
@@ -364,6 +365,7 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                     )
                 }
                 self.selectionPopupController?.language = lang
+                self.quickCapturePanel?.updateLanguage(lang)
                 self.settingsWindowController?.updateLanguage(lang)
                 self.libraryWindowController?.updateLanguage(lang)
             }
@@ -423,6 +425,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
             triggerCapture(preferInPlacePopup: true)
         case .captureSelection:
             triggerCapture(preferInPlacePopup: false)
+        case .quickCapture:
+            presentQuickCapture()
         case .launchConversation:
             guard let coord = coordinator, !coord.isLaunchingConversation else { return }
             let isLibraryVisible = libraryWindowController?.window?.isVisible == true
@@ -549,6 +553,26 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         case .quit:
             NSApplication.shared.terminate(nil)
         }
+    }
+
+    private func presentQuickCapture() {
+        guard let coordinator else { return }
+        selectionPopupController?.hideImmediately()
+        if quickCapturePanel == nil {
+            quickCapturePanel = QuickCapturePanel(language: coordinator.language) { [weak self] text in
+                guard let self, let coordinator = self.coordinator else { return .ignoredBusy }
+                let outcome = await coordinator.captureQuickClip(text)
+                self.statusItemController?.refreshIcon()
+                switch outcome {
+                case .saved, .queuedOffline:
+                    self.presentHUDNonActivating()
+                case .ignoredBusy, .failed:
+                    break
+                }
+                return outcome
+            }
+        }
+        quickCapturePanel?.present()
     }
 
     private func triggerCapture(preferInPlacePopup: Bool) {

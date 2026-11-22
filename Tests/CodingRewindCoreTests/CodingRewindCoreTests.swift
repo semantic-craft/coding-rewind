@@ -413,6 +413,40 @@ struct CodingRewindCoreTests {
         return dir
     }
 
+    @Test("Quick capture preserves pasted bytes and reopens a standalone web link after restart")
+    @MainActor
+    func quickCaptureOffline() async throws {
+        let dir = try makeIsolatedDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let paths = try StoragePaths(dataDirectoryURL: dir.appendingPathComponent("Data"), antigravityConfigDirectoryURL: dir.appendingPathComponent("Config"))
+        let environment = [StoragePaths.qaEnvironmentKey: "1"]
+        let capturer = StubCapturer(selection: CapturedSelection(text: "Unexpected selection", bundleIdentifier: "fixture", appName: "Fixture"))
+        let coordinator = try AppCoordinator(paths: paths, environment: environment, capturer: capturer)
+        let code = "    let value = \"原文\"  \n\n        print(value)\n"
+        let link = "https://example.org/documentation#retry"
+        #expect(await coordinator.captureQuickClip("  \n") == .failed(.emptySelection))
+        guard case .queuedOffline(let codeID) = await coordinator.captureQuickClip(code),
+              case .queuedOffline(let linkID) = await coordinator.captureQuickClip(link) else {
+            Issue.record("Expected text and URL in the offline queue")
+            return
+        }
+        let reopened = try AppCoordinator(paths: paths, environment: environment, capturer: capturer)
+        let persisted = reopened.outbox.loadEntries()
+        #expect(persisted.count == 2)
+        let codeEntry = try #require(persisted.first { $0.clientClipId == codeID })
+        #expect(codeEntry.memoContent.hasPrefix("#rewind/pending #source/macos\n"))
+        #expect(codeEntry.memoContent.hasSuffix("\n\n" + code))
+        #expect(codeEntry.commentContent == nil)
+        let linkEntry = try #require(persisted.first { $0.clientClipId == linkID })
+        let card = try #require(MemosWireFormat.parseMemo(
+            id: linkID, rawContent: linkEntry.memoContent, createdAt: linkEntry.createdAt, now: Date(), isOfflinePending: true
+        ))
+        #expect(card.sourceTitle == "example.org")
+        #expect(card.sourceURL == link)
+        #expect(linkEntry.memoContent.hasSuffix("\n\n" + link))
+        #expect(linkEntry.commentContent == nil)
+    }
+
     @Test("Overlapping capture requests create one offline clip")
     @MainActor
     func captureReentrancy() async throws {
@@ -425,6 +459,7 @@ struct CodingRewindCoreTests {
         await capturer.waitUntilStarted()
         let busyOutcome = await coordinator.captureSelection()
         #expect(busyOutcome == .ignoredBusy)
+        #expect(await coordinator.captureQuickClip("Concurrent manual draft") == .ignoredBusy)
         await capturer.finish()
         let firstOutcome = await first.value
         if case .queuedOffline = firstOutcome {} else { Issue.record("Expected .queuedOffline, got \(firstOutcome)") }

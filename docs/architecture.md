@@ -104,6 +104,19 @@ Antigravity 成功只认结构化回执中的会话编号。DSH 成功只认 DSH
 3. **选区下方暂存胶囊与上下文（`dsh-captures/` 与 `dsh-active-session.json`）**：Client 在 `[data-text-interaction-source]` 聊天正文选区下方 8px 渲染闭合 Shadow DOM「暂存」胶囊（避让 DSH 顶部原生引用栏），提取保真 Markdown 并由 Host 经 `ctx.sessionQuery` 补齐活跃会话消息轮次写入私有 `dsh-captures/requests/`；`CodingRewindApp` 经 `DSHCaptureBridgeWatcher` 消费入库（`#source/dsh`、`dsh-session://<sessionId>`）并写回 `saved` / `queued_offline` / `failed` 回执。全局热键 `⌃⌥⇧⌘S` 同时借助 `DSHCaptureContext.swift` 读取 `dsh-active-session.json` 经 `ConversationContextSlicer` 唯一匹配补齐上下文。
 4. **原会话直达回跳（`dsh-actions/`）**：`SourceLocator.dshSession(sessionID:)` 绝不投递未注册协议给 LaunchServices，而是经 `DSHActionStore` 请求 DSH 插件执行 `ctx.uiWorkspace.openSession(sessionId)` 并激活窗口，未就绪或会话不存在时自动回退复制会话 ID 并提示。
 
+## 通用灵感采集
+
+菜单栏与「操作 → 快速暂存」打开一个纯文本输入窗口。用户输入或粘贴后显式保存。桌面端把纯文本直接交给与选区采集共用的 `AppCoordinator.ingestClip`，因此本机保存、断网重放、资料库与接聊沿同一条链路。只有整段原文可解析为带主机的单条 HTTP(S) URL 时才生成网页出处，正文保留输入内容。普通代码、日志及笔记以 `#source/macos` 入库，无会话评论。
+
+Chrome 扩展在网页空白处的右键菜单提供「保存此网页链接到 Coding Rewind」。后台使用点击事件中的 URL，标签仍停留在该 URL 时才读取标签标题。网页链接进入既有后台发送及离线队列。该动作只保存 URL 与标题，适用于 GitHub 议题、文档、演示和无可选文本的页面。普通网页选区仍由原来的 Markdown 与 Page Lead 链路处理。两条新增入口均为用户触发，入口无需新增系统权限或 Memos 字段。
+
+以后扩展来源时，按以下顺序验证契约：
+
+1. **编辑器和终端**。通过 IDE 或 Git 提供可验证的仓库、提交、相对路径和行号。终端命令及日志从用户选区、显式粘贴或 CLI 标准输入采集。来源未知时省略回跳，不读取整个工作区或 Shell 历史来补猜。
+2. **网页正文留底**。用显式整页操作提取阅读正文，再将 URL 和标题关联到同一片段。私有会话仍走现有选区和会话归属校验。先验收 GitHub 议题、文档和带代码块的文章。
+3. **图片、截图与文件**。先在固定版本 Memos 上确定私有附件上传、关联、跨设备读回和删除契约，覆盖离线、重启、重复提交及附件上传后主记录失败。原文件与 OCR、PDF 文本等衍生内容分别存储，派生文字带来源范围供搜索与接聊。系统截图或 Finder 选件可作为显式入口，应用内自动截图需要单独评估。
+4. **语音与屏幕录制**。先确定用户有需要保留的录音或复现过程，再复用附件契约。转写关联时间段，截图和录制须保留用户明确选择的对象。
+
 ## Memos REST 共享线级契约
 
 桌面端、浏览器扩展、云端增强器与单二进制 Agent 接口严格共用同一套 REST 契约：
