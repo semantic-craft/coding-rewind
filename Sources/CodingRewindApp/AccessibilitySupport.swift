@@ -11,11 +11,16 @@ public enum AppBundleID {
     public static let dsh = CapturedSelection.dshBundleIdentifier
     public static let gemini = "com.google.GeminiMacOS"
     public static let chatGPTDesktop = "com.openai.codex"
+    public static let chatGPTStandalone = "com.openai.chat"
     public static let safari = "com.apple.Safari"
     public static let chrome = "com.google.Chrome"
     public static let arc = "company.thebrowser.Browser"
     public static let brave = "com.brave.Browser"
     public static let supportedBrowserPrefixes = [safari, chrome, arc, brave]
+
+    public static func isChatGPTDesktop(_ bundleIdentifier: String?) -> Bool {
+        bundleIdentifier == chatGPTDesktop || bundleIdentifier == chatGPTStandalone
+    }
 
     public static func isSelf(
         _ bundleIdentifier: String?,

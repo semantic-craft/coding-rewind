@@ -95,21 +95,21 @@ public struct AntigravityCaptureContext: Sendable {
         )
     }
 
-    private static func readMessages(from transcript: URL) throws -> [ConversationContextSlicer.Message] {
+    package static func readMessages(from transcript: URL) throws -> [ConversationContextSlicer.Message] {
         let handle = try FileHandle(forReadingFrom: transcript)
         defer { try? handle.close() }
         let size = Int(try handle.seekToEnd())
         guard size > 0 else { return [] }
         try handle.seek(toOffset: 0)
-        guard let bytes = try handle.read(upToCount: size), bytes.count == size,
-              let lastLineEnd = bytes.lastIndex(of: 0x0a) else {
+        guard let bytes = try handle.read(upToCount: size), !bytes.isEmpty else {
             return []
         }
-        return try bytes[..<lastLineEnd].split(separator: 0x0a).compactMap { line in
-            guard let record = try JSONSerialization.jsonObject(with: Data(line)) as? [String: Any] else {
-                throw CocoaError(.fileReadCorruptFile)
+        return bytes.split(separator: 0x0a).compactMap { line in
+            guard !line.isEmpty,
+                  let record = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any] else {
+                return nil
             }
-            return try parseMessage(record: record)
+            return try? parseMessage(record: record)
         }
     }
 }

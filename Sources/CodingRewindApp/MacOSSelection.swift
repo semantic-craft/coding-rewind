@@ -32,7 +32,7 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         let appElement = AXUIElementCreateApplication(targetPID)
         if bundleID == AppBundleID.antigravity {
             _ = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
-        } else if bundleID == AppBundleID.chatGPTDesktop {
+        } else if AppBundleID.isChatGPTDesktop(bundleID) {
             _ = AXSupport.value(appElement, "AXEnhancedUserInterface")
             for _ in 0..<3 {
                 if let window = AXSupport.focusedWindow(appElement),
@@ -117,9 +117,14 @@ public struct MacOSAccessibilitySelectionCapturer: SelectionCapturing {
         }
         var backlink: URL?
         if let nativeObservation {
-            backlink = await NativeChatBacklink.capture(
-                host: nativeObservation.host, application: appElement, window: nativeObservation.window
-            )
+            switch nativeObservation.host {
+            case .chatGPT:
+                backlink = documentURL.flatMap { NativeChatBacklink.conversationURL($0, host: .chatGPT) }
+            case .gemini:
+                backlink = await NativeChatBacklink.capture(
+                    host: nativeObservation.host, application: appElement, window: nativeObservation.window
+                )
+            }
         }
         let nativeChat = nativeObservation?.result(app: appElement, selectedText: finalSelection, backlink: backlink)
         let boldRanges = nativeChat?.host == .gemini

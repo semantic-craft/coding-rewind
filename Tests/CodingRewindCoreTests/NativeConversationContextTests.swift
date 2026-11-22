@@ -148,4 +148,62 @@ struct NativeConversationContextTests {
         #expect(assistantPreferred.prompt == "Explain ECONNRESET handling")
         #expect(assistantPreferred.recentTurns.count == 2)
     }
+
+    @Test("ConversationContextSlicer matches Markdown-stripped unique anchors and rejects duplicates or plain-spacing mismatches")
+    func markdownStrippedUniqueAnchor() throws {
+        let messages: [ConversationContextSlicer.Message] = [
+            .init(role: .user, matchText: "How do I read the docs?"),
+            .init(role: .assistant, matchText: "Use **swift** with `Package.swift` and see [Swift Docs](https://swift.org/docs)."),
+            .init(role: .user, matchText: "Any repeated note?"),
+            .init(role: .assistant, matchText: "> Repeated **anchor** snippet"),
+            .init(role: .assistant, matchText: "- Repeated `anchor` snippet"),
+            .init(role: .assistant, matchText: "One  two")
+        ]
+
+        let unique = try #require(ConversationContextSlicer.slice(
+            selectedText: "Use swift with Package.swift and see Swift Docs.",
+            messages: messages,
+            anchor: .uniqueSubstring,
+            sessionTitle: "Markdown Anchor"
+        ))
+        #expect(unique.prompt == "How do I read the docs?")
+        #expect(unique.recentTurns.last?.text == "Use **swift** with `Package.swift` and see [Swift Docs](https://swift.org/docs).")
+
+        #expect(ConversationContextSlicer.slice(
+            selectedText: "Repeated anchor snippet",
+            messages: messages,
+            anchor: .uniqueSubstring,
+            sessionTitle: "Duplicate Markdown Anchor"
+        ) == nil)
+
+        #expect(ConversationContextSlicer.stripMarkdownSyntax("One  two") == "One  two")
+        #expect(ConversationContextSlicer.slice(
+            selectedText: "One two",
+            messages: messages,
+            anchor: .uniqueSubstring,
+            sessionTitle: "Spacing Preserved"
+        ) == nil)
+    }
+
+    @Test("AntigravityCaptureContext.readMessages skips malformed JSONL lines and retains valid turns without trailing newline")
+    func antigravityReadMessagesFaultTolerant() throws {
+        let dir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent(".build/native-context-tests/\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let transcript = dir.appendingPathComponent("transcript.jsonl")
+        let payload = [
+            #"{"type":"USER_INPUT","content":"Opening question"}"#,
+            #"{"type":"PLANNER_RESPONSE","content":"broken"#,
+            #"{"type":"PLANNER_RESPONSE","content":"Valid answer without trailing newline"}"#
+        ].joined(separator: "\n")
+        try Data(payload.utf8).write(to: transcript)
+
+        let parsed = try AntigravityCaptureContext.readMessages(from: transcript)
+        #expect(parsed == [
+            .init(role: .user, matchText: "Opening question"),
+            .init(role: .assistant, matchText: "Valid answer without trailing newline")
+        ])
+    }
 }

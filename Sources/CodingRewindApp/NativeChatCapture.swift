@@ -79,11 +79,13 @@ enum NativeChatAXCapture {
     }
 
     static func host(bundleIdentifier: String) -> NativeChatHost? {
-        switch bundleIdentifier {
-        case AppBundleID.chatGPTDesktop: .chatGPT
-        case AppBundleID.gemini: .gemini
-        default: nil
+        if AppBundleID.isChatGPTDesktop(bundleIdentifier) {
+            return .chatGPT
         }
+        if bundleIdentifier == AppBundleID.gemini {
+            return .gemini
+        }
+        return nil
     }
 
     static func title(host: NativeChatHost, windowTitle: String?) -> String {
@@ -104,7 +106,8 @@ enum NativeChatAXCapture {
     private static func chatGPTMessages(window: AXUIElement) -> [ObservedEntry]? {
         guard let area = descendants(window).first(where: isChatGPTShell),
               let conversation = AXSupport.children(area).flatMap({ descendants($0, excludingWebAreas: true) }).first(where: {
-                  AXSupport.subrole($0) == "AXLandmarkRegion" && AXSupport.title($0) == "Conversation"
+                  AXSupport.subrole($0) == "AXLandmarkRegion"
+                      && (AXSupport.title($0) == "Conversation" || AXSupport.title($0) == "对话")
               }) else { return nil }
         let groups = descendants(conversation, excludingWebAreas: true).filter { AXSupport.children($0).contains { messageRole($0) != nil } }
         var result: [ObservedEntry] = []
@@ -181,7 +184,7 @@ enum NativeChatAXCapture {
         while let current = node {
             if isCodeEditor(current) { editor = current }
             if AXSupport.subrole(current) == "AXLandmarkRegion",
-               AXSupport.title(current) == "Conversation" { inConversation = true }
+               AXSupport.title(current) == "Conversation" || AXSupport.title(current) == "对话" { inConversation = true }
             if isChatGPTShell(current) { return inConversation ? editor : nil }
             node = AXSupport.parent(current)
         }
@@ -220,15 +223,22 @@ enum NativeChatAXCapture {
         return AXSupport.parameterizedValue(area, "AXStringForTextMarkerRange", range) as? String
     }
 
+    static func chatGPTMessageRole(label: String?) -> NativeConversationSnapshot.Message.Role? {
+        switch label {
+        case "You said:", "你说：", "你说:":
+            return .user
+        case "ChatGPT said:", "ChatGPT 说：", "ChatGPT 说:":
+            return .assistant
+        default:
+            return nil
+        }
+    }
+
     private static func messageRole(_ node: AXUIElement) -> NativeConversationSnapshot.Message.Role? {
         guard AXSupport.role(node) == "AXHeading" else { return nil }
         let label = [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute]
             .compactMap { AXSupport.string(node, $0) }.first { !$0.isEmpty }
-        switch label {
-        case "You said:": return .user
-        case "ChatGPT said:": return .assistant
-        default: return nil
-        }
+        return chatGPTMessageRole(label: label)
     }
 
     private static func geminiMessages(window: AXUIElement) -> [ObservedEntry]? {

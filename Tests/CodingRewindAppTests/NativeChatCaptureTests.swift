@@ -106,12 +106,23 @@ struct NativeChatCaptureTests {
     @Test("Installed native chat apps retain their source and conversation titles")
     @MainActor
     func nativeSourceMetadata() {
+        #expect(AppBundleID.isChatGPTDesktop("com.openai.codex"))
+        #expect(AppBundleID.isChatGPTDesktop("com.openai.chat"))
+        #expect(!AppBundleID.isChatGPTDesktop("com.google.Chrome"))
         #expect(NativeChatAXCapture.host(bundleIdentifier: "com.openai.codex") == .chatGPT)
+        #expect(NativeChatAXCapture.host(bundleIdentifier: "com.openai.chat") == .chatGPT)
         #expect(NativeChatAXCapture.host(bundleIdentifier: "com.google.GeminiMacOS") == .gemini)
         #expect(NativeChatAXCapture.host(bundleIdentifier: "com.google.Chrome") == nil)
         #expect(NativeChatAXCapture.title(host: .chatGPT, windowTitle: "  Current Chat  ") == "Current Chat")
         #expect(NativeChatAXCapture.title(host: .gemini, windowTitle: "Gemini - Current Chat") == "Current Chat")
         #expect(NativeChatAXCapture.title(host: .gemini, windowTitle: nil) == "Gemini")
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "You said:") == .user)
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "你说：") == .user)
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "你说:") == .user)
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "ChatGPT said:") == .assistant)
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "ChatGPT 说：") == .assistant)
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "ChatGPT 说:") == .assistant)
+        #expect(NativeChatAXCapture.chatGPTMessageRole(label: "Other") == nil)
     }
 
     @Test("NativeSelectionMarkdown disables XML external entity loading (XXE)")

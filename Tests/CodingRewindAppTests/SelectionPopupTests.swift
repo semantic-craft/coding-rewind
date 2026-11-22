@@ -11,6 +11,7 @@ struct SelectionPopupTests {
     @Test func allowlistMatchesAntigravityChatGPTAppAndGeminiApp() {
         #expect(SelectionPopupHost(bundleIdentifier: "com.google.antigravity") == .antigravity)
         #expect(SelectionPopupHost(bundleIdentifier: "com.openai.codex") == .chatGPTApp)
+        #expect(SelectionPopupHost(bundleIdentifier: "com.openai.chat") == .chatGPTApp)
         #expect(SelectionPopupHost(bundleIdentifier: "com.google.GeminiMacOS") == .geminiApp)
         #expect(SelectionPopupHost.antigravity.preferredVerticalPlacement == .above)
         #expect(SelectionPopupHost.geminiApp.preferredVerticalPlacement == .above)
@@ -25,8 +26,7 @@ struct SelectionPopupTests {
             "com.brave.Browser",
             "org.mozilla.firefox",
             "dev.codingrewind.app",
-            "com.apple.dt.Xcode",
-            "com.openai.chat"
+            "com.apple.dt.Xcode"
         ]
         for bundleID in rejected {
             #expect(SelectionPopupHost(bundleIdentifier: bundleID) == nil)
@@ -36,11 +36,13 @@ struct SelectionPopupTests {
     @Test func chatGPTWebAreaClassificationAcceptsOnlyIndexShell() {
         #expect(ChatGPTWebAreaClassification.classify(rawURLString: "app://-/index.html") == .shell)
         #expect(ChatGPTWebAreaClassification.classify(rawURLString: "app://-/index.html#thread-42") == .shell)
-        #expect(ChatGPTWebAreaClassification.classify(rawURLString: "app://-/index.html?view=codex") == .shell)
+        #expect(ChatGPTWebAreaClassification.classify(rawURLString: "app://-/index.html?model=gpt-5") == .shell)
 
         let disallowed: [String?] = [
             nil,
             "",
+            "app://-/index.html?view=codex",
+            "app://-/index.html?foo=1&view=codex#bar",
             "https://chatgpt.com/c/1234",
             "https://openai.com/policies",
             "about:blank",
@@ -59,6 +61,14 @@ struct SelectionPopupTests {
                 role: kAXGroupRole,
                 subrole: "AXLandmarkRegion",
                 title: "Conversation",
+                domClasses: []
+            )
+        )
+        #expect(
+            ChatGPTSurfaceClassification.isSelectableContainer(
+                role: kAXGroupRole,
+                subrole: "AXLandmarkRegion",
+                title: "对话",
                 domClasses: []
             )
         )

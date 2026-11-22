@@ -118,9 +118,11 @@ enum NativeChatBacklink {
         case .gemini:
             guard parts.host == "gemini.google.com", components.count == 2, components[0] == "app", !components[1].isEmpty else { return nil }
         case .chatGPT:
-            guard parts.host == "chatgpt.com", components.count >= 2,
-                  let index = components.firstIndex(of: "c"), index + 1 == components.count - 1,
-                  UUID(uuidString: String(components[index + 1])) != nil else { return nil }
+            guard parts.host == "chatgpt.com",
+                  ((components.count == 2 && components[0] == "c")
+                   || (components.count == 4 && components[0] == "g" && !components[1].isEmpty && components[2] == "c")),
+                  let lastComponent = components.last,
+                  UUID(uuidString: String(lastComponent)) != nil else { return nil }
         }
         return url
     }
