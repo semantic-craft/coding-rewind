@@ -72,10 +72,18 @@ jobs:
           rm -f "${RUNNER_TEMP}/memos-e2e.env"
 
   macos-swift-and-check:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Select Swift 6.2+ toolchain
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -n 1 || true)
+          if [[ -n "${LATEST_XCODE}" ]]; then
+            sudo xcode-select -s "${LATEST_XCODE}/Contents/Developer"
+          fi
+          swift --version
 
       - name: Run ./scripts/check
         run: ./scripts/check
