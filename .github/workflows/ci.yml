@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-formal-lint-and-real-memos-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run structural invariant lints
+        run: |
+          python3 -B scripts/lint_invariants.py
+          python3 -B -m unittest discover -s scripts -p 'test_lint_*.py' -v
+
+      - name: Run formal state-machine verification
+        run: python3 -B verification/formal/run_all.py --verify-bug-replays
+
+      - name: Run VPS AI Enricher unit tests
+        run: python3 -B -m unittest discover -s deploy/vps/enricher -p 'test_*.py' -v
+
+      - name: Run Web Clipper unit tests
+        run: node --test extensions/web-clipper/test_extractors.mjs
+
+      - name: Run DSH plugin unit tests
+        run: node --test dsh-plugin/coding-rewind-dsh/test/plugin.test.mjs
+
+      - name: Run local SQLite Memos E2E suite
+        run: python3 -B -m unittest verification/e2e/test_real_memos_e2e.py -v
+
+      - name: Start real neosmemo/memos:26.11.0 container
+        run: docker run -d --name memos-e2e -p 127.0.0.1:5230:5230 neosmemo/memos:26.11.0
+
+      - name: Bootstrap real Memos container and run E2E suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENV_FILE="${RUNNER_TEMP}/memos-e2e.env"
+          python3 -B verification/e2e/bootstrap_memos_container.py \
+            --url http://127.0.0.1:5230 \
+            --output-file "${ENV_FILE}"
+          set -a
+          source "${ENV_FILE}"
+          set +a
+          echo "::add-mask::${MEMOS_E2E_TOKEN}"
+          python3 -B -m unittest verification/e2e/test_real_memos_e2e.py -v
+
+      - name: Clean up real Memos container
+        if: always()
+        shell: bash
+        run: |
+          docker rm -f memos-e2e || true
+          rm -f "${RUNNER_TEMP}/memos-e2e.env"
+
+  macos-swift-and-check:
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run ./scripts/check
+        run: ./scripts/check
