@@ -14,11 +14,14 @@ package enum SelectionPopupHost: Equatable, Sendable {
     case geminiApp
 
     package init?(bundleIdentifier: String?) {
-        switch bundleIdentifier {
-        case AppBundleID.antigravity: self = .antigravity
-        case AppBundleID.chatGPTDesktop: self = .chatGPTApp
-        case AppBundleID.gemini: self = .geminiApp
-        default: return nil
+        if bundleIdentifier == AppBundleID.antigravity {
+            self = .antigravity
+        } else if AppBundleID.isChatGPTDesktop(bundleIdentifier) {
+            self = .chatGPTApp
+        } else if bundleIdentifier == AppBundleID.gemini {
+            self = .geminiApp
+        } else {
+            return nil
         }
     }
 
@@ -37,11 +40,19 @@ package enum ChatGPTWebAreaClassification: Equatable, Sendable {
     package static func classify(rawURLString: String?) -> Self {
         guard let rawURLString else { return .disallowed }
         if rawURLString == "app://-/index.html"
-            || rawURLString.hasPrefix("app://-/index.html#")
-            || rawURLString.hasPrefix("app://-/index.html?") {
+            || rawURLString.hasPrefix("app://-/index.html#") {
             return .shell
         }
-        return .disallowed
+        guard rawURLString.hasPrefix("app://-/index.html?") else {
+            return .disallowed
+        }
+        let afterQuery = rawURLString.dropFirst("app://-/index.html?".count)
+        let queryString = String(afterQuery.prefix(while: { $0 != "#" }))
+        let queryItems = URLComponents(string: "https://localhost/?" + queryString)?.queryItems ?? []
+        let hasCodexView = queryItems.contains {
+            $0.name.lowercased() == "view" && $0.value?.lowercased() == "codex"
+        }
+        return hasCodexView ? .disallowed : .shell
     }
 
     package static func classify(webArea: AXUIElement) -> Self {
@@ -73,7 +84,7 @@ package enum ChatGPTSurfaceClassification {
         title: String?,
         domClasses: [String]
     ) -> Bool {
-        if subrole == "AXLandmarkRegion" && title == "Conversation" {
+        if subrole == "AXLandmarkRegion" && (title == "Conversation" || title == "对话") {
             return true
         }
         return domClasses.contains { $0.hasPrefix("MarkdownRoot-") || $0.hasPrefix("CodeSurface-") }

@@ -8,6 +8,7 @@ import SwiftUI
 public enum AppCommand: Equatable, Sendable {
     case toggleHUD
     case presentHUDAndFocus
+    case openLibraryWindow
     case captureSelection
     case captureSelectionHotkey
     case launchConversation
@@ -156,6 +157,15 @@ public enum MainMenuBuilder {
         let windowMenuItem = NSMenuItem(title: windowTitle, action: nil, keyEquivalent: "")
         let windowMenu = NSMenu(title: windowTitle)
         windowMenu.addItem(NSMenuItem(title: AppStrings.closeWindow(in: language), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        windowMenu.addItem(
+            makeCommandMenuItem(
+                title: AppStrings.openLibraryMenu(in: language),
+                command: .openLibraryWindow,
+                keyEquivalent: "0",
+                modifiers: [.command],
+                handler: onCommand
+            )
+        )
         windowMenu.addItem(makeCommandMenuItem(title: AppStrings.bringHUDToFront(in: language), command: .presentHUDAndFocus, handler: onCommand))
         windowMenuItem.submenu = windowMenu
         mainMenu.addItem(windowMenuItem)
@@ -423,6 +433,15 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         let toggleItem = makeCommandMenuItem(title: snapshot.toggleHUDTitle, command: .toggleHUD, handler: onCommand)
         shortcuts.applyMenuShortcut(to: toggleItem, for: .toggleHUD)
         menu.addItem(toggleItem)
+        menu.addItem(
+            makeCommandMenuItem(
+                title: AppStrings.openLibraryMenu(in: lang),
+                command: .openLibraryWindow,
+                keyEquivalent: "0",
+                modifiers: [.command],
+                handler: onCommand
+            )
+        )
         let captureItem = makeCommandMenuItem(
             title: ShortcutAction.captureSelection.title(in: lang),
             command: .captureSelection,

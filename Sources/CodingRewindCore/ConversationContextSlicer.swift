@@ -44,6 +44,215 @@ package enum ConversationContextSlicer {
             .replacingOccurrences(of: "\r", with: "\n")
     }
 
+    package static func stripMarkdownSyntax(_ text: String) -> String {
+        let lines = normalizeLineEndings(text).split(separator: "\n", omittingEmptySubsequences: false)
+        var cleanedLines: [String] = []
+        cleanedLines.reserveCapacity(lines.count)
+        var activeFence: (char: Character, count: Int)?
+
+        for rawLine in lines {
+            if let fence = activeFence {
+                if isClosingFence(rawLine, char: fence.char, minCount: fence.count) {
+                    activeFence = nil
+                    continue
+                }
+                cleanedLines.append(String(rawLine))
+                continue
+            }
+            if let openingFence = parseOpeningFence(rawLine) {
+                activeFence = openingFence
+                continue
+            }
+            var line = stripLeadingMarkdownMarkers(String(rawLine))
+            line = unwrapMarkdownLinks(line)
+            line = line
+                .replacingOccurrences(of: "`", with: "")
+                .replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "__", with: "")
+            line = stripSymmetricEmphasis(line)
+            cleanedLines.append(line)
+        }
+        return cleanedLines.joined(separator: "\n")
+    }
+
+    private static func parseOpeningFence(_ rawLine: Substring) -> (char: Character, count: Int)? {
+        let trimmed = rawLine.drop(while: { $0 == " " || $0 == "\t" })
+        guard let fenceChar = trimmed.first, fenceChar == "`" || fenceChar == "~" else {
+            return nil
+        }
+        let fencePrefix = trimmed.prefix(while: { $0 == fenceChar })
+        guard fencePrefix.count >= 3 else {
+            return nil
+        }
+        let afterFence = trimmed.dropFirst(fencePrefix.count)
+        if fenceChar == "`", afterFence.contains("`") {
+            return nil
+        }
+        return (fenceChar, fencePrefix.count)
+    }
+
+    private static func isClosingFence(_ rawLine: Substring, char: Character, minCount: Int) -> Bool {
+        let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
+        return trimmed.count >= minCount && trimmed.allSatisfy { $0 == char }
+    }
+
+    private static func stripLeadingMarkdownMarkers(_ rawLine: String) -> String {
+        var slice = rawLine[...]
+        while true {
+            let trimmed = slice.drop(while: { $0 == " " || $0 == "\t" })
+            guard trimmed.first == ">" else { break }
+            let afterMarker = trimmed.dropFirst()
+            if afterMarker.first == " " || afterMarker.first == "\t" {
+                slice = afterMarker.dropFirst()
+            } else if afterMarker.isEmpty {
+                slice = afterMarker
+            } else {
+                break
+            }
+        }
+        let afterBlockquote = slice.drop(while: { $0 == " " || $0 == "\t" })
+        if afterBlockquote.first == "#" {
+            let withoutHashes = afterBlockquote.drop(while: { $0 == "#" })
+            if withoutHashes.isEmpty || withoutHashes.first == " " || withoutHashes.first == "\t" {
+                slice = withoutHashes.drop(while: { $0 == " " || $0 == "\t" })
+            }
+        }
+        let afterHeading = slice.drop(while: { $0 == " " || $0 == "\t" })
+        if let first = afterHeading.first, first == "-" || first == "*" || first == "+" {
+            let afterMarker = afterHeading.dropFirst()
+            if afterMarker.first == " " || afterMarker.first == "\t" {
+                slice = afterMarker.drop(while: { $0 == " " || $0 == "\t" })
+            }
+        }
+        return String(slice)
+    }
+
+    private static func stripSymmetricEmphasis(_ line: String) -> String {
+        guard line.contains("*") else { return line }
+        var result = ""
+        var index = line.startIndex
+        while index < line.endIndex {
+            if line[index] == "*" {
+                let afterOpen = line.index(after: index)
+                if afterOpen < line.endIndex, !line[afterOpen].isWhitespace {
+                    var cursor = afterOpen
+                    var closingIndex: String.Index?
+                    while cursor < line.endIndex {
+                        if line[cursor] == "*" {
+                            let prev = line.index(before: cursor)
+                            if !line[prev].isWhitespace {
+                                closingIndex = cursor
+                                break
+                            }
+                        }
+                        cursor = line.index(after: cursor)
+                    }
+                    if let closingIndex {
+                        result.append(contentsOf: line[afterOpen..<closingIndex])
+                        index = line.index(after: closingIndex)
+                        continue
+                    }
+                }
+            }
+            result.append(line[index])
+            index = line.index(after: index)
+        }
+        return result
+    }
+
+    private static func unwrapMarkdownLinks(_ line: String) -> String {
+        var result = ""
+        var index = line.startIndex
+        while index < line.endIndex {
+            let isImage = line[index] == "!"
+            let bracketStart: String.Index
+            if isImage {
+                let next = line.index(after: index)
+                guard next < line.endIndex, line[next] == "[" else {
+                    result.append(line[index])
+                    index = next
+                    continue
+                }
+                bracketStart = next
+            } else if line[index] == "[" {
+                bracketStart = index
+            } else {
+                result.append(line[index])
+                index = line.index(after: index)
+                continue
+            }
+
+            let labelStart = line.index(after: bracketStart)
+            var cursor = labelStart
+            var bracketDepth = 1
+            var labelEnd: String.Index?
+            while cursor < line.endIndex {
+                let ch = line[cursor]
+                if ch == "\\" {
+                    let escaped = line.index(after: cursor)
+                    cursor = escaped < line.endIndex ? line.index(after: escaped) : escaped
+                    continue
+                }
+                if ch == "[" {
+                    bracketDepth += 1
+                } else if ch == "]" {
+                    bracketDepth -= 1
+                    if bracketDepth == 0 {
+                        labelEnd = cursor
+                        break
+                    }
+                }
+                cursor = line.index(after: cursor)
+            }
+
+            guard let foundLabelEnd = labelEnd else {
+                result.append(line[index])
+                index = line.index(after: index)
+                continue
+            }
+
+            let parenStart = line.index(after: foundLabelEnd)
+            guard parenStart < line.endIndex, line[parenStart] == "(" else {
+                result.append(line[index])
+                index = line.index(after: index)
+                continue
+            }
+
+            var urlCursor = line.index(after: parenStart)
+            var parenDepth = 1
+            var urlEnd: String.Index?
+            while urlCursor < line.endIndex {
+                let ch = line[urlCursor]
+                if ch == "\\" {
+                    let escaped = line.index(after: urlCursor)
+                    urlCursor = escaped < line.endIndex ? line.index(after: escaped) : escaped
+                    continue
+                }
+                if ch == "(" {
+                    parenDepth += 1
+                } else if ch == ")" {
+                    parenDepth -= 1
+                    if parenDepth == 0 {
+                        urlEnd = urlCursor
+                        break
+                    }
+                }
+                urlCursor = line.index(after: urlCursor)
+            }
+
+            guard let foundURLEnd = urlEnd else {
+                result.append(line[index])
+                index = line.index(after: index)
+                continue
+            }
+
+            let innerLabel = String(line[labelStart..<foundLabelEnd])
+            result.append(unwrapMarkdownLinks(innerLabel))
+            index = line.index(after: foundURLEnd)
+        }
+        return result
+    }
+
     package static func resolveAnchor(
         selectedText: String,
         in messages: [Message],
@@ -74,7 +283,23 @@ package enum ConversationContextSlicer {
                 messages[$0].role == .user &&
                 messages[$0].matchText.range(of: selection, options: .literal) != nil
             }
-            return userMatches.count == 1 ? userMatches[0] : nil
+            if userMatches.count == 1 {
+                return userMatches[0]
+            }
+            if userMatches.count > 1 {
+                return nil
+            }
+
+            let cleanSelection = stripMarkdownSyntax(selection)
+            guard cleanSelection.count >= 4 else {
+                return nil
+            }
+            let strippedMatches = messages.indices.filter { index in
+                let raw = messages[index].matchText
+                let stripped = stripMarkdownSyntax(raw)
+                return stripped != raw && stripped.range(of: cleanSelection, options: .literal) != nil
+            }
+            return strippedMatches.count == 1 ? strippedMatches[0] : nil
         }
     }
 

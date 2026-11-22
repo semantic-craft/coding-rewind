@@ -726,6 +726,15 @@ public struct SnippetRepository: SnippetQuerying, Sendable {
 
     public func appendSnippetNote(
         id: String,
+        content: String,
+        author: String? = nil,
+        now: Date = Date()
+    ) async throws -> SnippetRecord {
+        try await appendSnippetNote(id: id, input: SnippetNoteInput(note: content, author: author), now: now)
+    }
+
+    public func appendSnippetNote(
+        id: String,
         input: SnippetNoteInput,
         now: Date = Date()
     ) async throws -> SnippetRecord {

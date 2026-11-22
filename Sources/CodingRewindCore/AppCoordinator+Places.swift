@@ -89,15 +89,19 @@ extension AppCoordinator {
         }
         if case .place(let ref) = hudSection {
             await loadPlaceRecords(ref)
+        } else if case .place(let ref) = libraryScope {
+            await loadPlaceRecords(ref)
+        } else {
+            placeRecords = []
         }
     }
 
-    private func loadPlaceRecords(_ ref: PlaceRef) async {
+    func loadPlaceRecords(_ ref: PlaceRef) async {
         let revision = libraryRevision
         let query = SnippetQuery(windowHours: nil, status: .all, place: ref, limit: 500)
         guard let result = try? await placeRepository().listSnippets(query, now: Date()),
               revision == libraryRevision,
-              hudSection == .place(ref) else {
+              (hudSection == .place(ref) || libraryScope == .place(ref)) else {
             return
         }
         placeRecords = result.snippets
@@ -123,13 +127,13 @@ extension AppCoordinator {
     }
 
     @discardableResult
-    public func openPlacePicker() -> Bool {
-        guard conversationDraft == nil, let targetID = placeTargetID else { return false }
+    public func openPlacePicker(for targetID: String? = nil) -> Bool {
+        guard conversationDraft == nil, let resolvedTargetID = targetID ?? placeTargetID else { return false }
         let cached = PlacesCache(fileURL: paths.placesCacheFileURL).load()
         if !cached.isEmpty {
             places = cached
         }
-        placePicker = PlacePickerState(targetID: targetID, query: "")
+        placePicker = PlacePickerState(targetID: resolvedTargetID, query: "")
         return true
     }
 
@@ -161,14 +165,14 @@ extension AppCoordinator {
         await applyPlacePatch(SnippetMetadataPatch(removeTags: [ref.tag]), to: snippetID)
     }
 
-    private func currentPlaces(of snippetID: String) -> [PlaceRef] {
+    func currentPlaces(of snippetID: String) -> [PlaceRef] {
         cards.first { $0.id == snippetID }?.places
             ?? (libraryRecords ?? []).first { $0.id == snippetID }?.places
             ?? placeRecords.first { $0.id == snippetID }?.places
             ?? []
     }
 
-    private func applyPlacePatch(_ patch: SnippetMetadataPatch, to snippetID: String) async {
+    func applyPlacePatch(_ patch: SnippetMetadataPatch, to snippetID: String) async {
         let updated: SnippetRecord
         do {
             updated = try await placeRepository().updateSnippetMetadata(id: snippetID, patch: patch, now: Date())
@@ -177,6 +181,15 @@ extension AppCoordinator {
             return
         }
         libraryRevision += 1
+        if updated.id != snippetID {
+            remapCardDetailState(from: snippetID, to: updated.id)
+            if checkedCardIDs.remove(snippetID) != nil {
+                checkedCardIDs.insert(updated.id)
+            }
+            if focusedCardID == snippetID {
+                focusedCardID = updated.id
+            }
+        }
         let replaceIn: ([SnippetRecord]) -> [SnippetRecord] = { records in
             records.map { $0.id == snippetID || $0.id == updated.id ? updated : $0 }
         }
@@ -193,7 +206,7 @@ extension AppCoordinator {
         }
     }
 
-    private func placeRepository() -> SnippetRepository {
+    func placeRepository() -> SnippetRepository {
         let token: DeveloperCredentialsResolver.TokenResolution = KeychainTokenStore.resolveToken(environment: environment)
             .map { .resolved($0) } ?? .missing
         return SnippetRepository(paths: paths, environment: environment, client: memosClient, preResolvedToken: token)
