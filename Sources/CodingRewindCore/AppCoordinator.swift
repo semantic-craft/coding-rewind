@@ -241,11 +241,11 @@ public final class AppCoordinator {
     public private(set) var isLaunchingConversation = false
     public private(set) var canEndUnconfirmedConversation = false
     public private(set) var canEndUnarchivedConversation = false
-    public private(set) var pendingDeleteConfirmation: PendingDeleteConfirmation?
+    public internal(set) var pendingDeleteConfirmation: PendingDeleteConfirmation?
     public private(set) var isMutatingCards = false
     public private(set) var lockedConversationCardIDs: Set<String> = []
-    private var deletedClipIDs: Set<String> = []
-    private var archivedClipIDs: Set<String> = []
+    var deletedClipIDs: Set<String> = []
+    var archivedClipIDs: Set<String> = []
     private var inFlightCaptureEntries: [String: OutboxEntry] = [:]
     private var pendingRemoteDeletesURL: URL {
         paths.dataDirectoryURL.appendingPathComponent("pending-remote-deletes.json", isDirectory: false)
@@ -297,11 +297,29 @@ public final class AppCoordinator {
     public internal(set) var placePicker: PlacePickerState?
     public var focusedRecordID: String?
     @ObservationIgnored var libraryRevision = 0
+    public var libraryScope: LibraryScope = .all {
+        didSet {
+            if oldValue != libraryScope {
+                pendingDeleteConfirmation = nil
+            }
+        }
+    }
+    public var libraryLayoutMode: LibraryLayoutMode = .bentoCards
+    public var librarySearchText: String = "" {
+        didSet {
+            if oldValue != librarySearchText {
+                pendingDeleteConfirmation = nil
+            }
+        }
+    }
+    public var libraryFocusedClipID: String?
+    public var isLibraryInspectorPresented: Bool = true
+    public internal(set) var triagedInSessionCount: Int = 0
     public var checkedCardIDs: Set<String> = []
     public var focusedCardID: String?
     public private(set) var inspectedCardID: String?
-    private var cardDetailStates: [String: CardDetailLoadState] = [:]
-    @ObservationIgnored private var cachedCardDetails: [String: CardDetail] = [:]
+    var cardDetailStates: [String: CardDetailLoadState] = [:]
+    @ObservationIgnored var cachedCardDetails: [String: CardDetail] = [:]
     @ObservationIgnored private var activeDetailTask: Task<Void, Never>?
     @ObservationIgnored private var activeDetailTaskGeneration: UInt64 = 0
     private var activeBannerNotice: BannerNotice?
@@ -505,8 +523,21 @@ public final class AppCoordinator {
         lockedConversationCardIDs.contains(cardID)
     }
 
+    func resolvableCardsForHandoff() -> [RewindCard] {
+        var result = cards
+        var seen = Set(cards.map(\.id))
+        for record in (libraryRecords ?? []) + placeRecords {
+            guard !deletedClipIDs.contains(record.id),
+                  seen.insert(record.id).inserted else {
+                continue
+            }
+            result.append(LibraryProjector.synthesizeRewindCard(from: record))
+        }
+        return result
+    }
+
     public var checkedActionableCardIDs: [String] {
-        cards.map(\.id).filter { checkedCardIDs.contains($0) }
+        resolvableCardsForHandoff().map(\.id).filter { checkedCardIDs.contains($0) }
     }
 
     public var targetActionCardIDs: [String] {
@@ -527,9 +558,18 @@ public final class AppCoordinator {
         pendingDeleteConfirmation = nil
     }
 
-    private func reconcilePendingDeleteConfirmation(idRemapping: [String: String] = [:]) {
+    func reconcilePendingDeleteConfirmation(idRemapping: [String: String] = [:]) {
         guard let current = pendingDeleteConfirmation else { return }
-        let visibleByID = Dictionary(uniqueKeysWithValues: filteredCards.map { ($0.id, $0) })
+        var visibleByID = Dictionary(uniqueKeysWithValues: filteredCards.map { ($0.id, $0) })
+        if libraryRecords != nil || !placeRecords.isEmpty {
+            let libraryVisibleIDs = Set(libraryProjection.visibleItems.map(\.id))
+            let hotIDs = Set(cards.map(\.id))
+            for card in resolvableCardsForHandoff() where libraryVisibleIDs.contains(card.id) {
+                if !hotIDs.contains(card.id) || hudSection != .hot || libraryFocusedClipID != nil {
+                    visibleByID[card.id] = visibleByID[card.id] ?? card
+                }
+            }
+        }
         var seen: Set<String> = []
         var updatedCards: [RewindCard] = []
         for rawID in current.cardIDs {
@@ -1089,7 +1129,7 @@ public final class AppCoordinator {
         }
         pendingDeleteConfirmation = nil
         closeCardPreview()
-        let selected = cards.filter { checkedCardIDs.contains($0.id) }
+        let selected = resolvableCardsForHandoff().filter { checkedCardIDs.contains($0.id) }
         guard !selected.isEmpty else {
             setBanner(.selectAtLeastOneCard, isError: true)
             return false
@@ -1156,13 +1196,14 @@ public final class AppCoordinator {
     public func resetConversationDraft() {
         guard let draft = conversationDraft else { return }
         stashedEditedDraft = nil
-        let checked = cards.filter { checkedCardIDs.contains($0.id) }
+        let allCards = resolvableCardsForHandoff()
+        let checked = allCards.filter { checkedCardIDs.contains($0.id) }
         let targetCards: [RewindCard]
         if !checked.isEmpty {
             targetCards = checked
         } else {
             let idSet = Set(draft.cardIDs)
-            targetCards = cards.filter { idSet.contains($0.id) }
+            targetCards = allCards.filter { idSet.contains($0.id) }
         }
         guard !targetCards.isEmpty else {
             conversationDraft = nil
@@ -1257,6 +1298,7 @@ public final class AppCoordinator {
             } else {
                 host = requestedHost ?? conversationDraft?.targetHost ?? conversationHost
                 channel = hostChannel(for: host)
+                let allCards = resolvableCardsForHandoff()
                 let promptToSend: String
                 let targetCardIDs: [String]
                 if let customPrompt {
@@ -1265,7 +1307,7 @@ public final class AppCoordinator {
                         setBanner(.emptyConversationDraft, isError: true)
                         return nil
                     }
-                    let liveIDSet = Set(cards.map(\.id))
+                    let liveIDSet = Set(allCards.map(\.id))
                     if let draft = conversationDraft {
                         targetCardIDs = draft.cardIDs.filter { liveIDSet.contains($0) }
                         guard !targetCardIDs.isEmpty || draft.isEdited else {
@@ -1274,7 +1316,7 @@ public final class AppCoordinator {
                             return nil
                         }
                     } else {
-                        targetCardIDs = cards.filter { checkedCardIDs.contains($0.id) }.map(\.id)
+                        targetCardIDs = allCards.filter { checkedCardIDs.contains($0.id) }.map(\.id)
                         guard !targetCardIDs.isEmpty else {
                             setBanner(.selectAtLeastOneCard, isError: true)
                             return nil
@@ -1282,7 +1324,7 @@ public final class AppCoordinator {
                     }
                     promptToSend = sanitized
                 } else {
-                    let selected = cards.filter { checkedCardIDs.contains($0.id) }
+                    let selected = allCards.filter { checkedCardIDs.contains($0.id) }
                     guard !selected.isEmpty else {
                         setBanner(.selectAtLeastOneCard, isError: true)
                         return nil
@@ -1328,7 +1370,7 @@ public final class AppCoordinator {
                         if current.markSynthesized && !current.archiveCardIDs.isEmpty {
                             canEndUnarchivedConversation = true
                             let remainingIDs = Set(current.archiveCardIDs)
-                            let selected = cards.filter { remainingIDs.contains($0.id) }
+                            let selected = resolvableCardsForHandoff().filter { remainingIDs.contains($0.id) }
                             guard let baseURL = paths.resolveMemosBaseURL(environment: environment),
                                   let token = KeychainTokenStore.resolveToken(environment: environment) else {
                                 lockedConversationCardIDs = remainingIDs
@@ -1632,11 +1674,11 @@ public final class AppCoordinator {
         await archiveCards(ids: [card.id])
     }
 
-    private func prepareCardMutationTargets(ids: [String]) -> [RewindCard]? {
+    func prepareCardMutationTargets(ids: [String]) -> [RewindCard]? {
         guard !isMutatingCards else { return nil }
         let requested = Set(ids)
         var seen: Set<String> = []
-        let targets = cards.filter { requested.contains($0.id) && seen.insert($0.id).inserted }
+        let targets = resolvableCardsForHandoff().filter { requested.contains($0.id) && seen.insert($0.id).inserted }
         guard !targets.isEmpty else {
             pendingDeleteConfirmation = nil
             return nil
@@ -1649,7 +1691,7 @@ public final class AppCoordinator {
         return targets
     }
 
-    private func removeCardsFromCoordinatorState(_ removedIDs: Set<String>) {
+    func removeCardsFromCoordinatorState(_ removedIDs: Set<String>) {
         let previousFilteredIDs = filteredCards.map(\.id)
         checkedCardIDs.subtract(removedIDs)
         for removedID in removedIDs {
@@ -1661,8 +1703,44 @@ public final class AppCoordinator {
         if let currentInspected = inspectedCardID, removedIDs.contains(currentInspected) {
             closeCardPreview()
         }
+        let updateRecords: ([SnippetRecord]) -> [SnippetRecord] = { records in
+            records.compactMap { record in
+                if self.deletedClipIDs.contains(record.id) {
+                    return nil
+                }
+                if self.archivedClipIDs.contains(record.id) && record.status != .synthesized {
+                    return SnippetRecord(
+                        id: record.id,
+                        status: .synthesized,
+                        sourcePlatform: record.sourcePlatform,
+                        title: record.title,
+                        sessionTopic: record.sessionTopic,
+                        contextSummary: record.contextSummary,
+                        keywords: record.keywords,
+                        sourceTitle: record.sourceTitle,
+                        sourceURL: record.sourceURL,
+                        verbatimText: record.verbatimText,
+                        createdAt: record.createdAt,
+                        dataOrigin: record.dataOrigin,
+                        conversationContext: record.conversationContext,
+                        tags: record.tags,
+                        notes: record.notes
+                    )
+                }
+                if removedIDs.contains(record.id) && !self.archivedClipIDs.contains(record.id) {
+                    return nil
+                }
+                return record
+            }
+        }
+        libraryRecords = libraryRecords.map(updateRecords)
+        placeRecords = updateRecords(placeRecords)
         updateLocalCards { $0.removeAll { removedIDs.contains($0.id) } }
         focusedCardID = nextFocusedCardID(afterRemoving: removedIDs, previousFilteredIDs: previousFilteredIDs)
+        if let currentLibraryFocused = libraryFocusedClipID, removedIDs.contains(currentLibraryFocused) {
+            let visibleIDs = libraryProjection.visibleItems.map(\.id)
+            libraryFocusedClipID = visibleIDs.first(where: { !removedIDs.contains($0) }) ?? visibleIDs.first
+        }
         reconcilePendingDeleteConfirmation()
         reconcileConversationDraftState()
     }
@@ -1830,16 +1908,22 @@ public final class AppCoordinator {
     }
 
     public func reloadCardDetail(id: String) {
-        guard let card = cards.first(where: { $0.id == id }) else { return }
+        let matchedRecord = (libraryRecords ?? []).first(where: { $0.id == id })
+            ?? placeRecords.first(where: { $0.id == id })
+        guard let card = cards.first(where: { $0.id == id })
+            ?? matchedRecord.map(LibraryProjector.synthesizeRewindCard(from:)) else { return }
         cancelActiveDetailTask()
 
         let outboxEntry = inFlightCaptureEntries[id]
             ?? outbox.loadEntries().first(where: { $0.clientClipId == id })
         let localContext = outboxEntry?.commentContent.flatMap(MemosWireFormat.parseContextComment)
+            ?? matchedRecord?.conversationContext
         let localNotes = LocalNotesStore(fileURL: paths.localNotesFileURL).loadNotes(for: id)
         let existingCached = cachedCardDetails[id]
         let mergedContext = localContext ?? existingCached?.context
-        let mergedNotes = LocalNotesStore.sortAndDeduplicate((existingCached?.notes ?? []) + localNotes)
+        let mergedNotes = LocalNotesStore.sortAndDeduplicate(
+            (existingCached?.notes ?? []) + localNotes + (matchedRecord?.notes ?? [])
+        )
 
         let baseURL = paths.resolveMemosBaseURL(environment: environment)
         let token = KeychainTokenStore.resolveToken(environment: environment)
@@ -1871,20 +1955,21 @@ public final class AppCoordinator {
         activeDetailTaskGeneration &+= 1
         let generation = activeDetailTaskGeneration
         let client = memosClient
+        let recordNotes = matchedRecord?.notes ?? []
         activeDetailTask = Task { @MainActor [weak self] in
             do {
                 let comments = try await client.listMemoComments(id: id, baseURL: baseURL, token: token)
                 guard let self,
                       !Task.isCancelled,
                       self.activeDetailTaskGeneration == generation,
-                      self.inspectedCardID == id else {
+                      (self.inspectedCardID == id || self.libraryFocusedClipID == id || self.libraryProjection.inspectedItem?.id == id) else {
                     return
                 }
                 let latestLocalNotes = LocalNotesStore(fileURL: self.paths.localNotesFileURL).loadNotes(for: id)
                 let parsed = MemosWireFormat.parseMemoComments(comments, localNotes: latestLocalNotes)
                 let detail = CardDetail(
                     context: parsed.context ?? localContext,
-                    notes: parsed.notes,
+                    notes: LocalNotesStore.sortAndDeduplicate(parsed.notes + recordNotes),
                     isCompleteFromServer: true
                 )
                 self.cachedCardDetails[id] = detail
@@ -1894,7 +1979,7 @@ public final class AppCoordinator {
                 guard let self,
                       !Task.isCancelled,
                       self.activeDetailTaskGeneration == generation,
-                      self.inspectedCardID == id else {
+                      (self.inspectedCardID == id || self.libraryFocusedClipID == id || self.libraryProjection.inspectedItem?.id == id) else {
                     return
                 }
                 let message: String
@@ -1940,8 +2025,9 @@ public final class AppCoordinator {
         return remapped
     }
 
-    private func reconcileConversationDraftState(idRemapping: [String: String] = [:]) {
-        let liveIDSet = Set(cards.map(\.id))
+    func reconcileConversationDraftState(idRemapping: [String: String] = [:]) {
+        let allCards = resolvableCardsForHandoff()
+        let liveIDSet = Set(allCards.map(\.id))
         if var stashed = stashedEditedDraft {
             let mapped = remapAndDeduplicateCardIDs(stashed.cardIDs, idRemapping: idRemapping)
                 .filter { liveIDSet.contains($0) }
@@ -1966,7 +2052,7 @@ public final class AppCoordinator {
             return
         }
         let targetIDSet = Set(liveIDs)
-        let targetCards = cards.filter { targetIDSet.contains($0.id) }
+        let targetCards = allCards.filter { targetIDSet.contains($0.id) }
         guard !targetCards.isEmpty else {
             conversationDraft = nil
             return
@@ -2018,7 +2104,9 @@ public final class AppCoordinator {
     }
 
     private func pruneRemovedCardDetails() {
-        let validIDs = Set(cards.map(\.id))
+        var validIDs = Set(cards.map(\.id))
+        validIDs.formUnion((libraryRecords ?? []).map(\.id))
+        validIDs.formUnion(placeRecords.map(\.id))
         for key in Array(cachedCardDetails.keys) where !validIDs.contains(key) {
             cachedCardDetails.removeValue(forKey: key)
         }
@@ -2030,18 +2118,23 @@ public final class AppCoordinator {
     private func invalidateAndReconcileCardDetailsAfterRefresh() {
         reconcileInspectedCardVisibility()
         pruneRemovedCardDetails()
-        guard let currentInspected = inspectedCardID else {
+        let preservedIDs = Set([inspectedCardID, libraryFocusedClipID].compactMap { $0 })
+        guard !preservedIDs.isEmpty else {
             cachedCardDetails.removeAll()
             cardDetailStates.removeAll()
             return
         }
-        for key in Array(cachedCardDetails.keys) where key != currentInspected {
+        for key in Array(cachedCardDetails.keys) where !preservedIDs.contains(key) {
             cachedCardDetails.removeValue(forKey: key)
         }
-        for key in Array(cardDetailStates.keys) where key != currentInspected {
+        for key in Array(cardDetailStates.keys) where !preservedIDs.contains(key) {
             cardDetailStates.removeValue(forKey: key)
         }
-        reloadCardDetail(id: currentInspected)
+        if let currentInspected = inspectedCardID {
+            reloadCardDetail(id: currentInspected)
+        } else if let focused = libraryFocusedClipID {
+            reloadCardDetail(id: focused)
+        }
     }
 
     public var isAIAccessManagedByEnvironment: Bool {
@@ -2284,7 +2377,7 @@ public final class AppCoordinator {
         }
     }
 
-    private func setBanner(_ notice: BannerNotice, isError: Bool) {
+    func setBanner(_ notice: BannerNotice, isError: Bool) {
         activeBannerNotice = notice
         isUpdatingBannerFromNotice = true
         bannerMessage = L10n.banner(notice, in: language)
