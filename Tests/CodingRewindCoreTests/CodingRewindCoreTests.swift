@@ -4,7 +4,11 @@
 import Foundation
 import Testing
 
-private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
+private struct MockMemosProtocolBox<T>: @unchecked Sendable {
+    let value: T
+}
+
+private final class MockMemosURLProtocol: URLProtocol {
     struct RecordedRequest: Sendable {
         let method: String
         let url: URL
@@ -66,9 +70,12 @@ private final class MockMemosURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
             return
         }
-        Task {
-            let (status, respData) = await handler(request, bodyData)
-            respond(url: url, status: status, data: respData)
+        let req = request
+        let protoBox = MockMemosProtocolBox(value: self)
+        Task.detached {
+            let (status, respData) = await handler(req, bodyData)
+            let proto = protoBox.value
+            proto.respond(url: url, status: status, data: respData)
         }
     }
 

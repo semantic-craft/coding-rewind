@@ -4,7 +4,7 @@
 import Foundation
 import Testing
 
-private final class HardeningMockURLProtocol: URLProtocol, @unchecked Sendable {
+private final class HardeningMockURLProtocol: URLProtocol {
     typealias Handler = @Sendable (URLRequest, Data) -> (Int, Data)
 
     struct RecordedCall: Sendable {
