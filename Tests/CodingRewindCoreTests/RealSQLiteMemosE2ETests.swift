@@ -149,7 +149,7 @@ private final class SQLiteMemosHarness {
         try proc.run()
         self.process = proc
 
-        let deadline = Date().addingTimeInterval(10.0)
+        let deadline = Date().addingTimeInterval(30.0)
         while Date() < deadline {
             if let data = try? Data(contentsOf: readyFileURL),
                !data.isEmpty,
@@ -187,7 +187,7 @@ private final class SQLiteMemosHarness {
     }
 }
 
-@Suite("Real SQLite Memos E2E")
+@Suite("Real SQLite Memos E2E", .serialized)
 struct RealSQLiteMemosE2ETests {
     private func makeIsolatedDataDir(under repoRoot: URL) throws -> URL {
         let dir = repoRoot
