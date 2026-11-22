@@ -66,8 +66,16 @@ actor FakeSnippetBackend: SnippetQuerying {
         }
         .sorted { $0.createdAt > $1.createdAt }
 
+        let limited: [SnippetRecord]
+        switch query.resultLimit {
+        case .bounded(let count):
+            limited = Array(filtered.prefix(min(max(count, 1), 500)))
+        case .unbounded:
+            limited = filtered
+        }
+
         return SnippetQueryResult(
-            snippets: Array(filtered.prefix(query.limit)),
+            snippets: limited,
             resolution: resolution,
             pendingOutboxCount: pendingOutboxCount
         )
