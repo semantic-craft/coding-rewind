@@ -118,13 +118,13 @@ public enum L10n {
         case .zhHans:
             switch filter {
             case .all: return "全部片段"
-            case .ready: return "AI 已整理"
+            case .ready: return "已就绪"
             case .pending: return "待整理"
             }
         case .en:
             switch filter {
             case .all: return "All Clips"
-            case .ready: return "AI Enriched"
+            case .ready: return "Ready"
             case .pending: return "Pending"
             }
         }
@@ -135,12 +135,12 @@ public enum L10n {
         case .zhHans:
             switch status {
             case .pending: return "待整理"
-            case .ready: return "AI 已整理"
+            case .ready: return "已就绪"
             }
         case .en:
             switch status {
             case .pending: return "Pending"
-            case .ready: return "AI Enriched"
+            case .ready: return "Ready"
             }
         }
     }

@@ -3,8 +3,8 @@
 <title>Coding Rewind 开发进度</title>
 <style>body{font:16px system-ui;max-width:960px;margin:3rem auto;padding:0 1rem;color:#202936;background:#f7f8fb}article,section{padding:1rem;margin:1rem 0;background:white;border-radius:12px}a{color:#1555ac}.badge{padding:.25rem .6rem;border-radius:20px;background:#e9edf5}small{color:#566}</style>
 <h1>Coding Rewind 开发进度</h1>
-<p>Observed: 2026-11-22T16:39:59.368324Z</p>
-<p>Main: <code>main: eccc5a7af8e944ecc0b1e5041fead3ff39d3493d</code></p>
+<p>Observed: 2026-11-23T00:32:20.014048Z</p>
+<p>Main: <code>main: 5427845ec20b8358a62782718e29eed099e58828</code></p>
 <section id="general-inspiration-capture"><h2>无选区灵感采集</h2>
 <article id="general-inspiration-text-and-link"><h3>桌面输入、粘贴与浏览器书签</h3><span class="badge">done</span><p>桌面快速暂存接入原有片段与离线队列。Chrome 右键另有独立的网页链接入口。</p><ul>
 <li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindApp/QuickCapturePanel.swift">file Sources/CodingRewindApp/QuickCapturePanel.swift: 原生多行暂存窗口</a></li>
@@ -24,6 +24,14 @@
 <li>note memos-original-contract: 固定版 Memos 实测了私有附件、相同 ID 的重试、原件读回和随片段删除。</li>
 <li>note original-offline-sync-export: 正式采集代码在隔离数据目录保存文本及 OCR 样本。进程重启后连到固定版 Memos，确认两个私有附件与导出字节一致。</li>
 </ul><p>Next: 核对隔离桌面版实际选择、粘贴及另存原件。</p></article>
+<article id="capture-preferences-implementation"><h3>默认落位、全局快速暂存与采集隐私</h3><span class="badge">done</span><p>桌面设置支持默认项目或主题、默认标签与独立的上下文和 AI 开关。快速暂存支持全局快捷键及单次更改。浏览器扩展可独立设置默认标签和处理范围。</p><ul>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Sources/CodingRewindCore/CapturePreferences.swift">file Sources/CodingRewindCore/CapturePreferences.swift: 采集选择在创建队列条目前写入正文和评论。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/Tests/CodingRewindCoreTests/CapturePreferencesTests.swift">file Tests/CodingRewindCoreTests/CapturePreferencesTests.swift: 覆盖上下文和 AI 四种组合、单次覆盖与已归档默认位置。</a></li>
+<li><a href="https://github.com/semantic-craft/coding-rewind/blob/main/extensions/web-clipper/test_extractors.mjs">file extensions/web-clipper/test_extractors.mjs: 覆盖浏览器设置、等待提取时切换设置和离线重放。</a></li>
+</ul><p>Next: </p></article>
+<article id="capture-preferences-device-acceptance"><h3>桌面隔离包与 Chrome 划词验收</h3><span class="badge">done</span><p>隔离包重启后读回桌面默认，实测全局组合键打开快速暂存。默认项目和单次主题分别回读为私有片段。隔离 Chrome 中的划词暂存保留出处与标签，上下文评论为零。</p><ul>
+<li>note capture-preferences-qa: 应用界面实际操作，隔离 SQLite Memos 合同服务核对首行、原文、私密性和评论。</li>
+</ul><p>Next: 正式应用安装和增强器部署另行验收。</p></article>
 </section>
 <section id="library-workspace-three-sources"><h2>三栏资料库工作台与三源采集加固（PR #52）</h2>
 <article id="library-workspace-impl-and-merge"><h3>Core 纯函数投影、SwiftUI 三栏工作台与三源采集加固合入 main</h3><span class="badge">done</span><p>PR #52 合入 main（eccc5a7）：Core 新增 LibraryModels、LibraryProjector 与 AppCoordinator+Library，统一归并热卡与 &gt;72h SnippetRecord，支持四槽位命中归因、会话时间轴分组键不变量、封闭词表位置推荐与离线刷新 ID 重映射；App 新增 Sources/CodingRewindApp/Library/ 三栏窗口（⌘0 与 Dock 重开、⌥1 卡片墙 / ⌥2 会话时间轴、未落位分拣横幅、常驻脉络详情栏及隐藏/最小化离屏卸载），并加固 Antigravity 逐行容错、Markdown 定锚与 ChatGPT 桌面端双包名及 ?view=codex 过滤。</p><ul>

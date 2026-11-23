@@ -37,6 +37,7 @@ import {
   normalizeMemosBaseUrl,
   buildAuthHeaders,
   hasClipContext,
+  normalizeCapturePreferences,
   buildMemosWirePayloads,
   parseServerMemoId,
   saveClipWithOutbox,
@@ -68,6 +69,58 @@ function createMemoryOutboxStorage(initial = []) {
     }
   };
 }
+
+test("web capture preferences control enrichment and the context comment independently", async () => {
+  const clip = {
+    selectedMarkdown: "  `retry()`  ",
+    sourceUrl: "https://chatgpt.com/c/example",
+    sourcePlatform: "chatgpt",
+    sessionTitle: "Retry policy",
+    sessionId: "example",
+    prompt: "Synthetic surrounding prompt"
+  };
+  for (const includeContext of [true, false]) {
+    for (const enrichWithAI of [true, false]) {
+      const capturePreferences = normalizeCapturePreferences({
+        defaultTags: ["##Swift", "swift", "随手记", "#rewind/pending", "topic/typed", "bad\u200dtag"],
+        includeContext,
+        enrichWithAI
+      });
+      const { memoBody, commentBody, hasContext } = buildMemosWirePayloads(clip, { capturePreferences });
+      const status = enrichWithAI ? "pending" : "ready";
+      const contextTag = includeContext && enrichWithAI ? " #rewind/has-ctx" : "";
+      assert.equal(memoBody.content.split("\n")[0], `#rewind/${status}${contextTag} #source/chatgpt #Swift #随手记`);
+      assert.equal(memoBody.visibility, "PRIVATE");
+      assert.match(memoBody.content, /\[Retry policy\]\(https:\/\/chatgpt\.com\/c\/example\)/);
+      assert.ok(memoBody.content.endsWith(`\n\n${clip.selectedMarkdown}`));
+      assert.doesNotMatch(memoBody.content, /Synthetic surrounding prompt/);
+      assert.equal(hasContext, includeContext);
+      if (includeContext) {
+        assert.equal(commentBody.visibility, "PRIVATE");
+        assert.match(commentBody.content, /Prompt: Synthetic surrounding prompt/);
+      } else {
+        assert.equal(commentBody, null);
+      }
+    }
+  }
+  const storage = createMemoryOutboxStorage();
+  const preferences = { includeContext: false, enrichWithAI: false, defaultTags: ["Before"] };
+  await saveClipWithOutbox({ clip, storage, capturePreferences: normalizeCapturePreferences(preferences) });
+  preferences.includeContext = true;
+  preferences.enrichWithAI = true;
+  preferences.defaultTags[0] = "After";
+  const writes = [];
+  assert.deepEqual(await flushOutbox({
+    baseUrl: "https://memos.invalid",
+    storage,
+    async fetchImpl(url, init) {
+      writes.push({ url, body: JSON.parse(init.body) });
+      return { ok: true, async json() { return { name: "memos/captured" }; } };
+    }
+  }), { flushed: 1, remaining: 0 });
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].body.content, /^#rewind\/ready #source\/chatgpt #Before\n/);
+});
 
 test("detectPlatform and cleanSessionTitle strip provider boilerplate", () => {
   assert.equal(detectPlatform("https://chatgpt.com/c/abc-123"), "chatgpt");
@@ -1594,6 +1647,85 @@ function createContentScriptHarness({
     }
   };
 }
+
+test("content capture uses the preferences from before extractors finish loading", { timeout: 2000 }, async (t) => {
+  const { chrome, self } = globalThis;
+  const gate = "codingRewindDelayedCaptureExtractors";
+  let finishLoading;
+  globalThis[gate] = new Promise((resolve) => { finishLoading = resolve; });
+  t.after(() => {
+    delete globalThis[gate];
+    Object.assign(globalThis, { chrome, self });
+  });
+  const extractorsPath = new URL("./extractors.mjs", import.meta.url).href;
+  const extractorsUrl = `data:text/javascript,${encodeURIComponent(
+    `await globalThis[${JSON.stringify(gate)}]; export { extractClipContext } from ${JSON.stringify(extractorsPath)};`
+  )}`;
+  const before = { includeContext: false, enrichWithAI: false, defaultTags: ["Before"] };
+  const after = { includeContext: true, enrichWithAI: true, defaultTags: ["After"] };
+  const ignoredEvent = { addListener() {} };
+  let receive;
+  const writes = [];
+  globalThis.chrome = {
+    runtime: {
+      id: "coding-rewind-test",
+      onInstalled: ignoredEvent,
+      onStartup: ignoredEvent,
+      onMessage: { addListener(listener) { receive = listener; } }
+    },
+    contextMenus: { onClicked: ignoredEvent },
+    commands: { onCommand: ignoredEvent },
+    storage: {
+      local: {
+        async get() { return { outbox: [], capturePreferences: after }; },
+        async set({ outbox }) { writes.push(outbox); }
+      }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+  await import("./background.js?content-capture-preferences");
+  const storageChange = { capturePreferences: { oldValue: before, newValue: after } };
+  function makeCapture(trigger) {
+    let complete;
+    const done = new Promise((resolve) => { complete = resolve; });
+    const harness = createContentScriptHarness({
+      extractorsUrl,
+      storageData: { capturePreferences: before },
+      sendMessageImpl(message) {
+        return new Promise((resolve) => {
+          assert.equal(receive(message, { id: "coding-rewind-test" }, (result) => {
+            resolve(result);
+            complete(result);
+          }), true);
+        });
+      }
+    });
+    trigger(harness);
+    harness.emitStorageChanged(storageChange);
+    return { done, harness };
+  }
+  const capsule = makeCapture((harness) => {
+    harness.document.dispatch("mouseup", { path: [] });
+    harness.advanceTime(20);
+    const pill = harness.getPill();
+    pill.dispatch("mousedown", { path: [pill] });
+  });
+  const shortcut = makeCapture((harness) => {
+    harness.document.dispatch("keydown", {
+      key: "s", code: "KeyS", ctrlKey: true, altKey: true, shiftKey: true, metaKey: true
+    });
+  });
+  finishLoading();
+  for (const { done, harness } of [capsule, shortcut]) {
+    assert.equal((await done).status, "unconfigured");
+    assert.match(harness.sentMessages[0].clip.prompt, /duplicate/);
+  }
+  assert.equal(writes.length, 2);
+  for (const [record] of writes) {
+    assert.match(record.memoBody.content, /^#rewind\/ready #source\/chatgpt #Before\n/);
+    assert.equal(record.commentBody, null);
+  }
+});
 
 test("content.js capsule positions on mouseup, absorbs rapid double-mousedown without collapsing selection, and handles Hyper+S vs Alt+Shift+S", async () => {
   let resolveInFlightSave;
@@ -3486,6 +3618,47 @@ test("options.html and initOptionsPage switch UI language live and persist uiLan
   assert.equal(fetchCalls[0].init.headers.Authorization, "Bearer tok-1");
 });
 
+test("web clipper settings restore and save capture preferences independently of connection", async (t) => {
+  const { document, chrome } = globalThis;
+  t.after(() => Object.assign(globalThis, { document, chrome }));
+  const { parsed, persisted, sentRuntimeMessages } = createOptionsPageTestHarness({
+    uiLanguage: "en",
+    persistedInit: {
+      capturePreferences: {
+        defaultTags: ["Existing"],
+        includeContext: false,
+        enrichWithAI: true
+      }
+    }
+  });
+  initOptionsPage();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const defaultTags = parsed.getElementById("default-tags");
+  const context = parsed.getElementById("capture-context");
+  const ai = parsed.getElementById("capture-ai");
+  const form = parsed.getElementById("settings-form");
+  assert.equal(defaultTags.value, "Existing");
+  assert.equal(context.value, "off");
+  assert.equal(ai.value, "on");
+  defaultTags.value = "##Rust, rust, 项目备忘";
+  context.value = "on";
+  ai.value = "off";
+  await form.dispatch("submit");
+  assert.deepEqual(persisted.capturePreferences, {
+    defaultTags: ["Rust", "项目备忘"],
+    includeContext: true,
+    enrichWithAI: false
+  });
+  assert.equal(defaultTags.value, "Rust, 项目备忘");
+  assert.deepEqual(sentRuntimeMessages, []);
+
+  defaultTags.value = "rewind/ready";
+  await form.dispatch("submit");
+  assert.deepEqual(persisted.capturePreferences.defaultTags, ["Rust", "项目备忘"]);
+  assert.match(parsed.getElementById("status").textContent, /reserved namespaces/);
+});
+
 test("background setupMenusAndAlarms serializes concurrent onInstalled, onStartup, and storage.onChanged calls", async (t) => {
   const originalChrome = globalThis.chrome;
   const originalSelf = globalThis.self;
@@ -4624,6 +4797,70 @@ test("page reading bounds UTF-8 size, closes fences, and declines recognized cha
   }
 });
 
+test("web selection captures keep preferences from before tab lookup and extraction", async (t) => {
+  const { chrome, self } = globalThis;
+  t.after(() => Object.assign(globalThis, { chrome, self }));
+  const originalPreferences = { includeContext: false, enrichWithAI: false, defaultTags: ["Before"] };
+  const changedPreferences = { includeContext: true, enrichWithAI: true, defaultTags: ["After"] };
+  let capturePreferences = originalPreferences;
+  const ignoredEvent = { addListener() {} };
+  let clickMenu;
+  let invokeCommand;
+  let resolveToast;
+  const writes = [];
+  const tab = { id: 20 };
+  globalThis.chrome = {
+    runtime: { onInstalled: ignoredEvent, onStartup: ignoredEvent, onMessage: ignoredEvent },
+    commands: { onCommand: { addListener(listener) { invokeCommand = listener; } } },
+    contextMenus: { onClicked: { addListener(listener) { clickMenu = listener; } } },
+    tabs: {
+      async query() {
+        capturePreferences = changedPreferences;
+        return [tab];
+      },
+      async sendMessage(id, message) {
+        assert.equal(id, tab.id);
+        if (message.type === "REWIND_SHOW_TOAST") {
+          resolveToast(message);
+          return;
+        }
+        assert.equal(message.type, "REWIND_EXTRACT_SELECTION");
+        capturePreferences = changedPreferences;
+        return {
+          clip: {
+            selectedMarkdown: "Selected code",
+            sourcePlatform: "chatgpt",
+            sessionId: "fixture",
+            prompt: "Synthetic surrounding context"
+          }
+        };
+      }
+    },
+    storage: {
+      local: {
+        async get() { return { outbox: [], capturePreferences, uiLanguage: "en" }; },
+        async set({ outbox }) { writes.push(outbox); }
+      }
+    }
+  };
+  globalThis.self = { addEventListener() {} };
+  await import("./background.js?selection-preferences");
+
+  for (const invoke of [
+    () => clickMenu({ menuItemId: "save-to-coding-rewind" }, tab),
+    () => invokeCommand("save-selection")
+  ]) {
+    capturePreferences = originalPreferences;
+    const toast = new Promise((resolve) => { resolveToast = resolve; });
+    await invoke();
+    assert.equal((await toast).status, "unconfigured");
+    const [record] = writes.at(-1);
+    assert.match(record.memoBody.content, /^#rewind\/ready #source\/chatgpt #Before\n/);
+    assert.equal(record.commentBody, null);
+  }
+  assert.equal(writes.length, 2);
+});
+
 test("page reading menu queues private Markdown and rejects excluded, stale, and editable locations", async (t) => {
   const { chrome, self } = globalThis;
   t.after(() => Object.assign(globalThis, { chrome, self }));
@@ -4636,6 +4873,8 @@ test("page reading menu queues private Markdown and rejects excluded, stale, and
   let click;
   let resolveToast;
   let excludedDomains;
+  let capturePreferences;
+  let afterExtract = () => {};
   const writes = [];
   globalThis.chrome = {
     runtime: { onInstalled: ignoredEvent, onStartup: ignoredEvent, onMessage: ignoredEvent },
@@ -4649,12 +4888,14 @@ test("page reading menu queues private Markdown and rejects excluded, stale, and
           return;
         }
         assert.deepEqual(options, { frameId: 0 });
-        return harness.sendRuntimeMessage(message);
+        const result = await harness.sendRuntimeMessage(message);
+        afterExtract();
+        return result;
       }
     },
     storage: {
       local: {
-        async get() { return { outbox: [], excludedDomains, uiLanguage: "en" }; },
+        async get() { return { outbox: [], excludedDomains, capturePreferences, uiLanguage: "en" }; },
         async set({ outbox }) { writes.push(outbox); }
       }
     }
@@ -4688,6 +4929,17 @@ test("page reading menu queues private Markdown and rejects excluded, stale, and
   assert.match(record.memoBody.content, /^#rewind\/pending #source\/web\n/);
   assert.ok(record.memoBody.content.endsWith("# Retry logic\n\nKeep the `counter`."));
   assert.equal(record.commentBody, null);
+
+  capturePreferences = { enrichWithAI: false, defaultTags: ["During"] };
+  afterExtract = () => { capturePreferences = { enrichWithAI: true, defaultTags: ["After"] }; };
+  assert.equal((await capture()).status, "unconfigured");
+  assert.match(writes[1][0].memoBody.content, /^#rewind\/ready #source\/web #During\n/);
+
+  capturePreferences = { defaultTags: ["界".repeat(2731)] };
+  const oversize = await capture();
+  assert.equal(oversize.status, "error");
+  assert.match(oversize.toast, /size limit/);
+  assert.equal(writes.length, 2);
 });
 
 test("security: background context menu blocks fallbackSelectionText when content script reports blocked password input, and wire payloads reject remote file:// hosts", async () => {

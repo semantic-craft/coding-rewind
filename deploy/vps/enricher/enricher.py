@@ -396,7 +396,8 @@ class EnricherService:
             "captured_chat_context": ctx_text or None,
             "source": parsed["source_line"] or None,
         }
-        vocabulary = self.places_vocabulary()
+        already_placed = any(tok.startswith("#") and _place_ref(tok) for tok in parsed["ready_tag_line"].split())
+        vocabulary = [] if already_placed else self.places_vocabulary()
         if vocabulary:
             sys_prompt += PLACES_PROMPT_EN if lang == "en" else PLACES_PROMPT
             user_input["place_vocabulary"] = vocabulary

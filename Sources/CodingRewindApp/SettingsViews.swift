@@ -108,6 +108,7 @@ public final class SettingsConnectionDraft {
 
 public enum SettingsPage: String, CaseIterable, Identifiable, Sendable {
     case general
+    case capture
     case connection
     case keyboard
     case integrations
@@ -126,6 +127,7 @@ public enum SettingsPage: String, CaseIterable, Identifiable, Sendable {
     public var systemImage: String {
         switch self {
         case .general: "gearshape"
+        case .capture: "tray.and.arrow.down"
         case .connection: "network"
         case .keyboard: "keyboard"
         case .integrations: "puzzlepiece.extension"
@@ -225,6 +227,7 @@ public struct SettingsRootView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         switch navigationModel.selectedPage {
                         case .general: general
+                        case .capture: CaptureSettingsView(coordinator: coordinator, appearance: appearance)
                         case .connection: connection
                         case .keyboard: keyboard
                         case .integrations: integrations
@@ -795,6 +798,97 @@ enum AppAboutMetadata {
 
     static func openReleaseNotes(using coordinator: AppCoordinator) {
         coordinator.openURL(releasesURL)
+    }
+}
+
+@MainActor
+private struct CaptureSettingsView: View {
+    let coordinator: AppCoordinator
+    let appearance: AppAppearancePreferences
+    @State private var place: PlaceRef?
+    @State private var tags: String
+    @State private var includeContext: Bool
+    @State private var enrichWithAI: Bool
+
+    init(coordinator: AppCoordinator, appearance: AppAppearancePreferences) {
+        self.coordinator = coordinator
+        self.appearance = appearance
+        let defaults = appearance.captureDefaults
+        _place = State(initialValue: defaults.defaultPlace)
+        _tags = State(initialValue: defaults.defaultTags.joined(separator: ", "))
+        _includeContext = State(initialValue: defaults.includeContext)
+        _enrichWithAI = State(initialValue: defaults.enrichWithAI)
+    }
+
+    private var language: AppLanguage { appearance.effectiveLanguage }
+    private var places: [PlaceRecord] { coordinator.activePlaces.filter { $0.ref.kind != .person } }
+    private var enteredTags: [String] {
+        tags.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+    }
+    private var preferences: CapturePreferences {
+        CapturePreferences(
+            defaultPlace: place, defaultTags: enteredTags,
+            includeContext: includeContext, enrichWithAI: enrichWithAI
+        )
+    }
+    private var hasInvalidTags: Bool {
+        enteredTags.contains { CapturePreferences.normalizedTag($0) == nil }
+    }
+
+    var body: some View {
+        SettingsSection(label("桌面采集默认值", "Desktop Capture Defaults")) {
+            SettingsRow(label("默认落位", "Default Place"), layout: .field) {
+                Picker(label("默认落位", "Default Place"), selection: $place) {
+                    Text(label("无默认落位", "No Default Place")).tag(nil as PlaceRef?)
+                    if let place, !places.contains(where: { $0.ref == place }) {
+                        let archived = coordinator.places.contains { $0.ref == place && $0.archived }
+                        Text(archived ? "\(place.tag) \(label("（已归档）", "(Archived)"))" : place.tag)
+                            .tag(Optional(place))
+                    }
+                    ForEach(places, id: \.ref) { item in
+                        Text(item.title).tag(Optional(item.ref))
+                    }
+                }
+                .labelsHidden()
+                .accessibilityIdentifier("settings.capture.place")
+            }
+            SettingsRow(
+                label("默认标签", "Default Tags"), layout: .field,
+                help: label("用逗号或空格分隔。", "Separate tags with commas or spaces.")
+            ) {
+                TextField(label("默认标签", "Default Tags"), text: $tags)
+                    .labelsHidden()
+                    .accessibilityIdentifier("settings.capture.tags")
+            }
+            Toggle(label("随片段保存对话脉络", "Save Conversation Context"), isOn: $includeContext)
+                .accessibilityIdentifier("settings.capture.context")
+            Toggle(label("用 AI 生成摘要并自动落位", "Use AI to Summarize and Place Clips"), isOn: $enrichWithAI)
+                .accessibilityIdentifier("settings.capture.ai")
+            Text(label("关闭 AI 整理后，片段仍会同步到 Memos。", "Clips still sync to Memos with AI processing off."))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if hasInvalidTags {
+                Text(label("请使用普通标签。来源、状态和位置标签有各自的设置。", "Use ordinary tags. Source, status, and place tags are managed separately."))
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+            Button(label("保存采集设置", "Save Capture Settings")) {
+                appearance.setCaptureDefaults(preferences)
+                tags = preferences.defaultTags.joined(separator: ", ")
+            }
+            .rewindButtonRole(.primary)
+            .disabled(hasInvalidTags || preferences == appearance.captureDefaults)
+            .accessibilityIdentifier("settings.capture.save")
+        }
+        .task {
+            if places.isEmpty {
+                await coordinator.refreshCapturePlaces()
+            }
+        }
+    }
+
+    private func label(_ chinese: String, _ english: String) -> String {
+        language == .zhHans ? chinese : english
     }
 }
 

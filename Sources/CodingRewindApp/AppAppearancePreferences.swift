@@ -34,6 +34,7 @@ public enum AppPreferences {
 public final class AppAppearancePreferences {
     public private(set) var showsDockIcon: Bool
     public private(set) var showsSelectionPopup: Bool
+    public private(set) var captureDefaults: CapturePreferences
     public private(set) var languagePreference: AppLanguagePreference
     public private(set) var effectiveLanguage: AppLanguage
     public private(set) var errorMessage: String?
@@ -47,6 +48,7 @@ public final class AppAppearancePreferences {
 
     private static let dockKey = "showsDockIcon"
     private static let selectionPopupKey = "showsSelectionPopup"
+    private static let captureDefaultsKey = "captureDefaults"
     private static let languagePreferenceKey = "languagePreference"
 
     public init(
@@ -61,6 +63,13 @@ public final class AppAppearancePreferences {
         self.applyPolicy = applyPolicy
         self.showsDockIcon = defaults.object(forKey: Self.dockKey) as? Bool ?? true
         self.showsSelectionPopup = defaults.object(forKey: Self.selectionPopupKey) as? Bool ?? true
+        let capture = defaults.dictionary(forKey: Self.captureDefaultsKey)
+        self.captureDefaults = CapturePreferences(
+            defaultPlace: (capture?["place"] as? String).flatMap(PlaceRef.init(tag:)),
+            defaultTags: capture?["tags"] as? [String] ?? [],
+            includeContext: capture?["includeContext"] as? Bool ?? true,
+            enrichWithAI: capture?["enrichWithAI"] as? Bool ?? true
+        )
         let rawPref = defaults.string(forKey: Self.languagePreferenceKey)
         let pref = rawPref.flatMap(AppLanguagePreference.init(rawValue:)) ?? .system
         self.languagePreference = pref
@@ -102,6 +111,19 @@ public final class AppAppearancePreferences {
     public func setShowsSelectionPopup(_ enabled: Bool) {
         showsSelectionPopup = enabled
         defaults.set(enabled, forKey: Self.selectionPopupKey)
+    }
+
+    public func setCaptureDefaults(_ preferences: CapturePreferences) {
+        captureDefaults = preferences
+        var stored: [String: Any] = [
+            "tags": preferences.defaultTags,
+            "includeContext": preferences.includeContext,
+            "enrichWithAI": preferences.enrichWithAI
+        ]
+        if let place = preferences.defaultPlace {
+            stored["place"] = place.tag
+        }
+        defaults.set(stored, forKey: Self.captureDefaultsKey)
     }
 
     public func setLanguagePreference(_ preference: AppLanguagePreference) {

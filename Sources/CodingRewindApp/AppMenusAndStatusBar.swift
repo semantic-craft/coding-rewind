@@ -456,11 +456,13 @@ public final class StatusItemController: NSObject, NSMenuDelegate {
         )
         shortcuts.applyMenuShortcut(to: captureItem, for: .captureSelection)
         menu.addItem(captureItem)
-        menu.addItem(makeCommandMenuItem(
+        let quickCaptureItem = makeCommandMenuItem(
             title: QuickCapturePanel.menuTitle(in: lang),
             command: .quickCapture,
             handler: onCommand
-        ))
+        )
+        shortcuts.applyMenuShortcut(to: quickCaptureItem, for: .quickCapture)
+        menu.addItem(quickCaptureItem)
 
         if !snapshot.recentCards.isEmpty {
             let recentTitle = AppStrings.recentClips(in: lang)

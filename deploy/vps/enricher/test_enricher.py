@@ -1189,7 +1189,7 @@ class PlaceVocabularyTests(unittest.TestCase):
         state.memos["clip"] = {
             "name": "memos/clip",
             "createTime": "2026-11-21T00:00:00Z",
-            "content": "#rewind/pending #source/web #PROJECT/paper-02\n\n" + verbatim,
+            "content": "#rewind/pending #source/web\n\n" + verbatim,
         }
         places = {
             "p-paper": ("project/paper-02", "著作权法的身体预设", "论文02, 身体预设, embodiment", "active"),
@@ -1204,8 +1204,9 @@ class PlaceVocabularyTests(unittest.TestCase):
         state.ai_response = {
             **state.ai_response,
             "places": [
-                "#project/paper-02", "project/unknown", "person/old-friend", 7, None,
+                "project/unknown", "person/old-friend", 7, None,
                 "TOPIC/Embodiment", "topic/embodiment", "person/zhang-san", "topic/law-tech",
+                "#project/paper-02",
             ],
         }
         svc = self._run_upstream(state)
@@ -1221,10 +1222,27 @@ class PlaceVocabularyTests(unittest.TestCase):
             {"place": "topic/law-tech", "title": "法律与技术", "aliases": []},
         ])
         content = state.memos["clip"]["content"]
-        self.assertEqual(content.split("\n", 1)[0], "#rewind/ready #source/web #PROJECT/paper-02 #topic/embodiment #person/zhang-san")
+        self.assertEqual(content.split("\n", 1)[0], "#rewind/ready #source/web #topic/embodiment #person/zhang-san #topic/law-tech")
         self.assertTrue(content.endswith("\n\n" + verbatim))
         self.assertEqual([memo_id for memo_id, _ in state.patch_calls], ["clip"])
         self.assertEqual({memo_id: state.memos[memo_id]["content"] for memo_id in places}, place_contents)
+
+    def test_existing_place_is_preserved_while_the_clip_is_summarized(self) -> None:
+        state = MockBackendState()
+        state.ai_response = {**state.ai_response, "places": ["topic/embodiment"]}
+        verbatim = "  screenshot  analysis\n"
+        state.memos["clip"] = {
+            "name": "memos/clip",
+            "content": "#rewind/pending #source/macos #PROJECT/paper-02 #review\n\n" + verbatim,
+        }
+        state.memos["p"] = {"name": "memos/p", "content": _place_memo("topic/embodiment", "具身")}
+        svc = self._run_upstream(state)
+
+        self.assertEqual(svc.reconcile_once(), 1)
+        self.assertNotIn("place_vocabulary", json.loads(state.ai_calls[0]["messages"][1]["content"]))
+        content = state.memos["clip"]["content"]
+        self.assertTrue(content.startswith("#rewind/ready #source/macos #PROJECT/paper-02 #review\n\n> **Title:** "))
+        self.assertTrue(content.endswith("\n\n" + verbatim))
 
     def test_english_prompt_appends_english_places_instruction(self) -> None:
         state = MockBackendState()

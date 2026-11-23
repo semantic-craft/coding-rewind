@@ -8,22 +8,31 @@ import Observation
 public enum ShortcutAction: String, CaseIterable, Identifiable, Sendable {
     case captureSelection
     case toggleHUD
+    case quickCapture
 
     public var id: String { rawValue }
     public func title(in language: AppLanguage) -> String {
         AppStrings.shortcutTitle(self, in: language)
     }
     public var title: String { title(in: .zhHans) }
-    public var defaultShortcut: KeyboardShortcuts.Shortcut {
+    public var defaultShortcut: KeyboardShortcuts.Shortcut? {
         switch self {
         case .captureSelection:
             .init(.s, modifiers: [.control, .option, .shift, .command])
         case .toggleHUD:
             .init(.r, modifiers: [.control, .option])
+        case .quickCapture:
+            nil
         }
     }
     public var name: KeyboardShortcuts.Name { .init(rawValue, initial: defaultShortcut) }
-    public var command: AppCommand { self == .captureSelection ? .captureSelectionHotkey : .toggleHUD }
+    public var command: AppCommand {
+        switch self {
+        case .captureSelection: .captureSelectionHotkey
+        case .toggleHUD: .toggleHUD
+        case .quickCapture: .quickCapture
+        }
+    }
 }
 
 @MainActor
@@ -80,10 +89,8 @@ public final class AppShortcuts {
             return
         }
 
-        let newDefault = ShortcutAction.captureSelection.defaultShortcut
-        if let hudRaw = defaults.object(forKey: "KeyboardShortcuts_toggleHUD") as? String,
-           let hudShortcut = try? JSONDecoder().decode(KeyboardShortcuts.Shortcut.self, from: Data(hudRaw.utf8)),
-           hudShortcut == newDefault {
+        guard let newDefault = ShortcutAction.captureSelection.defaultShortcut,
+              !ShortcutAction.allCases.contains(where: { $0 != .captureSelection && $0.name.shortcut == newDefault }) else {
             return
         }
 

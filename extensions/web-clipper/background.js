@@ -3,7 +3,7 @@
 
 import "./i18n.js";
 import { buildFallbackClip, isPageReadingURL } from "./extractors.mjs";
-import { buildMemosWirePayloads, flushOutbox, saveClipWithOutbox } from "./memos_payload.mjs";
+import { flushOutbox, normalizeCapturePreferences, saveClipWithOutbox } from "./memos_payload.mjs";
 
 const SELECTION_MENU_ID = "save-to-coding-rewind";
 const PAGE_LINK_MENU_ID = "save-page-link-to-coding-rewind";
@@ -17,6 +17,7 @@ const CONTEXT_MENUS = [
     documentUrlPatterns: WEB_PAGE_PATTERNS }
 ];
 const OUTBOX_ALARM_NAME = "rewind-outbox-flush";
+const MAX_PAGE_READING_MEMO_BYTES = 8192;
 const i18n = globalThis.CodingRewindI18n;
 
 let serialQueue = Promise.resolve();
@@ -68,6 +69,15 @@ async function getMemosSettings() {
     token: typeof data?.memosToken === "string" ? data.memosToken : "",
     locale: resolveExtensionLocale(cachedUiLanguage)
   };
+}
+
+async function readCapturePreferences() {
+  try {
+    const data = await chrome.storage.local.get(["capturePreferences"]);
+    return normalizeCapturePreferences(data?.capturePreferences);
+  } catch {
+    return null;
+  }
 }
 
 function setupMenusAndAlarms() {
@@ -154,8 +164,18 @@ async function notifyTabToast(tabId, result) {
   } catch {}
 }
 
-async function processClipSave(clip) {
+function unconfirmedSaveResult() {
+  return {
+    status: "error",
+    queued: false,
+    toast: i18n.t(resolveExtensionLocale(), "toastSaveUnconfirmedError")
+  };
+}
+
+async function processClipSave(clip, { capturePreferences, maximumMemoBytes } = {}) {
   try {
+    const preferences = capturePreferences === undefined ? await readCapturePreferences() : capturePreferences;
+    if (!preferences) return unconfirmedSaveResult();
     return await runSerialized(async () => {
       const { baseUrl, token, locale } = await getMemosSettings();
       return saveClipWithOutbox({
@@ -163,16 +183,13 @@ async function processClipSave(clip) {
         baseUrl,
         token,
         storage: chromeOutboxStorage,
-        locale
+        locale,
+        capturePreferences: preferences,
+        maximumMemoBytes
       });
     });
   } catch {
-    const locale = resolveExtensionLocale(cachedUiLanguage);
-    return {
-      status: "error",
-      queued: false,
-      toast: i18n.t(locale, "toastSaveUnconfirmedError")
-    };
+    return unconfirmedSaveResult();
   }
 }
 
@@ -187,8 +204,13 @@ async function triggerFlushOutbox() {
   });
 }
 
-async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
+async function handleTabSelectionCapture(tab, fallbackSelectionText = "", capturePreferences = undefined) {
   if (!tab || !tab.id) return;
+  const preferences = capturePreferences === undefined ? await readCapturePreferences() : capturePreferences;
+  if (!preferences) {
+    await notifyTabToast(tab.id, unconfirmedSaveResult());
+    return;
+  }
   let clip = null;
   let blocked = false;
   try {
@@ -210,7 +232,7 @@ async function handleTabSelectionCapture(tab, fallbackSelectionText = "") {
   }
 
   if (!clip || !clip.selectedMarkdown) return;
-  const result = await processClipSave(clip);
+  const result = await processClipSave(clip, { capturePreferences: preferences });
   await notifyTabToast(tab.id, result);
 }
 
@@ -244,22 +266,21 @@ async function handlePageReadingCapture(info, tab) {
     return;
   }
   try {
-    const { excludedDomains } = await chrome.storage.local.get(["excludedDomains"]);
+    const data = await chrome.storage.local.get(["excludedDomains", "capturePreferences"]);
+    const capturePreferences = normalizeCapturePreferences(data?.capturePreferences);
     const result = await sendCaptureRequest(tab.id, {
       type: "REWIND_EXTRACT_PAGE_READING",
       pageUrl,
-      excludedDomains
+      excludedDomains: data?.excludedDomains
     }, { frameId: 0 });
     if (result?.clip?.sourceUrl !== pageUrl || !result.clip.selectedMarkdown) {
       await feedback("toastPageReadingUnavailable");
       return;
     }
-    const { memoBody } = buildMemosWirePayloads(result.clip);
-    if (new TextEncoder().encode(memoBody.content).byteLength > 8192) {
-      await feedback("toastPageReadingTooLarge");
-      return;
-    }
-    const saved = await processClipSave(result.clip);
+    const saved = await processClipSave(result.clip, {
+      capturePreferences,
+      maximumMemoBytes: MAX_PAGE_READING_MEMO_BYTES
+    });
     if (result.truncated && saved.status !== "error") {
       saved.toast += i18n.t(resolveExtensionLocale(), "toastPageReadingTruncated");
     }
@@ -315,9 +336,12 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
 
   chrome.commands.onCommand.addListener(async (command) => {
     if (command !== "save-selection") return;
-    const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [capturePreferences, [activeTab]] = await Promise.all([
+      readCapturePreferences(),
+      chrome.tabs.query({ active: true, currentWindow: true })
+    ]);
     if (activeTab) {
-      await handleTabSelectionCapture(activeTab);
+      await handleTabSelectionCapture(activeTab, "", capturePreferences);
     }
   });
 
@@ -341,7 +365,14 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
       return false;
     }
     if (msg.type === "REWIND_SAVE_CLIP" && msg.clip) {
-      processClipSave(msg.clip)
+      let capturePreferences;
+      if (Object.hasOwn(msg, "capturePreferences")) {
+        const snapshot = msg.capturePreferences;
+        capturePreferences = snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+          ? normalizeCapturePreferences(snapshot)
+          : null;
+      }
+      processClipSave(msg.clip, { capturePreferences })
         .then((res) => sendResponse(res));
       return true;
     }

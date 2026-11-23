@@ -378,24 +378,29 @@ public enum MemosWireFormat {
         sourceURL: String?,
         capturedAt: Date,
         hasContext: Bool,
-        hasOriginal: Bool = false
+        hasOriginal: Bool = false,
+        preferences: CapturePreferences = CapturePreferences()
     ) throws -> String {
         let cleanedBody = verbatimText.replacingOccurrences(of: "\0", with: "")
         guard !cleanedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw RewindError.emptySelection
         }
         let safePlatform = sourcePlatform.isEmpty ? "macos" : sourcePlatform
-        let tags = hasContext
-            ? "#rewind/pending #rewind/has-ctx #source/\(safePlatform)"
-            : "#rewind/pending #source/\(safePlatform)"
+        var tags = [preferences.enrichWithAI ? "#rewind/pending" : "#rewind/ready"]
+        if preferences.enrichWithAI && preferences.includeContext && hasContext {
+            tags.append("#rewind/has-ctx")
+        }
+        tags.append("#source/\(safePlatform)")
+        if hasOriginal { tags.append(originalTag) }
+        if let place = preferences.defaultPlace { tags.append("#\(place.tag)") }
+        tags.append(contentsOf: preferences.defaultTags.map { "#\($0)" })
         let sourceLine = formatSourceLine(
             sourceTitle: sourceTitle,
             sourcePlatform: safePlatform,
             sourceURL: sourceURL,
             capturedAt: capturedAt
         )
-        let originalTag = hasOriginal ? " \(Self.originalTag)" : ""
-        return "\(tags)\(originalTag)\n\n\(sourceLine)\n\n\(cleanedBody)"
+        return "\(tags.joined(separator: " "))\n\n\(sourceLine)\n\n\(cleanedBody)"
     }
 
     public static let originalTag = "#rewind/original"
