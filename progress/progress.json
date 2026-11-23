@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "5427845ec20b8358a62782718e29eed099e58828",
+    "main": "a81b05eeff5c2f7061de315420b90f189f1fb0df",
     "open_pulls": [],
     "pulls": [
       {
@@ -411,9 +411,32 @@
         "merged": true,
         "number": 52,
         "state": "closed"
+      },
+      {
+        "base": "5427845ec20b8358a62782718e29eed099e58828",
+        "head": "9ae5efb5c8b186147ddcb561e3e85e522b005e09",
+        "merge_commit": "b9116ea456e8c10780deb41612a7af73c31fcb18",
+        "merged": true,
+        "number": 61,
+        "state": "closed"
+      },
+      {
+        "base": "b9116ea456e8c10780deb41612a7af73c31fcb18",
+        "head": "919272afd439797d816091628238c7f3298fe98a",
+        "merge_commit": "a81b05eeff5c2f7061de315420b90f189f1fb0df",
+        "merged": true,
+        "number": 62,
+        "state": "closed"
       }
     ],
     "releases": [
+      {
+        "draft": false,
+        "id": 454996608,
+        "prerelease": false,
+        "published_at": "2026-11-23T04:43:39Z",
+        "tag": "v0.8.0"
+      },
       {
         "draft": false,
         "id": 451728201,
@@ -483,7 +506,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-23T00:32:20.014048Z",
+  "observed_at": "2026-11-23T04:44:35.139583Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -500,6 +523,45 @@
   "repository": "semantic-craft/coding-rewind",
   "schema_version": 1,
   "sections": [
+    {
+      "id": "v0-8-0-capture-release",
+      "items": [
+        {
+          "evidence": [
+            {
+              "kind": "pull",
+              "note": "采集设置经 macOS 与 Linux CI 验证后合并。",
+              "ref": 61
+            },
+            {
+              "kind": "pull",
+              "note": "正式版版本号与本地全仓门禁已验证。",
+              "ref": 62
+            }
+          ],
+          "id": "v0-8-0-capture-merge",
+          "next": "",
+          "status": "done",
+          "summary": "默认落位、标签、全局快速暂存与处理控制已合并。桌面、CLI、MCP 和 Chrome 扩展对齐 v0.8.0。",
+          "title": "合并采集设置与统一版本号"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "release",
+              "note": "Developer ID 签名与 Apple 公证通过。重新下载两个归档，校验 SHA-256、公证票据和 Gatekeeper。",
+              "ref": "v0.8.0"
+            }
+          ],
+          "id": "v0-8-0-notarized-distribution",
+          "next": "本机正式版安装与 VPS 增强器部署另行验收。",
+          "status": "done",
+          "summary": "GitHub Releases 已公开 v0.8.0。macOS 为 build 11，适用于 Apple Silicon 和 macOS 14 及以上。",
+          "title": "发布公证 macOS 包和 Chrome 扩展"
+        }
+      ],
+      "title": "v0.8.0 采集设置与灵感资料库发布"
+    },
     {
       "id": "general-inspiration-capture",
       "items": [
@@ -3463,7 +3525,9 @@
       49,
       50,
       51,
-      52
+      52,
+      61,
+      62
     ]
   }
 }
