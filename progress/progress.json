@@ -9,7 +9,7 @@
         "updated_at": "2026-11-13T23:47:28Z"
       }
     ],
-    "main": "eccc5a7af8e944ecc0b1e5041fead3ff39d3493d",
+    "main": "5427845ec20b8358a62782718e29eed099e58828",
     "open_pulls": [],
     "pulls": [
       {
@@ -483,7 +483,7 @@
     "docs/code-quality.md",
     "docs/milestones.md"
   ],
-  "observed_at": "2026-11-22T16:39:59.368324Z",
+  "observed_at": "2026-11-23T00:32:20.014048Z",
   "outputs": [
     "progress/index.html"
   ],
@@ -502,95 +502,133 @@
   "sections": [
     {
       "id": "general-inspiration-capture",
-      "title": "无选区灵感采集",
       "items": [
         {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "原生多行暂存窗口",
+              "ref": "Sources/CodingRewindApp/QuickCapturePanel.swift"
+            },
+            {
+              "kind": "file",
+              "note": "书签使用原有私密保存与离线队列",
+              "ref": "extensions/web-clipper/background.js"
+            },
+            {
+              "kind": "note",
+              "note": "隔离应用包从实际菜单保存代码和链接。磁盘回读确认了缩进、空行、重启后的队列及网页回链。",
+              "ref": "desktop-quick-capture-qa"
+            },
+            {
+              "kind": "file",
+              "note": "后台菜单回归验证私密书签、URL 过滤和未配置时入队。",
+              "ref": "extensions/web-clipper/test_extractors.mjs"
+            }
+          ],
           "id": "general-inspiration-text-and-link",
-          "title": "桌面输入、粘贴与浏览器书签",
+          "next": "Chrome 交付扩展的实际右键操作待验收。",
           "status": "done",
           "summary": "桌面快速暂存接入原有片段与离线队列。Chrome 右键另有独立的网页链接入口。",
+          "title": "桌面输入、粘贴与浏览器书签"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindApp/QuickCapturePanel.swift",
-              "note": "原生多行暂存窗口"
-            },
-            {
-              "kind": "file",
-              "ref": "extensions/web-clipper/background.js",
-              "note": "书签使用原有私密保存与离线队列"
-            },
-            {
-              "kind": "note",
-              "ref": "desktop-quick-capture-qa",
-              "note": "隔离应用包从实际菜单保存代码和链接。磁盘回读确认了缩进、空行、重启后的队列及网页回链。"
-            },
-            {
-              "kind": "file",
-              "ref": "extensions/web-clipper/test_extractors.mjs",
-              "note": "后台菜单回归验证私密书签、URL 过滤和未配置时入队。"
+              "note": "真实 Git 与 CLI 保存回归验证固定提交、行区间和无效输入。",
+              "ref": "Tests/CodingRewindCLITests/GitSourceCLITests.swift"
             }
           ],
-          "next": "Chrome 交付扩展的实际右键操作待验收。"
-        },
-        {
           "id": "general-inspiration-git-source",
-          "title": "Git 文件与行号回跳",
+          "next": "从已推送的实际项目核对托管平台的链接打开行为。",
           "status": "done",
           "summary": "CLI 在选定的 Git 提交内验证文件路径和行范围，保存含完整提交 ID 的回跳链接。",
+          "title": "Git 文件与行号回跳"
+        },
+        {
           "evidence": [
             {
               "kind": "file",
-              "ref": "Tests/CodingRewindCLITests/GitSourceCLITests.swift",
-              "note": "真实 Git 与 CLI 保存回归验证固定提交、行区间和无效输入。"
+              "note": "测试正文门控和后台保存。在隔离 Chrome 中回读了实际正文、离线队列与服务端记录。",
+              "ref": "extensions/web-clipper/test_extractors.mjs"
             }
           ],
-          "next": "从已推送的实际项目核对托管平台的链接打开行为。"
-        },
-        {
           "id": "general-inspiration-page-reading",
-          "title": "网页正文留底",
+          "next": "实际 Chrome 原生右键点击待验收。",
           "status": "done",
           "summary": "Chrome 可显式采集当前普通网页的可见阅读正文和出处。",
-          "evidence": [
-            {
-              "kind": "file",
-              "ref": "extensions/web-clipper/test_extractors.mjs",
-              "note": "测试正文门控和后台保存。在隔离 Chrome 中回读了实际正文、离线队列与服务端记录。"
-            }
-          ],
-          "next": "实际 Chrome 原生右键点击待验收。"
+          "title": "网页正文留底"
         },
         {
-          "id": "general-inspiration-original",
-          "title": "文件和截图原件",
-          "status": "unverified",
-          "summary": "快速暂存支持显式选择文件和粘贴截图。私有附件保留原件，提取文字可供检索。",
           "evidence": [
             {
               "kind": "file",
-              "ref": "Sources/CodingRewindCore/ClipOriginal.swift",
-              "note": "独立保存文件名与原件字节。"
+              "note": "独立保存文件名与原件字节。",
+              "ref": "Sources/CodingRewindCore/ClipOriginal.swift"
             },
             {
               "kind": "file",
-              "ref": "Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift",
-              "note": "覆盖上传后中断、重试确认和并发删除。"
+              "note": "覆盖上传后中断、重试确认和并发删除。",
+              "ref": "Tests/CodingRewindCoreTests/CodingRewindCoreTests.swift"
             },
             {
               "kind": "note",
-              "ref": "memos-original-contract",
-              "note": "固定版 Memos 实测了私有附件、相同 ID 的重试、原件读回和随片段删除。"
+              "note": "固定版 Memos 实测了私有附件、相同 ID 的重试、原件读回和随片段删除。",
+              "ref": "memos-original-contract"
             },
             {
               "kind": "note",
-              "ref": "original-offline-sync-export",
-              "note": "正式采集代码在隔离数据目录保存文本及 OCR 样本。进程重启后连到固定版 Memos，确认两个私有附件与导出字节一致。"
+              "note": "正式采集代码在隔离数据目录保存文本及 OCR 样本。进程重启后连到固定版 Memos，确认两个私有附件与导出字节一致。",
+              "ref": "original-offline-sync-export"
             }
           ],
-          "next": "核对隔离桌面版实际选择、粘贴及另存原件。"
+          "id": "general-inspiration-original",
+          "next": "核对隔离桌面版实际选择、粘贴及另存原件。",
+          "status": "unverified",
+          "summary": "快速暂存支持显式选择文件和粘贴截图。私有附件保留原件，提取文字可供检索。",
+          "title": "文件和截图原件"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "file",
+              "note": "采集选择在创建队列条目前写入正文和评论。",
+              "ref": "Sources/CodingRewindCore/CapturePreferences.swift"
+            },
+            {
+              "kind": "file",
+              "note": "覆盖上下文和 AI 四种组合、单次覆盖与已归档默认位置。",
+              "ref": "Tests/CodingRewindCoreTests/CapturePreferencesTests.swift"
+            },
+            {
+              "kind": "file",
+              "note": "覆盖浏览器设置、等待提取时切换设置和离线重放。",
+              "ref": "extensions/web-clipper/test_extractors.mjs"
+            }
+          ],
+          "id": "capture-preferences-implementation",
+          "next": "",
+          "status": "done",
+          "summary": "桌面设置支持默认项目或主题、默认标签与独立的上下文和 AI 开关。快速暂存支持全局快捷键及单次更改。浏览器扩展可独立设置默认标签和处理范围。",
+          "title": "默认落位、全局快速暂存与采集隐私"
+        },
+        {
+          "evidence": [
+            {
+              "kind": "note",
+              "note": "应用界面实际操作，隔离 SQLite Memos 合同服务核对首行、原文、私密性和评论。",
+              "ref": "capture-preferences-qa"
+            }
+          ],
+          "id": "capture-preferences-device-acceptance",
+          "next": "正式应用安装和增强器部署另行验收。",
+          "status": "done",
+          "summary": "隔离包重启后读回桌面默认，实测全局组合键打开快速暂存。默认项目和单次主题分别回读为私有片段。隔离 Chrome 中的划词暂存保留出处与标签，上下文评论为零。",
+          "title": "桌面隔离包与 Chrome 划词验收"
         }
-      ]
+      ],
+      "title": "无选区灵感采集"
     },
     {
       "id": "library-workspace-three-sources",
