@@ -6,12 +6,16 @@ import CodingRewindCore
 @MainActor
 final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private let window = NSPanel(
-        contentRect: NSRect(x: 0, y: 0, width: 520, height: 300),
+        contentRect: NSRect(x: 0, y: 0, width: 520, height: 370),
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
     )
     private let editor = NSTextView(frame: .zero)
+    private let placeLabel = NSTextField(labelWithString: "")
+    private let placeMenu = NSPopUpButton()
+    private let tagsField = NSTextField()
+    private let aiToggle = NSButton(checkboxWithTitle: "", target: nil, action: nil)
     private let hint = NSTextField(wrappingLabelWithString: "")
     private let status = NSTextField(wrappingLabelWithString: "")
     private let saveButton = NSButton()
@@ -20,13 +24,17 @@ final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private let pasteImageButton = NSButton()
     private let removeFileButton = NSButton()
     private let fileLabel = NSTextField(labelWithString: "")
-    private let onSave: @MainActor (String, ClipOriginal?) async -> SelectionCaptureOutcome
+    private let onSave: @MainActor (String, ClipOriginal?, CapturePreferences) async -> SelectionCaptureOutcome
     private var language: AppLanguage
     private var isSaving = false
     private var isPreparing = false
     private var preparedOriginal: QuickCaptureOriginal?
+    private var places: [PlaceRef] = []
 
-    init(language: AppLanguage, onSave: @escaping @MainActor (String, ClipOriginal?) async -> SelectionCaptureOutcome) {
+    init(
+        language: AppLanguage,
+        onSave: @escaping @MainActor (String, ClipOriginal?, CapturePreferences) async -> SelectionCaptureOutcome
+    ) {
         self.language = language
         self.onSave = onSave
         super.init()
@@ -65,14 +73,20 @@ final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let fileActions = NSStackView(views: [chooseFileButton, pasteImageButton, fileLabel, removeFileButton])
 
+        placeMenu.setAccessibilityIdentifier("quickCapture.place")
+        tagsField.setAccessibilityIdentifier("quickCapture.tags")
+        aiToggle.setAccessibilityIdentifier("quickCapture.ai")
+        placeMenu.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tagsField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let placement = NSStackView(views: [placeLabel, placeMenu, tagsField])
         let buttons = NSStackView(views: [status, closeButton, saveButton])
-        let stack = NSStackView(views: [hint, scroll, fileActions, buttons])
+        let stack = NSStackView(views: [hint, scroll, fileActions, placement, aiToggle, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         window.contentView = stack
-        NSLayoutConstraint.activate([hint, scroll, fileActions, buttons].map {
+        NSLayoutConstraint.activate([hint, scroll, fileActions, placement, buttons].map {
             $0.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -16)
         })
         window.delegate = self
@@ -96,9 +110,39 @@ final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
         chooseFileButton.title = language == .zhHans ? "选择文件…" : "Choose File…"
         pasteImageButton.title = language == .zhHans ? "粘贴截图" : "Paste Screenshot"
         removeFileButton.title = language == .zhHans ? "移除" : "Remove"
+        placeLabel.stringValue = language == .zhHans ? "落位" : "Place"
+        placeMenu.setAccessibilityLabel(placeLabel.stringValue)
+        placeMenu.itemArray.first?.title = noPlaceTitle
+        tagsField.placeholderString = language == .zhHans ? "标签" : "Tags"
+        tagsField.setAccessibilityLabel(tagsField.placeholderString)
+        aiToggle.title = language == .zhHans ? "用 AI 整理这条片段" : "Use AI to Organize This Clip"
     }
 
-    func present() {
+    private var noPlaceTitle: String {
+        language == .zhHans ? "无指定落位" : "No Place Selected"
+    }
+
+    func present(preferences: CapturePreferences, places availablePlaces: [PlaceRecord]) {
+        if editor.string.isEmpty && preparedOriginal == nil && !isSaving && !isPreparing {
+            places = availablePlaces.map(\.ref)
+            placeMenu.removeAllItems()
+            placeMenu.addItem(withTitle: noPlaceTitle)
+            for place in availablePlaces {
+                let title = "\(place.title) · \(place.ref.tag)"
+                placeMenu.addItem(withTitle: title)
+            }
+            if let selected = preferences.defaultPlace {
+                if !places.contains(selected) {
+                    places.append(selected)
+                    placeMenu.addItem(withTitle: selected.tag)
+                }
+                if let index = places.firstIndex(of: selected) {
+                    placeMenu.selectItem(at: index + 1)
+                }
+            }
+            tagsField.stringValue = preferences.defaultTags.joined(separator: ", ")
+            aiToggle.state = preferences.enrichWithAI ? .on : .off
+        }
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         if !isSaving {
@@ -178,6 +222,9 @@ final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
         chooseFileButton.isEnabled = idle
         pasteImageButton.isEnabled = idle
         removeFileButton.isEnabled = idle
+        placeMenu.isEnabled = idle
+        tagsField.isEnabled = idle
+        aiToggle.isEnabled = idle
         removeFileButton.isHidden = preparedOriginal == nil
         fileLabel.stringValue = preparedOriginal?.original.filename ?? ""
         closeButton.isEnabled = idle
@@ -191,6 +238,18 @@ final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
 
     @objc private func save() {
         guard saveButton.isEnabled else { return }
+        let tags = tagsField.stringValue.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+        guard tags.allSatisfy({ CapturePreferences.normalizedTag($0) != nil }) else {
+            status.stringValue = language == .zhHans ? "请检查标签。" : "Check the tags."
+            window.makeFirstResponder(tagsField)
+            return
+        }
+        let index = placeMenu.indexOfSelectedItem - 1
+        let preferences = CapturePreferences(
+            defaultPlace: places.indices.contains(index) ? places[index] : nil,
+            defaultTags: tags,
+            enrichWithAI: aiToggle.state == .on
+        )
         let draft = editor.string
         let original = preparedOriginal?.original
         if original != nil, draft.utf8.count > 6200 {
@@ -207,7 +266,7 @@ final class QuickCapturePanel: NSObject, NSTextViewDelegate, NSWindowDelegate {
         status.stringValue = language == .zhHans ? "正在保存…" : "Saving…"
         updateControls()
         Task {
-            let outcome = await onSave(text, original)
+            let outcome = await onSave(text, original, preferences)
             isSaving = false
             switch outcome {
             case .saved, .queuedOffline:

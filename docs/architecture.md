@@ -63,7 +63,7 @@
 
 - **两阶段划词探测与非激活暂存胶囊 `SelectionPopupController.swift`**，参照 MIT 项目 `GaimsDevSoftware/linuxpop` 与 `p0deje/Maccy`，仅针对白名单宿主 `com.google.antigravity`、`com.openai.codex` 与 `com.google.GeminiMacOS` 响应拖拽（距离不少于 6pt）、双击或 Shift 扩展选区手势（含 Shift 方向键扩选），浏览器与普通单次点击一律忽略。第一阶段探测完全只读，零剪贴板触碰且零 `CGEvent` 投递，排除编辑器、终端与输入框后在选区居中展示带 `.nonactivatingPanel` 的胶囊按钮（`com.google.antigravity` 与 `com.google.GeminiMacOS` 默认锚定于选区上方 8pt，靠近屏幕顶端时下翻；`com.openai.codex` 默认锚定于选区下方 8pt 以避让 ChatGPT 顶部原生选区栏，靠近屏幕底端时上翻），点击或按下捕获热键时原位反馈“暂存中…”与“已同步 / 待同步”并在 900 毫秒后自动收起，不额外抢焦或展开主 HUD；仅在配置缺失或报错时唤起非激活 HUD 给出提示。
 - **零污染选区捕获 `MacOSSelection.swift`**，参照 MIT 项目 `tisfeng/SelectedTextKit` 与 `p0deje/Maccy`，触发捕获（默认 `⌃⌥⇧⌘S`，即 `Hyper+S`）时先读取焦点元素或聊天页面 `AXWebArea` 的 `kAXSelectedTextAttribute`；仅在为空或受限时先异步等待所有物理修饰键释放（上限 1 秒），再备份当前 `NSPasteboard.general.pasteboardItems` 的全部类型字节与 `changeCount`，投递 `CGEvent` 模拟 `⌘C` 并在 200 毫秒上限内异步检查 `changeCount` 增长，退出时于 `defer` 无条件还原原剪贴板；若 `changeCount` 未变则判定无选区，绝不误存旧剪贴板。当前台应用为 `com.google.antigravity` 时，从选区所属 `AXWebArea` 的本机会话 URL（`http://127.0.0.1:<port>/c/<uuid>` 或 `https://127.0.0.1/c/<uuid>`）确认编号，再由 Core 读取对应 transcript；不能定位消息时不附带猜测的上下文，当前台为 Safari、Chrome、Arc 或 Brave 时提取活动标签页标题与链接。
-- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`⌘I` 切换停靠式“脉络”预览抽屉（展示完整未截断选中原文、来源标题与时间、可一键复制的 `Session ID`、会话开场白 `Session Opening` 或网页开头导语 `Page Lead`、紧邻提问、近期轮次与 AI 笔记，按 `inFlightCaptureEntries -> OfflineOutbox -> LocalNotesStore + Memos /comments` 三层懒加载）、三级 `Esc` 收起（优先退出删前确认条，其次收起脉络抽屉，再关闭浮窗）以及区分 `待整理` 与 `AI 已整理` 状态徽标。外部跳转由显式 `SourceLocator` 建模：`http(s)` 网页展示“打开原网页”并核对 `NSWorkspace.shared.open` 返回值（失败弹出错误横幅），Antigravity 会话（`conversation://<uuid>`）在浮窗提供一键“复制会话 ID”与“唤醒 Antigravity”（同时保留 `⌘Return` 接聊提示词内 `[出处](conversation://<uuid>)` 原生可点击）。每张卡片常驻行内脉络、来源动作、归档与删除按钮及右键上下文菜单，勾选栏提供批量归档（`⌘E`）与删除（`⌘⌫` 弹出底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；刷新期间对正在删除中的卡片抑制重现，已成功删除卡片若远端列表暂存未清空则在本地过滤不复活。
+- **非激活毛玻璃浮窗 `QuickPeekHUDViews.swift`**，参照 `p0deje/Maccy` 使用带 `.nonactivatingPanel` 样式的 `NSPanel` 搭配 `.hudWindow` 材质 `NSVisualEffectView`，释放浮窗快捷键（默认 `⌃⌥R`）呼出近 72 小时热流卡片，支持关键词过滤、空格多选、`⌘I` 切换停靠式“脉络”预览抽屉（展示完整未截断选中原文、来源标题与时间、可一键复制的 `Session ID`、会话开场白 `Session Opening` 或网页开头导语 `Page Lead`、紧邻提问、近期轮次与 AI 笔记，按 `inFlightCaptureEntries -> OfflineOutbox -> LocalNotesStore + Memos /comments` 三层懒加载）、三级 `Esc` 收起（优先退出删前确认条，其次收起脉络抽屉，再关闭浮窗）以及区分 `待整理` 与 `已就绪` 状态徽标。外部跳转由显式 `SourceLocator` 建模：`http(s)` 网页展示“打开原网页”并核对 `NSWorkspace.shared.open` 返回值（失败弹出错误横幅），Antigravity 会话（`conversation://<uuid>`）在浮窗提供一键“复制会话 ID”与“唤醒 Antigravity”（同时保留 `⌘Return` 接聊提示词内 `[出处](conversation://<uuid>)` 原生可点击）。每张卡片常驻行内脉络、来源动作、归档与删除按钮及右键上下文菜单，勾选栏提供批量归档（`⌘E`）与删除（`⌘⌫` 弹出底部行内红色确认条，`⌥⌘⌫` 或按住 `Option` 点击直接删除）；刷新期间对正在删除中的卡片抑制重现，已成功删除卡片若远端列表暂存未清空则在本地过滤不复活。
 - **全局快捷键 `AppShortcuts.swift`**，`ShortcutAction` 定义捕获（默认 `⌃⌥⇧⌘S`）与浮窗（默认 `⌃⌥R`）两个动作；启动时通过 `CodingRewind.captureSelectionShortcutSchemaVersion` 执行一次性 v2 迁移，仅将未自定义的旧版默认 `⌃⌥S` 平滑升级至 `⌃⌥⇧⌘S`，保留用户显式清空或自定义组合。`KeyboardShortcuts.Name` 是配置唯一来源，`AppShortcuts` 组织校验、真实注册状态与动作，主菜单、状态菜单、划词胶囊及 HUD 提示从同一配置派生。设置直接使用上游 Recorder，实时保存，清空保留禁用值，恢复默认仍走校验。系统快捷键、动作重键和当前主菜单冲突阻止保存；运行时注册失败保留配置，显示原始 OSStatus 并提供重试。仅实际生效的绑定显示菜单 keyEquivalent，录制期间暂停不显示失败。库内既有 Carbon 注册以独占选项申请，其他独占注册的冲突会返回失败；macOS 允许独占注册优先于其他应用的共享注册，无法枚举全部其他应用绑定。菜单跟踪按已接受的 keyDown 配对 keyUp，不受修饰键先释放影响。Carbon 注册与菜单跟踪负责事件，应用不另设监听器。`AppCoordinator` 在异步捕获期间拒绝重入，避免热键、菜单和按钮重复入队。
 - **可编辑接聊草稿框与宿主对话闭环**，勾选卡片按下 `⌘Return`（或点击“开始对话”），先在浮窗内打开可编辑多行草稿视图 `HUDConversationDraftView`（`Esc` 返回卡片列表），由 `ConversationPrompt` 预填包含每张卡片标识（中文 `- 卡片 ID：\`<id>\``、英文 `- Clip ID: \`<id>\``）、脉络抬头、原始选段及出处链接的共享 Markdown 提示词；当 `aiAccessMode == .readWrite` 时，末尾附带闭环说明，提示宿主 AI 在归纳推演后可凭卡片 ID 调用 `append_snippet_note` 将结论挂回原卡片，或调用 `create_snippet` 将新生成的提纲草稿暂存回 Coding Rewind（`aiAccessMode == .readOnly` 时省略该回写说明）。选中 Antigravity 时主操作（`⌘Return`）为 `复制并唤醒 Antigravity`，次要操作为 `直接新建对话`（经官方 sidecar 调用 `agentapi new-conversation`）；选中 DSH 时主操作（`⌘Return`）为 `填入 DSH 新会话`（经轻量 DSH Desktop 插件复用空白会话并以 `whenDraftExists: 'append'` 预填草稿不自动发送，自动归档勾选文案切换为「填入后归档」），次要操作保留 `复制并唤醒 DSH`（宿主未就绪报错时完整保留草稿不丢失）。`AppCoordinator` 唯一持有草稿、目标与归档意图；目标偏好保存到 `conversation-host.json`，默认 Antigravity（旧版 `"codex"` 在启动时自动迁移为 `"dsh"`）。已有任一宿主待确认或待归档请求时始终优先恢复它，只有确认宿主实际收件或预填后才允许自动归档。
 - **AI 接入与权限面板**，在桌面端“设置 → 插件与权限”并列管理 Antigravity 插件与 DSH 插件（DeepSeek Harness），下设“AI 接入与权限”（`AI Access & Permissions`）分区，展示本机 MCP 二进制状态、只读与读写切换开关（原子写入 `<dataDir>/config.json` 的 `ai_access_mode` 字段并保留 `memos_url`，默认 `"read_write"`；当环境变量 `CODING_REWIND_AI_ACCESS` 非空时覆盖磁盘配置、禁用界面开关并展示环境管理提示）以及一键复制标准零明文 `mcpServers` JSON 配置按钮（面向 Claude Desktop、Cursor、DSH、Antigravity 等宿主）。
@@ -108,6 +108,10 @@ Antigravity 成功只认结构化回执中的会话编号。DSH 成功只认 DSH
 
 「快速暂存」复用选区采集的私密片段与离线队列。单独输入 HTTP(S) 链接时保留回跳地址。终端可通过 `create --stdin --git-file` 保存内容和 Git 出处。CLI 在选定提交的 Git 对象中验证文件及可选行范围，生成固定到提交的 HTTPS 链接。Memos 只收到回跳链接与仓库相对位置。
 
+桌面采集从本机偏好读取 `CapturePreferences`，覆盖选区、DSH 胶囊和快速暂存。浏览器扩展从 `chrome.storage.local` 读取独立的标签、上下文和 AI 设置。两端在创建离线队列条目前将采集选择固化到正文与评论。快速暂存可覆盖这一次的默认项目或主题、标签和 AI 设置。CLI 与 MCP 的显式创建继续按调用参数执行。
+
+关闭 AI 整理时，片段以 `#rewind/ready` 直接入库，增强器跳过它。该状态表示片段已就绪。上下文由单独的开关决定，开启时仍可写入 `PRIVATE` 评论。`#rewind/has-ctx` 只用于待增强片段的上下文等待窗口。
+
 Chrome 的书签动作只保存页面 URL 和标题。正文动作绑定用户触发时的顶层页面，提取可见阅读区并沿用现有 Markdown 转换和后台离线队列。普通网页的选区捕获继续保留 Page Lead 与文本锚点。正文动作对隐藏内容、表单、编辑区、隐身窗口与已知 AI 对话站点关闭。
 
 桌面每次可显式添加一个不超过 8 MiB 的文件或剪贴板截图。原件进入权限为 `0600` 的既有队列，待同步原件合计上限为 64 MiB。OCR、PDF 文字层及 UTF-8 文件文本在本机提取，有限长度的提取结果写入片段正文，原件字节独立保存。首行 `#rewind/original` 在整理、落位和归档时保留。脉络面板从待同步队列或 Memos 读取原件，由用户选择导出位置。
@@ -132,7 +136,7 @@ Chrome 的书签动作只保存页面 URL 和标题。正文动作绑定用户�
 <verbatim_selected_markdown>
 ```
 
-当桌面普通应用或普通网页划选不含前序提问与近期对话轮次时，主记录仍保留 `> **Source:** [<title_or_app>](<url_or_conversation_deeplink>) · <ISO8601_UTC>`，但省略 `#rewind/has-ctx` 标签，仅保留 `#rewind/pending` 与 `#source/<macos|web>`，且不发送空白上下文评论，避免触发增强器等待窗口。
+采用默认设置且桌面普通应用或普通网页划选不含上下文时，主记录仍保留 `> **Source:** [<title_or_app>](<url_or_conversation_deeplink>) · <ISO8601_UTC>`，但省略 `#rewind/has-ctx` 标签，仅保留 `#rewind/pending` 与 `#source/<macos|web>`，且不发送空白上下文评论，避免触发增强器等待窗口。
 
 当通过 `create_snippet`（或 `coding-rewind create`）暂存提纲、草稿或总结时，默认来源标签为 `#source/agent`（默认出处标题为 `AI Synthesis`）：若调用时已提供任一结构化抬头（`Title`、`Session`、`Context` 或非空 `Keywords`），首行直接写入 `#rewind/ready #source/<platform>`（及可选 `#<tag>`）并输出引用块抬头与 100% 原样正文；若未提供结构化抬头，则写入 `#rewind/pending #source/<platform>`（及可选 `#<tag>`）与 `> **Source:** ...`，交由云端增强器异步补齐。
 
@@ -211,7 +215,7 @@ Agent 或终端执行 `update_snippet_metadata`（`coding-rewind update`）时�
 
 位置记录不含 `#rewind/pending|ready|synthesized`，客户端与 `rewind-enricher` 均不会把它当作片段处理。片段落位即在首行追加 `#project/<slug>`、`#topic/<slug>` 或 `#person/<slug>` 标签，经 `update_snippet_metadata` 的自定义标签增删维护，原文零篡改铁律不变。「未落位」不另设标签，由「状态为 `ready` 或 `synthesized` 且无任何位置标签」推导。
 
-`rewind-enricher` 在轮询扫描中顺带收集 `Status: active` 的位置作为词表（60 秒缓存），把词表附入提示词并要求输出 `places`（0 至 3 个 `kind/slug`）；只保留词表内已存在的位置（封闭词表，AI 不得发明新位置），去重后追加到首行。词表为空时提示词与输出与未引入位置前完全一致。客户端成功拉取位置列表后写入 `<dataDir>/places_cache.json` 供浮窗离线落位；新建或更新位置必须在线，不进入 `outbox.jsonl`。
+`rewind-enricher` 在轮询扫描中顺带收集 `Status: active` 的位置作为词表（60 秒缓存）。只有首行尚无位置标签且词表非空时，提示词才要求输出 0 至 3 个 `places`。增强器只追加词表内的有效位置。已有位置的片段仍会生成摘要。客户端成功拉取位置列表后写入 `<dataDir>/places_cache.json` 供离线落位。新建或更新位置必须在线，不进入 `outbox.jsonl`。
 
 ## 凭据解析与环境隔离优先级
 

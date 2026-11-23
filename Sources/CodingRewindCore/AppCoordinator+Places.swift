@@ -96,6 +96,13 @@ extension AppCoordinator {
         }
     }
 
+    public func refreshCapturePlaces() async {
+        let revision = libraryRevision
+        guard let result = try? await placeRepository().listPlaces(includeArchived: true),
+              !Task.isCancelled, revision == libraryRevision else { return }
+        places = result.places
+    }
+
     func loadPlaceRecords(_ ref: PlaceRef) async {
         let revision = libraryRevision
         let query = SnippetQuery(windowHours: nil, status: .all, place: ref, resultLimit: .unbounded)

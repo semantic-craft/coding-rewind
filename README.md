@@ -47,6 +47,14 @@ git show HEAD:Sources/Worker.swift | sed -n '42,57p' |
 
 `--git-file` 相对于仓库根目录。传入 `--git-root` 可指定另一个检出目录。传入 `--git-commit` 可替换默认的 HEAD，参数须为完整提交 ID。
 
+## 设置采集默认值
+
+- 在 **设置 → 快捷键** 录入「快速暂存」的全局快捷键。初始留空，应用菜单里的 `⌘N` 也能打开。
+- 在 **设置 → 采集** 选择默认项目或主题、录入默认标签，并分别设置是否保存对话脉络和是否用 AI 整理。「快速暂存」可为当前片段覆盖落位、标签和 AI 设置。
+- 在 **Chrome 扩展 → 选项** 设置浏览器的默认标签、上下文和 AI 整理。浏览器设置独立于桌面设置。
+
+关闭上下文时保留选中的原文和出处。关闭 AI 整理时片段仍会同步到 Memos。离线重试使用采集时的选择。
+
 ## 在 Antigravity 接聊
 
 在“设置 → 插件与权限”中点击 Antigravity 分区的“安装或修复插件”。安装器将 `coding-rewind-sidecar` 与 `coding-rewind` 放入固定的 `~/Library/Application Support/CodingRewind/bin/` 目录，注册并启用 `coding-rewind/launcher`。Antigravity 管理该 sidecar 进程，并提供调用 `agentapi` 所需的运行环境。

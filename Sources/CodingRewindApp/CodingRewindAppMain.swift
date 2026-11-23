@@ -192,7 +192,8 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                         environment: environment,
                         applicationURL: dshAppURL
                     )
-                }
+                },
+                capturePreferences: { appearance.captureDefaults }
             )
             coord.onOpenURL = { url in
                 SystemURLOpener.open(url)
@@ -565,9 +566,9 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
         guard let coordinator else { return }
         selectionPopupController?.hideImmediately()
         if quickCapturePanel == nil {
-            quickCapturePanel = QuickCapturePanel(language: coordinator.language) { [weak self] text, original in
+            quickCapturePanel = QuickCapturePanel(language: coordinator.language) { [weak self] text, original, preferences in
                 guard let self, let coordinator = self.coordinator else { return .ignoredBusy }
-                let outcome = await coordinator.captureQuickClip(text, original: original)
+                let outcome = await coordinator.captureQuickClip(text, original: original, preferences: preferences)
                 self.statusItemController?.refreshIcon()
                 switch outcome {
                 case .saved, .queuedOffline:
@@ -578,7 +579,10 @@ public final class CodingRewindAppDelegate: NSObject, NSApplicationDelegate {
                 return outcome
             }
         }
-        quickCapturePanel?.present()
+        quickCapturePanel?.present(
+            preferences: coordinator.resolvedCapturePreferences(),
+            places: coordinator.activePlaces.filter { $0.ref.kind != .person }
+        )
     }
 
     private func triggerCapture(preferInPlacePopup: Bool) {

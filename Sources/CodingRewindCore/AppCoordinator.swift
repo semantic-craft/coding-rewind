@@ -252,6 +252,7 @@ public final class AppCoordinator {
     }
     private var pendingRemoteDeleteIDs: Set<String> = []
     private let antigravityContext: AntigravityCaptureContext
+    private let capturePreferences: @MainActor () -> CapturePreferences
     private let dshBinaryURLProvider: @Sendable () -> URL?
     private let dshActionRunner: @Sendable (String) async -> Bool
     public var capturer: any SelectionCapturing
@@ -356,7 +357,8 @@ public final class AppCoordinator {
         language: AppLanguage = .zhHans,
         dshBinaryURLProvider: (@Sendable () -> URL?)? = nil,
         dshReadinessCheck: (@MainActor () -> Bool)? = nil,
-        dshActionRunner: (@Sendable (String) async -> Bool)? = nil
+        dshActionRunner: (@Sendable (String) async -> Bool)? = nil,
+        capturePreferences: @escaping @MainActor () -> CapturePreferences = { CapturePreferences() }
     ) throws {
         self.paths = paths
         self.environment = environment
@@ -410,6 +412,7 @@ public final class AppCoordinator {
             )
         ]
         self.antigravityContext = antigravityContext
+        self.capturePreferences = capturePreferences
         self.capturer = capturer
         if FileManager.default.fileExists(atPath: pendingRemoteDeletesURL.path),
            let pendingData = try? Data(contentsOf: pendingRemoteDeletesURL),
@@ -679,20 +682,25 @@ public final class AppCoordinator {
     public func captureSelection() async -> SelectionCaptureOutcome {
         guard !isCapturingSelection else { return .ignoredBusy }
         isCapturingSelection = true
+        let preferences = resolvedCapturePreferences()
         defer {
             localCardsRevision += 1
             isCapturingSelection = false
         }
         do {
             let selection = try await capturer.captureFrontmostSelection()
-            let (platform, sourceTitle, sourceURL, context) = await buildProvenance(from: selection)
+            let (platform, sourceTitle, sourceURL, context) = await buildProvenance(
+                from: selection,
+                includeContext: preferences.includeContext
+            )
             return await ingestClip(
                 verbatimText: selection.text,
                 platform: platform,
                 sourceTitle: sourceTitle,
                 sourceURL: sourceURL,
                 context: context,
-                capturedAt: selection.capturedAt
+                capturedAt: selection.capturedAt,
+                preferences: preferences
             )
         } catch {
             let rewindError = (error as? RewindError) ?? .ioError(error.localizedDescription)
@@ -701,9 +709,14 @@ public final class AppCoordinator {
         }
     }
 
-    public func captureQuickClip(_ text: String, original: ClipOriginal? = nil) async -> SelectionCaptureOutcome {
+    public func captureQuickClip(
+        _ text: String,
+        original: ClipOriginal? = nil,
+        preferences: CapturePreferences? = nil
+    ) async -> SelectionCaptureOutcome {
         guard !isCapturingSelection else { return .ignoredBusy }
         isCapturingSelection = true
+        let preferences = resolvedCapturePreferences(preferences)
         defer {
             localCardsRevision += 1
             isCapturingSelection = false
@@ -714,7 +727,7 @@ public final class AppCoordinator {
                 verbatimText: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? original.filename : text,
                 platform: "macos", sourceTitle: original.filename, sourceURL: nil,
-                context: nil, capturedAt: Date(), original: original
+                context: nil, capturedAt: Date(), original: original, preferences: preferences
             )
         }
 
@@ -732,7 +745,8 @@ public final class AppCoordinator {
             sourceTitle: link?.host ?? "Coding Rewind",
             sourceURL: link?.absoluteString,
             context: nil,
-            capturedAt: Date()
+            capturedAt: Date(),
+            preferences: preferences
         )
     }
 
@@ -758,6 +772,7 @@ public final class AppCoordinator {
     }
 
     public func captureExternalDSHRequest(_ request: DSHCaptureBridgeRequest) async -> DSHCaptureBridgeReceipt {
+        let preferences = resolvedCapturePreferences()
         let nowMs: () -> Int64 = { Int64((Date().timeIntervalSince1970 * 1000.0).rounded()) }
         let cleanedText = request.text.replacingOccurrences(of: "\0", with: "")
         guard !cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -781,7 +796,7 @@ public final class AppCoordinator {
         let sourceTitle = (cleanedTitle?.isEmpty == false) ? cleanedTitle! : "DSH"
         let sourceURL = cleanedSessionID.map { "dsh-session://\($0)" }
         let context: CaptureContext?
-        if let messages = request.messages, !messages.isEmpty {
+        if preferences.includeContext, let messages = request.messages, !messages.isEmpty {
             context = DSHCaptureContext.sliceContext(
                 selectedText: cleanedText,
                 messages: messages,
@@ -801,7 +816,8 @@ public final class AppCoordinator {
             sourceTitle: sourceTitle,
             sourceURL: sourceURL,
             context: context,
-            capturedAt: capturedAt
+            capturedAt: capturedAt,
+            preferences: preferences
         )
         switch outcome {
         case .saved(let cardID, _):
@@ -839,6 +855,19 @@ public final class AppCoordinator {
         }
     }
 
+    public func resolvedCapturePreferences(_ override: CapturePreferences? = nil) -> CapturePreferences {
+        let preferences = override ?? capturePreferences()
+        guard let ref = preferences.defaultPlace,
+              places.contains(where: { $0.ref == ref && $0.archived }) else {
+            return preferences
+        }
+        return CapturePreferences(
+            defaultTags: preferences.defaultTags,
+            includeContext: preferences.includeContext,
+            enrichWithAI: preferences.enrichWithAI
+        )
+    }
+
     private func ingestClip(
         verbatimText: String,
         platform: String,
@@ -846,12 +875,13 @@ public final class AppCoordinator {
         sourceURL: String?,
         context: CaptureContext?,
         capturedAt: Date,
-        original: ClipOriginal? = nil
+        original: ClipOriginal? = nil,
+        preferences: CapturePreferences
     ) async -> SelectionCaptureOutcome {
         var provisionalCardID: String?
         let previousFocusedCardID = focusedCardID
         do {
-            let hasContext = (context?.isEmpty == false)
+            let hasContext = preferences.includeContext && context?.isEmpty == false
             let clientClipId = MemosWireFormat.makeClientClipID(now: capturedAt)
             let originalLease = try original.map { _ in try outbox.beginOriginalOperation(clipID: clientClipId) }
             defer { withExtendedLifetime(originalLease) {} }
@@ -864,7 +894,8 @@ public final class AppCoordinator {
                 sourceURL: sourceURL,
                 capturedAt: capturedAt,
                 hasContext: hasContext,
-                hasOriginal: original != nil
+                hasOriginal: original != nil,
+                preferences: preferences
             )
             let commentContent = hasContext ? context?.formattedCommentMarkdown() : nil
             let entry = OutboxEntry(
@@ -2379,17 +2410,18 @@ public final class AppCoordinator {
     }
 
     private func buildProvenance(
-        from selection: CapturedSelection
+        from selection: CapturedSelection,
+        includeContext: Bool
     ) async -> (platform: String, title: String, url: String?, context: CaptureContext?) {
         if let native = selection.nativeChat {
-            let context = native.snapshot.flatMap {
+            let context = includeContext ? native.snapshot.flatMap {
                 NativeConversationContext.resolve(
                     selectedText: native.renderedSelection ?? selection.text,
                     snapshot: $0,
                     sessionTitle: native.title,
                     backlink: native.backlink
                 )
-            }
+            } : nil
             return (native.host.rawValue, native.title, native.backlink?.absoluteString, context)
         }
         if selection.bundleIdentifier == CapturedSelection.antigravityBundleIdentifier {
@@ -2398,11 +2430,15 @@ public final class AppCoordinator {
             guard let conversationID = selection.antigravityConversationID else {
                 return ("antigravity", title, nil, nil)
             }
-            let context = await antigravityContext.resolve(
-                conversationID: conversationID,
-                selectedText: selection.text,
-                sessionTitle: title
-            )
+            let context: CaptureContext? = if includeContext {
+                await antigravityContext.resolve(
+                    conversationID: conversationID,
+                    selectedText: selection.text,
+                    sessionTitle: title
+                )
+            } else {
+                nil
+            }
             return ("antigravity", title, conversationID.backlink, context)
         }
         if selection.bundleIdentifier == CapturedSelection.dshBundleIdentifier {
@@ -2413,7 +2449,7 @@ public final class AppCoordinator {
                 now: selection.capturedAt
             )
             let sourceURL = resolution.sessionID.map { "dsh-session://\($0)" }
-            return ("dsh", resolution.sourceTitle, sourceURL, resolution.context)
+            return ("dsh", resolution.sourceTitle, sourceURL, includeContext ? resolution.context : nil)
         }
         let browserPrefixes = [
             "com.apple.Safari",

@@ -37,11 +37,13 @@ enum AppStrings {
             switch action {
             case .captureSelection: return "保存所选文本"
             case .toggleHUD: return "显示或隐藏片段浮窗"
+            case .quickCapture: return "打开快速暂存"
             }
         case .en:
             switch action {
             case .captureSelection: return "Save Selection"
             case .toggleHUD: return "Show or Hide Clips HUD"
+            case .quickCapture: return "Open Quick Capture"
             }
         }
     }
@@ -71,13 +73,17 @@ enum AppStrings {
     static func shortcutInstructionActive(_ action: ShortcutAction, hint: String, in language: AppLanguage) -> String {
         switch language {
         case .zhHans:
-            return action == .captureSelection
-                ? "选中文本后按 \(hint) 即可保存"
-                : "按 \(hint) 查看近 72 小时保存的片段"
+            switch action {
+            case .captureSelection: return "选中文本后按 \(hint) 即可保存"
+            case .toggleHUD: return "按 \(hint) 查看近 72 小时保存的片段"
+            case .quickCapture: return "按 \(hint) 打开快速暂存"
+            }
         case .en:
-            return action == .captureSelection
-                ? "Select text and press \(hint) to save"
-                : "Press \(hint) to view clips from the last 72 hours"
+            switch action {
+            case .captureSelection: return "Select text and press \(hint) to save"
+            case .toggleHUD: return "Press \(hint) to view clips from the last 72 hours"
+            case .quickCapture: return "Press \(hint) to open Quick Capture"
+            }
         }
     }
 
@@ -368,6 +374,7 @@ enum AppStrings {
         case .zhHans:
             switch page {
             case .general: return "通用"
+            case .capture: return "采集"
             case .connection: return "云端同步"
             case .keyboard: return "快捷键"
             case .integrations: return "插件与权限"
@@ -376,6 +383,7 @@ enum AppStrings {
         case .en:
             switch page {
             case .general: return "General"
+            case .capture: return "Capture"
             case .connection: return "Cloud Sync"
             case .keyboard: return "Shortcuts"
             case .integrations: return "Integrations"
