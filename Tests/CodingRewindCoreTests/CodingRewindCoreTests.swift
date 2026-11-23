@@ -1257,7 +1257,7 @@ struct CodingRewindCoreTests {
         )
         #expect(Set(pluginJSON.keys) == Set(["name", "version", "description", "suggestedPrompts"]))
         #expect(pluginJSON["name"] as? String == "coding-rewind")
-        #expect(pluginJSON["version"] as? String == "0.7.0")
+        #expect(pluginJSON["version"] as? String == "0.8.0")
         let prompts = try #require(pluginJSON["suggestedPrompts"] as? [String])
         #expect(prompts.count == 3)
 
