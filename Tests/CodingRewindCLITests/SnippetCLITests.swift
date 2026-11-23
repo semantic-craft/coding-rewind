@@ -9,7 +9,7 @@ import Testing
 struct SnippetCLITests {
     @Test("CLIParser supports defaults, >72h windows, synthesized status, global flags anywhere, and canonical ID validation")
     func cliParserBehavior() throws {
-        #expect(CLIParser.versionString == "0.7.0")
+        #expect(CLIParser.versionString == "0.8.0")
 
         let defaultList = try CLIParser.parse(arguments: ["coding-rewind", "list"])
         #expect(defaultList == .list(

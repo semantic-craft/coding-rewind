@@ -136,8 +136,8 @@ public final class AppUpdater {
         defaults: UserDefaults,
         language: AppLanguage = .zhHans
     ) -> AppUpdater {
-        let rawVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.7.0"
-        let version = SemanticVersion(parsing: rawVersion) ?? SemanticVersion(major: 0, minor: 7, patch: 0)
+        let rawVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.8.0"
+        let version = SemanticVersion(parsing: rawVersion) ?? SemanticVersion(major: 0, minor: 8, patch: 0)
         return AppUpdater(
             paths: paths,
             environment: environment,

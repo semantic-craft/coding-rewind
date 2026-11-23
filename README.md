@@ -2,11 +2,11 @@
 
 本仓库是 **Coding-Rewind** 的产品规范与统一全栈实现，采用 [MIT License](LICENSE)。
 
-当前发布版本为 `v0.7.0`，同步更新 macOS 桌面应用与 Chrome 网页扩展，包含 DSH（DeepSeek Harness）双向集成、安全加固与精简状态栏菜单、来源开头留底与 W3C `#:~:text=` 精确锚点、浮窗停靠式“脉络”抽屉与可编辑接聊草稿框、云端直连 DeepSeek 官方 `deepseek-flash`（`DeepSeek-V4.1-Flash`）自动摘要、应用内自动更新、中英双语界面、全网划词暂存胶囊、默认 `⌃⌥⇧⌘S`（`Hyper+S`）捕获快捷键、浮窗片段归档与删除管理，以及单二进制 `coding-rewind`（CLI + 7 工具读写领域 MCP 服务与权限开关）。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14。公开包不包含个人 Memos 地址、令牌或 1Password 配置。桌面端无须配置即可在本机暂存片段并开始对话，首次桌面捕获需授予辅助功能权限；如需跨设备同步、网页剪藏持久化与自动 AI 摘要，可在“云端同步”按需配置自托管 Memos 服务。
+当前发布版本为 `v0.8.0`，同步更新 macOS 桌面应用与 Chrome 网页扩展，新增三栏资料库、项目与主题落位、快速暂存、文件与截图原件、网页正文采集、Git 源码回跳，以及可配置的采集默认值与独立的上下文和 AI 整理开关。下载入口为 [GitHub Releases](https://github.com/semantic-craft/coding-rewind/releases)。macOS 包面向 Apple Silicon，最低 macOS 14。公开包不包含个人 Memos 地址、令牌或 1Password 配置。桌面端无须配置即可在本机暂存片段并开始对话，首次桌面捕获需授予辅助功能权限；如需跨设备同步、网页剪藏持久化与自动 AI 摘要，可在“云端同步”按需配置自托管 Memos 服务。
 
 当前版本仍有 Antigravity 会话归属、Chrome 扩展生命周期、多卡接聊和引用成文的实机覆盖待完成，见 [issue #14](https://github.com/semantic-craft/coding-rewind/issues/14)。当前状态见 [开发进度](progress/index.html)。修复和后续验收遵循 [代码质量标准](docs/code-quality.md)。
 
-桌面应用版本为 0.7.0，build 10；Chrome 扩展显示版本为 0.7.0，内部版本为 0.7.0.0。扩展继续通过解压文件加载，未发布到 Chrome 应用商店。升级时解压新版扩展包，用其中的文件覆盖原扩展目录，在 `chrome://extensions/` 中点击“重新加载”，再刷新已打开的聊天网页。沿用原目录可保留扩展 ID 与已保存的配置；不要移除后重新添加。
+桌面应用版本为 0.8.0，build 11；Chrome 扩展显示版本为 0.8.0，内部版本为 0.8.0.0。扩展继续通过解压文件加载，未发布到 Chrome 应用商店。升级时解压新版扩展包，用其中的文件覆盖原扩展目录，在 `chrome://extensions/` 中点击“重新加载”，再刷新已打开的聊天网页。沿用原目录可保留扩展 ID 与已保存的配置；不要移除后重新添加。
 
 ## 这是什么
 
@@ -158,7 +158,7 @@ CODING_REWIND_MEMOS_TOKEN_REFERENCE='op://vault/item/password' \
 
 应用与 Chrome 扩展均支持 **跟随系统 / 简体中文 / English** 多语言显示，切换语言后菜单、片段浮窗、划词胶囊与设置窗口立即生效，无须重启应用；云端 `rewind-enricher` 默认按剪藏正文与对话脉络自动选择中文或英文摘要（可通过 `REWIND_SUMMARY_LANGUAGE` 固定为 `zh-Hans` 或 `en`），底层 Memos 标签与引用块字段名在各语言下保持统一。
 
-应用默认显示 Dock 图标，在“设置 → 通用”提供显示语言、登录时自动打开（`SMAppService` 登录项后台静默启动，不自动弹出浮窗）、Dock 图标显示、系统菜单栏入口以及“选中文本时显示暂存胶囊”开关；在“设置 → 插件与权限”集中管理辅助功能授权、Antigravity 与 DSH 插件安装修复，以及“AI 接入与权限”（`AI Access & Permissions`）分区，展示本机 MCP 服务状态、只读与读写权限切换开关（立即写入 `<dataDir>/config.json` 的 `ai_access_mode`；若由环境变量 `CODING_REWIND_AI_ACCESS` 接管则自动禁用开关并标明来源）以及面向 Claude Desktop、Cursor、DSH、Antigravity 等宿主的一键“复制 MCP 配置”按钮；在“设置 → 关于”提供版本与构建号、MIT 许可证、仓库与更新日志链接、手动“检查更新”以及“自动检查更新”开关（后台定期从 GitHub Releases 下载并经 `SHA256SUMS.txt` 与 `SecStaticCode` 代码签名及 `TeamIdentifier` 防降级校验后一键重启替换，签名权限不兼容时自动转为引导前往 GitHub 手动查看以保护辅助功能授权）。点击 Dock 图标或按 `⌘0`（打开资料库 / Open Library）可打开三栏资料库窗口（支持 `⌥1` 卡片墙与 `⌥2` 会话时间轴视图切换），全局 `⌃⌥R` 继续独立开关 72 小时速览浮窗。右侧状态栏菜单仅保留高频控制，并在缺少辅助功能权限或当前宿主插件异常时条件展示提醒入口，插件与权限管理统一位于“设置 → 插件与权限”。菜单栏“设置…”、顶部应用主菜单的“关于 Coding Rewind”与“检查更新…”、浮窗齿轮和 `⌘,` 都指向同一设置窗口（“关于”与“检查更新…”位于设置或顶部应用菜单，不再出现在右侧菜单栏状态项下拉菜单中）。设置分为通用、云端同步、快捷键、插件与权限、关于；通用开关、AI 读写权限开关、自动更新开关与快捷键修改立即保存，云端同步设置单独保存。
+应用默认显示 Dock 图标，在“设置 → 通用”提供显示语言、登录时自动打开（`SMAppService` 登录项后台静默启动，不自动弹出浮窗）、Dock 图标显示、系统菜单栏入口以及“选中文本时显示暂存胶囊”开关；在“设置 → 插件与权限”集中管理辅助功能授权、Antigravity 与 DSH 插件安装修复，以及“AI 接入与权限”（`AI Access & Permissions`）分区，展示本机 MCP 服务状态、只读与读写权限切换开关（立即写入 `<dataDir>/config.json` 的 `ai_access_mode`；若由环境变量 `CODING_REWIND_AI_ACCESS` 接管则自动禁用开关并标明来源）以及面向 Claude Desktop、Cursor、DSH、Antigravity 等宿主的一键“复制 MCP 配置”按钮；在“设置 → 关于”提供版本与构建号、MIT 许可证、仓库与更新日志链接、手动“检查更新”以及“自动检查更新”开关（后台定期从 GitHub Releases 下载并经 `SHA256SUMS.txt` 与 `SecStaticCode` 代码签名及 `TeamIdentifier` 防降级校验后一键重启替换，签名权限不兼容时自动转为引导前往 GitHub 手动查看以保护辅助功能授权）。点击 Dock 图标或按 `⌘0`（打开资料库 / Open Library）可打开三栏资料库窗口（支持 `⌥1` 卡片墙与 `⌥2` 会话时间轴视图切换），全局 `⌃⌥R` 继续独立开关 72 小时速览浮窗。右侧状态栏菜单仅保留高频控制，并在缺少辅助功能权限或当前宿主插件异常时条件展示提醒入口，插件与权限管理统一位于“设置 → 插件与权限”。菜单栏“设置…”、顶部应用主菜单的“关于 Coding Rewind”与“检查更新…”、浮窗齿轮和 `⌘,` 都指向同一设置窗口（“关于”与“检查更新…”位于设置或顶部应用菜单，不再出现在右侧菜单栏状态项下拉菜单中）。设置分为通用、采集、云端同步、快捷键、插件与权限、关于；通用开关、AI 读写权限开关、自动更新开关与快捷键修改立即保存，云端同步设置单独保存。
 
 如果菜单栏图标消失，先从 Finder 打开应用，再进入“设置 → 通用 → 打开系统菜单栏设置”。在系统的“允许在菜单栏中显示”列表开启 CodingRewind。应用不会反复覆盖系统的隐藏选择。
 

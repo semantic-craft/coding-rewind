@@ -281,7 +281,7 @@ extension AppShortcutsTests {
         let migratedManifest = try #require(
             JSONSerialization.jsonObject(with: Data(contentsOf: pluginDir.appendingPathComponent("plugin.json"))) as? [String: Any]
         )
-        #expect(migratedManifest["version"] as? String == "0.7.0")
+        #expect(migratedManifest["version"] as? String == "0.8.0")
         let migratedPrompts = try #require(migratedManifest["suggestedPrompts"] as? [String])
         #expect(migratedPrompts == AntigravityIntegration.suggestedPrompts(in: .en))
 

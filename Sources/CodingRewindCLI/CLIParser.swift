@@ -156,7 +156,7 @@ public enum CLICommand: Equatable, Sendable {
 }
 
 public enum CLIParser {
-    public static let versionString = "0.7.0"
+    public static let versionString = "0.8.0"
 
     public static let usageText = """
         coding-rewind \(versionString) — Coding Rewind CLI & Embedded MCP Server
