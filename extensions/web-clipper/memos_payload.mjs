@@ -6,6 +6,44 @@ import { closeUnbalancedCodeFence } from "./extractors.mjs";
 export const CLIP_ID_PATTERN = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,34}[a-zA-Z0-9])?$/;
 export const MAX_OUTBOX_ITEMS = 50;
 
+const CAPTURE_TAG_EDGE_SPACE = /^[\p{White_Space}\u200B]+|[\p{White_Space}\u200B]+$/gu;
+const RESERVED_CAPTURE_TAG = /^(?:rewind|source|project|topic|person)(?:\/|$)/i;
+const DEFAULT_CAPTURE_PREFERENCES = normalizeCapturePreferences();
+
+export function parseCaptureTags(input) {
+  const tokens = typeof input === "string" ? input.split(/[,\r\n]+/) : input;
+  const tags = [];
+  const seen = new Set();
+  let hasInvalidTag = false;
+  for (const token of Array.isArray(tokens) ? tokens : []) {
+    if (typeof token !== "string") {
+      hasInvalidTag = true;
+      continue;
+    }
+    const trimmed = token.replace(/\0/g, "").replace(CAPTURE_TAG_EDGE_SPACE, "");
+    if (!trimmed) continue;
+    const tag = trimmed.replace(/^#+/, "");
+    if (!tag || /[\p{White_Space}\p{Cc}\p{Cf}]/u.test(tag) || RESERVED_CAPTURE_TAG.test(tag)) {
+      hasInvalidTag = true;
+      continue;
+    }
+    const key = tag.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      tags.push(tag);
+    }
+  }
+  return { tags, hasInvalidTag };
+}
+
+export function normalizeCapturePreferences(raw) {
+  return Object.freeze({
+    defaultTags: Object.freeze(parseCaptureTags(raw?.defaultTags).tags),
+    includeContext: raw?.includeContext === undefined || raw.includeContext === true,
+    enrichWithAI: raw?.enrichWithAI === undefined || raw.enrichWithAI === true
+  });
+}
+
 export function getToastMessages(locale = "auto") {
   const i18n = globalThis.CodingRewindI18n;
   const resolved = i18n.resolveLocale(locale);
@@ -153,6 +191,25 @@ function formatUtcIso(createdAt) {
   return validDate.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+function formatContextComment(clip, platform, sessionTitle) {
+  const sessionId = cleanSingleLine(clip?.sessionId);
+  const prompt = closeUnbalancedCodeFence(String(clip?.prompt || "").trim());
+  const pageLead = platform === "web" ? closeUnbalancedCodeFence(String(clip?.pageLead || "").trim()) : "";
+  const sessionOpening = platform === "web" ? "" : closeUnbalancedCodeFence(String(clip?.sessionOpening || "").trim());
+  const recentTurns = String(clip?.recentTurns || "").trim();
+  if (!hasClipContext({ sessionId, sessionOpening, pageLead, prompt, recentTurns })) return null;
+
+  const headerLines = ["<!-- rewind-context-v1 -->"];
+  if (sessionTitle) headerLines.push(`Session Title: ${sessionTitle}`);
+  if (sessionId) headerLines.push(`Session ID: ${sessionId}`);
+  if (prompt) headerLines.push(`Prompt: ${prompt}`);
+  const sections = [headerLines.join("\n")];
+  if (sessionOpening) sections.push(`### Session Opening\n${sessionOpening}`);
+  else if (pageLead) sections.push(`### Page Lead\n${pageLead}`);
+  if (recentTurns) sections.push(`### Recent Turns\n${recentTurns}`);
+  return { content: sections.join("\n\n"), visibility: "PRIVATE" };
+}
+
 export function buildMemosWirePayloads(clip, options = {}) {
   const selectedMarkdown = String(clip?.selectedMarkdown ?? "");
   if (!selectedMarkdown.trim()) {
@@ -170,20 +227,14 @@ export function buildMemosWirePayloads(clip, options = {}) {
 
   const platform = normalizePlatform(clip?.sourcePlatform);
   const sessionTitle = cleanSingleLine(clip?.sessionTitle);
-  const sessionId = cleanSingleLine(clip?.sessionId);
-  const prompt = closeUnbalancedCodeFence(String(clip?.prompt || "").trim());
-  const rawSessionOpening = String(clip?.sessionOpening || "").trim();
-  const rawPageLead = String(clip?.pageLead || "").trim();
-  const pageLead = platform === "web" ? closeUnbalancedCodeFence(rawPageLead) : "";
-  const sessionOpening = platform === "web" ? "" : closeUnbalancedCodeFence(rawSessionOpening);
-  const recentTurns = String(clip?.recentTurns || "").trim();
   const sourceUrl = sanitizeMarkdownUrl(clip?.sourceUrl);
   const createdAtIso = formatUtcIso(options.createdAt ?? clip?.createdAt);
 
-  const hasContext = hasClipContext({ sessionId, sessionOpening, pageLead, prompt, recentTurns });
-  const tagsLine = hasContext
-    ? `#rewind/pending #rewind/has-ctx #source/${platform}`
-    : `#rewind/pending #source/${platform}`;
+  const { defaultTags, includeContext, enrichWithAI } = options.capturePreferences ?? DEFAULT_CAPTURE_PREFERENCES;
+  const commentBody = includeContext ? formatContextComment(clip, platform, sessionTitle) : null;
+  const tags = [enrichWithAI ? "#rewind/pending" : "#rewind/ready"];
+  if (commentBody && enrichWithAI) tags.push("#rewind/has-ctx");
+  tags.push(`#source/${platform}`, ...defaultTags.map((tag) => `#${tag}`));
 
   const i18n = globalThis.CodingRewindI18n;
   const resolvedLocale = i18n.resolveLocale(options.locale ?? "auto");
@@ -194,30 +245,14 @@ export function buildMemosWirePayloads(clip, options = {}) {
     : `> **Source:** ${linkLabel} · ${createdAtIso}`;
 
   const memoBody = {
-    content: `${tagsLine}\n\n${sourceLine}\n\n${selectedMarkdown}`,
+    content: `${tags.join(" ")}\n\n${sourceLine}\n\n${selectedMarkdown}`,
     visibility: "PRIVATE"
   };
-
-  let commentBody = null;
-  if (hasContext) {
-    const headerLines = ["<!-- rewind-context-v1 -->"];
-    if (sessionTitle) headerLines.push(`Session Title: ${sessionTitle}`);
-    if (sessionId) headerLines.push(`Session ID: ${sessionId}`);
-    if (prompt) headerLines.push(`Prompt: ${prompt}`);
-    const sections = [headerLines.join("\n")];
-    if (sessionOpening) sections.push(`### Session Opening\n${sessionOpening}`);
-    else if (pageLead) sections.push(`### Page Lead\n${pageLead}`);
-    if (recentTurns) sections.push(`### Recent Turns\n${recentTurns}`);
-    commentBody = {
-      content: sections.join("\n\n"),
-      visibility: "PRIVATE"
-    };
-  }
 
   return {
     clipId,
     commentId,
-    hasContext,
+    hasContext: commentBody !== null,
     createdAt: createdAtIso,
     memoPath: `/api/memos?memoId=${encodeURIComponent(clipId)}`,
     memoBody,
@@ -428,10 +463,16 @@ export async function saveClipWithOutbox({
   fetchImpl = globalThis.fetch,
   nowMs,
   randomFn,
-  locale = "auto"
+  locale = "auto",
+  capturePreferences,
+  maximumMemoBytes
 }) {
   const toasts = getToastMessages(locale);
-  const envelope = createOutboxEnvelope(clip, { nowMs, randomFn, locale });
+  const envelope = createOutboxEnvelope(clip, { nowMs, randomFn, locale, capturePreferences });
+  if (maximumMemoBytes !== undefined && new TextEncoder().encode(envelope.memoBody.content).byteLength > maximumMemoBytes) {
+    const i18n = globalThis.CodingRewindI18n;
+    return { status: "error", queued: false, toast: i18n.t(i18n.resolveLocale(locale), "toastPageReadingTooLarge") };
+  }
   const normalizedUrl = normalizeMemosBaseUrl(baseUrl);
 
   if (!normalizedUrl) {

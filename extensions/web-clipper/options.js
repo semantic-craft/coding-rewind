@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 import "./i18n.js";
-import { buildAuthHeaders, normalizeMemosBaseUrl } from "./memos_payload.mjs";
+import { buildAuthHeaders, normalizeCapturePreferences, normalizeMemosBaseUrl, parseCaptureTags } from "./memos_payload.mjs";
 
 export const DEFAULT_EXCLUDED_DOMAINS = Object.freeze([
   "docs.google.com",
@@ -163,6 +163,9 @@ export function initOptionsPage() {
   const openConsoleBtn = document.getElementById("open-console-btn");
   const pillScopeSelect = document.getElementById("pill-scope");
   const excludedDomainsInput = document.getElementById("excluded-domains");
+  const defaultTagsInput = document.getElementById("default-tags");
+  const captureContextSelect = document.getElementById("capture-context");
+  const captureAISelect = document.getElementById("capture-ai");
   const languageSelect = document.getElementById("ui-language");
   const testBtn = document.getElementById("test-btn");
   const flushBtn = document.getElementById("flush-btn");
@@ -273,6 +276,7 @@ export function initOptionsPage() {
       "showSelectionPill",
       "excludedDomains",
       "uiLanguage",
+      "capturePreferences",
       "outbox"
     ]);
     if (typeof items.memosUrl === "string" && urlInput) urlInput.value = items.memosUrl;
@@ -287,6 +291,10 @@ export function initOptionsPage() {
         : DEFAULT_EXCLUDED_DOMAINS;
       excludedDomainsInput.value = domains.join("\n");
     }
+    const { defaultTags, includeContext, enrichWithAI } = normalizeCapturePreferences(items.capturePreferences);
+    if (defaultTagsInput) defaultTagsInput.value = defaultTags.join(", ");
+    if (captureContextSelect) captureContextSelect.value = includeContext ? "on" : "off";
+    if (captureAISelect) captureAISelect.value = enrichWithAI ? "on" : "off";
     currentOutbox = Array.isArray(items.outbox) ? items.outbox : [];
     applyLanguagePreference(items.uiLanguage);
     updateOpenConsoleButton();
@@ -370,6 +378,13 @@ export function initOptionsPage() {
 
   formEl.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const { tags, hasInvalidTag } = parseCaptureTags(defaultTagsInput?.value);
+    if (hasInvalidTag) {
+      setStatusKey("statusInvalidDefaultTag", undefined, "error");
+      defaultTagsInput?.focus?.();
+      return;
+    }
+    if (defaultTagsInput) defaultTagsInput.value = tags.join(", ");
     const scope = pillScopeSelect
       ? resolvePillScope({ selectionPillScope: pillScopeSelect.value })
       : "all";
@@ -386,7 +401,12 @@ export function initOptionsPage() {
     await chrome.storage?.local?.set?.({
       selectionPillScope: scope,
       excludedDomains,
-      uiLanguage: selectedUiLang
+      uiLanguage: selectedUiLang,
+      capturePreferences: {
+        defaultTags: tags,
+        includeContext: captureContextSelect?.value !== "off",
+        enrichWithAI: captureAISelect?.value !== "off"
+      }
     });
     await chrome.storage?.local?.remove?.(["showSelectionPill"]);
 

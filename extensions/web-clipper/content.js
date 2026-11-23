@@ -976,6 +976,19 @@
     return mayReadPage() ? extractPageReadingClip(document, pageUrl) : null;
   }
 
+  function readCapturePreferences() {
+    return new Promise((resolve, reject) => {
+      chrome.storage.local.get(["capturePreferences"], (items) => {
+        const error = chrome.runtime.lastError;
+        if (error || !items) {
+          reject(new Error(error?.message || "Capture preferences unavailable"));
+        } else {
+          resolve(items.capturePreferences === undefined ? {} : items.capturePreferences);
+        }
+      });
+    });
+  }
+
   async function captureAndSendCurrentSelection({ morphPill = false, enforcePillTargetGate = false } = {}) {
     if (isDisposed || inFlightSaveId !== 0) return;
     const now = Date.now();
@@ -990,7 +1003,10 @@
     }
 
     try {
-      const clip = await extractCurrentSelection({ enforcePillTargetGate });
+      const [capturePreferences, clip] = await Promise.all([
+        readCapturePreferences(),
+        extractCurrentSelection({ enforcePillTargetGate })
+      ]);
       if (isDisposed || saveId !== activeSaveId) return;
       if (!clip || !clip.selectedMarkdown) {
         if (morphPill && pillState === "saving") hidePill();
@@ -999,7 +1015,8 @@
 
       const resp = await chrome.runtime.sendMessage({
         type: "REWIND_SAVE_CLIP",
-        clip
+        clip,
+        capturePreferences
       });
       if (isDisposed || saveId !== activeSaveId) return;
       if (morphPill && pillState === "saving" && resp && (resp.status === "saved" || resp.status === "queued")) {

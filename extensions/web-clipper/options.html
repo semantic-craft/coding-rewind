@@ -111,6 +111,7 @@
     }
     input[type="url"],
     input[type="password"],
+    input[type="text"],
     select,
     textarea {
       width: 100%;
@@ -281,6 +282,33 @@
               <div class="input-stack">
                 <textarea id="excluded-domains" rows="4" placeholder="docs.google.com&#10;figma.com&#10;canva.com" data-i18n-placeholder="excludedDomainsPlaceholder" aria-describedby="excluded-help"></textarea>
                 <p class="help" id="excluded-help" data-i18n="excludedDomainsHelp">每行一个域名，这些网站及其子域名不自动弹出划词胶囊，快捷键与右键菜单仍可使用。</p>
+              </div>
+            </div>
+            <div class="field">
+              <label for="default-tags" data-i18n="defaultTagsLabel">默认标签</label>
+              <div class="input-stack">
+                <input id="default-tags" type="text" aria-describedby="default-tags-help">
+                <p class="help" id="default-tags-help" data-i18n="defaultTagsHelp">用逗号分隔标签，保存新片段时自动附加。</p>
+              </div>
+            </div>
+            <div class="field">
+              <label for="capture-context" data-i18n="captureContextLabel">随片段保存上下文</label>
+              <div class="input-stack">
+                <select id="capture-context" aria-describedby="capture-context-help">
+                  <option value="on" data-i18n="captureContextOn">保留上下文</option>
+                  <option value="off" data-i18n="captureContextOff">省略上下文</option>
+                </select>
+                <p class="help" id="capture-context-help" data-i18n="captureContextHelp">上下文包括对话前文或网页导语。片段的出处始终保留。</p>
+              </div>
+            </div>
+            <div class="field">
+              <label for="capture-ai" data-i18n="captureAILabel">AI 自动整理</label>
+              <div class="input-stack">
+                <select id="capture-ai" aria-describedby="capture-ai-help">
+                  <option value="on" data-i18n="captureAIOn">启用</option>
+                  <option value="off" data-i18n="captureAIOff">跳过</option>
+                </select>
+                <p class="help" id="capture-ai-help" data-i18n="captureAIHelp">关闭后，新片段照常同步到 Memos，跳过模型摘要与自动落位。</p>
               </div>
             </div>
           </div>
